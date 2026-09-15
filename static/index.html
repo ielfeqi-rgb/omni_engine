@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omni AI Engine v1.0 | Standalone Rust Engine</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: rgba(30, 41, 59, 0.7);
+            --accent: #6366f1;
+            --accent-hover: #4f46e5;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Cairo', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 30px;
+        }
+
+        .brand-icon {
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 20px;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(to right, #ffffff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .nav-item:hover, .nav-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: #818cf8;
+        }
+
+        .status-badge {
+            margin-top: auto;
+            padding: 14px;
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--danger);
+        }
+
+        .dot.active {
+            background: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.05), transparent 40%);
+        }
+
+        .topbar {
+            height: 70px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 30px;
+        }
+
+        .topbar-title {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .content-body {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+        }
+
+        .panel {
+            display: none;
+            height: 100%;
+        }
+
+        .panel.active {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Card System */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Buttons & Inputs */
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+        }
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn-secondary {
+            background: var(--border);
+            color: var(--text-primary);
+        }
+
+        .input-field {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--border);
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .input-field:focus {
+            border-color: var(--accent);
+        }
+
+        /* Chat UI */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            gap: 16px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 14px 18px;
+            border-radius: 14px;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .message.user {
+            align-self: flex-start;
+            background: var(--accent);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant {
+            align-self: flex-end;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 4px;
+            direction: ltr;
+            text-align: left;
+        }
+
+        .chat-input-bar {
+            display: flex;
+            gap: 12px;
+        }
+
+        /* Code box */
+        pre {
+            background: #090d16;
+            padding: 14px;
+            border-radius: 8px;
+            font-family: 'Fira Code', monospace;
+            font-size: 13px;
+            direction: ltr;
+            overflow-x: auto;
+            color: #38bdf8;
+            border: 1px solid #1e293b;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: right;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: var(--border);
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #a855f7);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="brand">
+            <div class="brand-icon">Ω</div>
+            <div class="brand-title">OMNI ENGINE v1.0</div>
+        </div>
+
+        <div class="nav-menu">
+            <div class="nav-item active" onclick="switchTab('chat')">💬 المحادثة الذكية</div>
+            <div class="nav-item" onclick="switchTab('downloader')">📥 تنزيل الموديلات (GGUF)</div>
+            <div class="nav-item" onclick="switchTab('engine')">⚙️ إدارة الخادم (Llama Engine)</div>
+            <div class="nav-item" onclick="switchTab('keys')">🔑 مفاتيح الـ API (API Keys)</div>
+            <div class="nav-item" onclick="switchTab('docs')">🌐 التوصيل الخارجي (OpenAI Spec)</div>
+        </div>
+
+        <div class="status-badge">
+            <div class="status-indicator">
+                <div class="dot" id="statusDot"></div>
+                <span id="statusText">الخادم متوقف</span>
+            </div>
+            <div style="color: var(--text-secondary); font-size: 11px;" id="activeModelName">لا يوجد موديل مفعّل</div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="topbar-title" id="tabTitle">المحادثة الذكية</div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-secondary" onclick="fetchStatus()">🔄 تحديث الحالة</button>
+            </div>
+        </div>
+
+        <div class="content-body">
+            <!-- TAB 1: CHAT -->
+            <div class="panel active" id="panel-chat">
+                <div class="chat-container">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="message assistant">
+                            مرحباً بك في محرك **Omni AI Engine (Rust Edition)**. قمت بتحديد أو تحميل موديل GGUF وابدأ المحادثة فوراً!
+                        </div>
+                    </div>
+                    <div class="chat-input-bar">
+                        <input type="text" id="chatInput" class="input-field" placeholder="اكتب رسالتك للذكاء الاصطناعي هنا..." onkeypress="handleKeyPress(event)">
+                        <button class="btn" onclick="sendMessage()">إرسال 🚀</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: DOWNLOADER -->
+            <div class="panel" id="panel-downloader">
+                <div class="card">
+                    <div class="card-title">📥 تنزيل موديل ذكاء اصطناعي (GGUF) عبر رابط مباشر</div>
+                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 20px;">
+                        أدخل رابط التنزيل المباشر لموديل بصيغة GGUF (مثلاً من HuggingFace) وسيتم تحميله وتخزينه محلياً في المحرك.
+                    </p>
+                    <div style="display: flex; flex-direction: column; gap: 14px;">
+                        <input type="text" id="downloadUrl" class="input-field" placeholder="https://huggingface.co/.../resolve/main/model.Q4_K_M.gguf">
+                        <input type="text" id="downloadFilename" class="input-field" placeholder="اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)">
+                        <button class="btn" onclick="triggerDownload()">بدء التنزيل الآن ⚡</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-title">📊 مهام التنزيل الحالية والسابقة</div>
+                    <div id="downloadsList">
+                        <p style="color: var(--text-secondary);">لا توجد عمليات تنزيل جارية حالياً.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: ENGINE CONTROLS -->
+            <div class="panel" id="panel-engine">
+                <div class="card">
+                    <div class="card-title">⚡ التحكم في تشغيل محرك llama-server</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+                        <div>
+                            <label style="font-size: 13px; color: var(--text-secondary);">اختر الموديل لتشغيله:</label>
+                            <select id="modelSelect" class="input-field" style="margin-top: 6px;">
+                                <option value="">جاري تحميل الموديلات...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size: 13px; color: var(--text-secondary);">عدد الأنوية (Threads):</label>
+                            <input type="number" id="engineThreads" class="input-field" value="4" style="margin-top: 6px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 13px; color: var(--text-secondary);">حجم السياق (Context Size):</label>
+                            <input type="number" id="engineCtx" class="input-field" value="4096" style="margin-top: 6px;">
+                        </div>
+                        <div>
+                            <label style="font-size: 13px; color: var(--text-secondary);">منفذ الـ API الداخلي (Port):</label>
+                            <input type="number" id="enginePort" class="input-field" value="8081" readonly style="margin-top: 6px;">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 12px;">
+                        <button class="btn" onclick="startEngine()">تشغيل المحرك ▶️</button>
+                        <button class="btn btn-danger" onclick="stopEngine()">إيقاف المحرك 🛑</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: API KEYS -->
+            <div class="panel" id="panel-keys">
+                <div class="card">
+                    <div class="card-title">🔑 إنشاء وإدارة مفاتيح الـ API Keys</div>
+                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">
+                        جميع الطلبات الخارجية الموجهة لمسارات `/v1/*` تتطلب مفتاح API صيغته (`omni_sk_...`) للحماية من الاستخدام غير المصرح به.
+                    </p>
+                    <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                        <input type="text" id="keyNameInput" class="input-field" placeholder="اسم المفتاح (مثلاً: App Key / Mobile Key)">
+                        <button class="btn" onclick="createApiKey()">توليد مفتاح جديد 🔑</button>
+                    </div>
+
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>اسم المفتاح</th>
+                                <th>مفتاح الـ API (Token)</th>
+                                <th>تاريخ الإنشاء</th>
+                                <th>إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="apiKeysTable">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 5: DOCS & EXTERNAL API -->
+            <div class="panel" id="panel-docs">
+                <div class="card">
+                    <div class="card-title">🌐 كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)</div>
+                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">
+                        المحرك متوافق 100% مع معايير OpenAI API. يمكنك توجيه أي مكتبة أو تطبيق إلى:
+                    </p>
+                    <pre>http://127.0.0.1:8090/v1  (أو رابط الـ IP الخاص بجهازك)</pre>
+                    
+                    <h4 style="margin-top: 20px; font-size: 14px;">مثال لاستخدام cURL:</h4>
+                    <pre>curl http://127.0.0.1:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer omni_sk_YOUR_KEY_HERE" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hello AI!"}],
+    "stream": false
+  }'</pre>
+
+                    <h4 style="margin-top: 20px; font-size: 14px;">مثال باستخدام Python OpenAI Library:</h4>
+                    <pre>from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8090/v1",
+    api_key="omni_sk_YOUR_KEY_HERE"
+)
+
+response = client.chat.completions.create(
+    model="omni-model",
+    messages=[{"role": "user", "content": "مرحبا بك!"}]
+)
+
+print(response.choices[0].message.content)</pre>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        function switchTab(tabId) {
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(el => el.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById('panel-' + tabId).classList.add('active');
+            
+            const titles = {
+                'chat': 'المحادثة الذكية',
+                'downloader': 'تنزيل الموديلات (GGUF)',
+                'engine': 'إدارة الخادم (Llama Engine)',
+                'keys': 'مفاتيح الـ API Keys',
+                'docs': 'التوصيل الخارجي (OpenAI Spec)'
+            };
+            document.getElementById('tabTitle').innerText = titles[tabId];
+
+            if(tabId === 'keys') fetchKeys();
+            if(tabId === 'engine' || tabId === 'downloader') fetchStatus();
+        }
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                
+                const dot = document.getElementById('statusDot');
+                const text = document.getElementById('statusText');
+                const modelText = document.getElementById('activeModelName');
+
+                if(data.is_running) {
+                    dot.classList.add('active');
+                    text.innerText = 'الخادم يعمل (PID ' + data.pid + ')';
+                    modelText.innerText = 'الموديل المفعّل: ' + (data.active_model || 'غير محدد');
+                } else {
+                    dot.classList.remove('active');
+                    text.innerText = 'الخادم متوقف';
+                    modelText.innerText = 'لا يوجد موديل مفعّل';
+                }
+
+                // Populate model select
+                const select = document.getElementById('modelSelect');
+                select.innerHTML = '';
+                if(data.available_models.length === 0) {
+                    select.innerHTML = '<option value="">لا توجد موديلات نزلت بعد (استخدم التنزيل)</option>';
+                } else {
+                    data.available_models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m;
+                        opt.innerText = m;
+                        if(data.active_model === m) opt.selected = true;
+                        select.appendChild(opt);
+                    });
+                }
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        async function startEngine() {
+            const model = document.getElementById('modelSelect').value;
+            const threads = parseInt(document.getElementById('engineThreads').value) || 4;
+            const ctx = parseInt(document.getElementById('engineCtx').value) || 4096;
+
+            if(!model) return alert('يرجى اختيار موديل أولاً');
+
+            const res = await fetch('/api/server/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ model, threads, ctx_size: ctx, port: 8081 })
+            });
+            const data = await res.json();
+            if(res.ok) {
+                alert('تم تشغيل خادم الذكاء الاصطناعي بنجاح!');
+                fetchStatus();
+            } else {
+                alert('خطأ: ' + (data.error || 'فشل التشغيل'));
+            }
+        }
+
+        async function stopEngine() {
+            const res = await fetch('/api/server/stop', { method: 'POST' });
+            if(res.ok) {
+                alert('تم إيقاف الخادم');
+                fetchStatus();
+            }
+        }
+
+        async function triggerDownload() {
+            const url = document.getElementById('downloadUrl').value.trim();
+            const filename = document.getElementById('downloadFilename').value.trim();
+
+            if(!url) return alert('أدخل رابط التنزيل أولاً');
+
+            const res = await fetch('/api/models/download', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ url, filename })
+            });
+
+            if(res.ok) {
+                alert('بدأت عملية التنزيل في الخلفية!');
+                document.getElementById('downloadUrl').value = '';
+                fetchDownloads();
+            }
+        }
+
+        async function fetchDownloads() {
+            const res = await fetch('/api/downloads');
+            const tasks = await res.json();
+            const container = document.getElementById('downloadsList');
+            container.innerHTML = '';
+
+            if(tasks.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-secondary);">لا توجد عمليات تنزيل جارية حالياً.</p>';
+                return;
+            }
+
+            tasks.forEach(t => {
+                const item = document.createElement('div');
+                item.style.marginBottom = '14px';
+                item.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                        <span><strong>${t.model_name}</strong></span>
+                        <span>${t.percent.toFixed(1)}%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${t.percent}%"></div>
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
+                        ${t.is_completed ? '✅ اكتمال التنزيل' : (t.error ? '❌ خطأ: ' + t.error : 'جاري التنزيل...')}
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        async function fetchKeys() {
+            const res = await fetch('/api/keys');
+            const keys = await res.json();
+            const tbody = document.getElementById('apiKeysTable');
+            tbody.innerHTML = '';
+
+            keys.forEach(k => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${k.name}</td>
+                    <td><code style="color: #38bdf8;">${k.key}</code></td>
+                    <td>${k.created_at}</td>
+                    <td><button class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;" onclick="revokeKey('${k.id}')">حذف</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function createApiKey() {
+            const name = document.getElementById('keyNameInput').value.trim();
+            const res = await fetch('/api/keys/generate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name })
+            });
+            if(res.ok) {
+                document.getElementById('keyNameInput').value = '';
+                fetchKeys();
+            }
+        }
+
+        async function revokeKey(id) {
+            if(!confirm('هل أنت تأكد من إيقاف هذا المفتاح؟')) return;
+            await fetch('/api/keys/revoke/' + id, { method: 'DELETE' });
+            fetchKeys();
+        }
+
+        function handleKeyPress(e) {
+            if(e.key === 'Enter') sendMessage();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if(!text) return;
+
+            const chatMessages = document.getElementById('chatMessages');
+
+            // User message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerText = text;
+            chatMessages.appendChild(userDiv);
+
+            input.value = '';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            // Assistant placeholder
+            const assistantDiv = document.createElement('div');
+            assistantDiv.className = 'message assistant';
+            assistantDiv.innerText = 'جاري التفكير والتوليد...';
+            chatMessages.appendChild(assistantDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            try {
+                // Fetch active keys to pass token if needed
+                const keysRes = await fetch('/api/keys');
+                const keys = await keysRes.json();
+                const token = keys.length > 0 ? keys[0].key : '';
+
+                const res = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        messages: [{role: 'user', content: text}]
+                    })
+                });
+
+                const data = await res.json();
+                if(res.ok && data.choices && data.choices[0]) {
+                    assistantDiv.innerText = data.choices[0].message.content;
+                } else {
+                    assistantDiv.innerText = '⚠️ خطأ: ' + (data.error?.message || 'تأكد من تشغيل المحرك واختيار الموديل');
+                }
+            } catch(e) {
+                assistantDiv.innerText = '⚠️ تعذر الاتصال بالمحرك: ' + e.message;
+            }
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Init
+        fetchStatus();
+        setInterval(fetchDownloads, 2000);
+    </script>
+</body>
+</html>
