@@ -50,7 +50,7 @@ Compiled distribution binaries and release packages are published on the GitHub 
 
 * 🔗 **Official Releases**: [https://github.com/ielfeqi-rgb/omni_engine/releases](https://github.com/ielfeqi-rgb/omni_engine/releases)
 * 🐧 **Linux (x86_64)**: `releases/omni_engine_linux_x86_64.tar.gz`
-* 🪟 **Windows (x64)**: `releases/omni_engine_windows_x64.tar.gz`
+* 🪟 **Windows (x64)**: `releases/omni_engine_windows_x64.zip` *(Contains `omni_engine.exe`)*
 * 🍎 **macOS**: `releases/omni_engine_mac.txt` *(Contains official notice: "I don't like Mac")*
 
 ---
