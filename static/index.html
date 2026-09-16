@@ -330,6 +330,29 @@
             width: 0%;
             transition: width 0.3s ease;
         }
+
+        .spec-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .spec-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .spec-value {
+            font-size: 22px;
+            font-weight: 800;
+            color: #38bdf8;
+        }
     </style>
 </head>
 <body>
@@ -345,6 +368,7 @@
             <div class="nav-item" onclick="switchTab('downloader')">📥 تنزيل الموديلات (GGUF)</div>
             <div class="nav-item" onclick="switchTab('engine')">⚙️ إدارة الخادم (Llama Engine)</div>
             <div class="nav-item" onclick="switchTab('keys')">🔑 مفاتيح الـ API (API Keys)</div>
+            <div class="nav-item" onclick="switchTab('logs')">💻 السجلات والمواصفات (Logs & Specs)</div>
             <div class="nav-item" onclick="switchTab('docs')">🌐 التوصيل الخارجي (OpenAI Spec)</div>
         </div>
 
@@ -372,7 +396,7 @@
                 <div class="chat-container">
                     <div class="chat-messages" id="chatMessages">
                         <div class="message assistant">
-                            مرحباً بك في محرك **Omni AI Engine (Rust Edition)**. قمت بتحديد أو تحميل موديل GGUF وابدأ المحادثة فوراً!
+                            مرحباً بك في محرك **Omni AI Engine (Rust Edition)**. اختر أو نزّل موديل GGUF وابدأ المحادثة فوراً!
                         </div>
                     </div>
                     <div class="chat-input-bar">
@@ -463,7 +487,41 @@
                 </div>
             </div>
 
-            <!-- TAB 5: DOCS & EXTERNAL API -->
+            <!-- TAB 5: LOGS & SPECS -->
+            <div class="panel" id="panel-logs">
+                <div class="card">
+                    <div class="card-title">🖥️ فحص مواصفات الجهاز وقدرة الموديلات التقديرية</div>
+                    <div class="spec-grid">
+                        <div class="spec-box">
+                            <span style="font-size: 12px; color: var(--text-secondary);">عدد أنوية المعالج (CPU Cores)</span>
+                            <span class="spec-value" id="specCores">-</span>
+                        </div>
+                        <div class="spec-box">
+                            <span style="font-size: 12px; color: var(--text-secondary);">إجمالي الذاكرة (Total RAM)</span>
+                            <span class="spec-value" id="specTotalRam">- GB</span>
+                        </div>
+                        <div class="spec-box">
+                            <span style="font-size: 12px; color: var(--text-secondary);">الذاكرة المتاحة (Free RAM)</span>
+                            <span class="spec-value" id="specFreeRam">- GB</span>
+                        </div>
+                    </div>
+                    <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid var(--accent); padding: 16px; border-radius: 12px; margin-bottom: 10px;">
+                        <div style="font-weight: 700; color: #818cf8; margin-bottom: 4px;">📊 الموديل التقديري المناسب لجهازك:</div>
+                        <div style="font-size: 16px; font-weight: 800; color: white;" id="specRecParams">جاري الفحص...</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;" id="specRecDesc"></div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-title" style="display: flex; justify-content: space-between;">
+                        <span>💻 سجلات الخادم المباشرة (Live Terminal Stream Logs)</span>
+                        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="fetchLogs()">تحديث السجل 🔄</button>
+                    </div>
+                    <pre id="terminalLogs" style="height: 320px; overflow-y: auto; background: #070b12; color: #10b981; font-family: 'Fira Code', monospace; padding: 16px; border-radius: 12px; font-size: 12px; line-height: 1.5; border: 1px solid var(--border);"></pre>
+                </div>
+            </div>
+
+            <!-- TAB 6: DOCS & EXTERNAL API -->
             <div class="panel" id="panel-docs">
                 <div class="card">
                     <div class="card-title">🌐 كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)</div>
@@ -514,12 +572,36 @@ print(response.choices[0].message.content)</pre>
                 'downloader': 'تنزيل الموديلات (GGUF)',
                 'engine': 'إدارة الخادم (Llama Engine)',
                 'keys': 'مفاتيح الـ API Keys',
+                'logs': 'السجلات والمواصفات (Logs & Specs)',
                 'docs': 'التوصيل الخارجي (OpenAI Spec)'
             };
             document.getElementById('tabTitle').innerText = titles[tabId];
 
             if(tabId === 'keys') fetchKeys();
+            if(tabId === 'logs') { fetchSpecs(); fetchLogs(); }
             if(tabId === 'engine' || tabId === 'downloader') fetchStatus();
+        }
+
+        async function fetchSpecs() {
+            try {
+                const res = await fetch('/api/system/specs');
+                const specs = await res.json();
+                document.getElementById('specCores').innerText = specs.cpu_cores;
+                document.getElementById('specTotalRam').innerText = specs.total_ram_gb.toFixed(1) + ' GB';
+                document.getElementById('specFreeRam').innerText = specs.free_ram_gb.toFixed(1) + ' GB';
+                document.getElementById('specRecParams').innerText = specs.recommended_params;
+                document.getElementById('specRecDesc').innerText = specs.max_recommended_size;
+            } catch(e) { console.error(e); }
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch('/api/logs');
+                const logs = await res.json();
+                const container = document.getElementById('terminalLogs');
+                container.innerText = logs.join('\n');
+                container.scrollTop = container.scrollHeight;
+            } catch(e) { console.error(e); }
         }
 
         async function fetchStatus() {
@@ -734,6 +816,7 @@ print(response.choices[0].message.content)</pre>
         // Init
         fetchStatus();
         setInterval(fetchDownloads, 2000);
+        setInterval(fetchLogs, 3000);
     </script>
 </body>
 </html>

@@ -1,12 +1,15 @@
 mod auth;
 mod downloader;
 mod llama_manager;
+mod logger;
 mod openai_api;
+mod system_info;
 mod web_server;
 
 use auth::KeyManager;
 use downloader::ModelDownloader;
 use llama_manager::LlamaManager;
+use logger::LogBuffer;
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use web_server::{create_router, AppState};
@@ -40,11 +43,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key_manager = KeyManager::new(base_dir.clone());
     let downloader = ModelDownloader::new(base_dir.join("models"));
     let llama_manager = LlamaManager::new(base_dir.clone());
+    let log_buffer = LogBuffer::new(500);
+
+    log_buffer.push("OMNI AI ENGINE v1.0 initialized.".to_string());
+    log_buffer.push("Scanning hardware specs and local model repository...".to_string());
 
     let state = AppState {
         key_manager,
         downloader,
         llama_manager,
+        log_buffer,
     };
 
     let router = create_router(state);

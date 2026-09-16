@@ -1,7 +1,9 @@
 use crate::auth::KeyManager;
 use crate::downloader::ModelDownloader;
 use crate::llama_manager::LlamaManager;
+use crate::logger::LogBuffer;
 use crate::openai_api::{self, ChatCompletionRequest};
+use crate::system_info::{self, SystemSpecs};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -13,12 +15,12 @@ use serde::Deserialize;
 use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
 
-
 #[derive(Clone)]
 pub struct AppState {
     pub key_manager: KeyManager,
     pub downloader: ModelDownloader,
     pub llama_manager: LlamaManager,
+    pub log_buffer: LogBuffer,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -30,6 +32,8 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(serve_index))
         .route("/api/status", get(handle_status))
+        .route("/api/system/specs", get(handle_system_specs))
+        .route("/api/logs", get(handle_get_logs))
         .route("/api/models/download", post(handle_start_download))
         .route("/api/downloads", get(handle_get_downloads))
         .route("/api/server/start", post(handle_start_server))
@@ -53,6 +57,14 @@ async fn handle_status(State(state): State<AppState>) -> impl IntoResponse {
     Json(status)
 }
 
+async fn handle_system_specs() -> Json<SystemSpecs> {
+    Json(system_info::get_system_specs())
+}
+
+async fn handle_get_logs(State(state): State<AppState>) -> Json<Vec<String>> {
+    Json(state.log_buffer.get_logs())
+}
+
 #[derive(Deserialize)]
 struct DownloadReq {
     url: String,
@@ -63,6 +75,7 @@ async fn handle_start_download(
     State(state): State<AppState>,
     Json(payload): Json<DownloadReq>,
 ) -> impl IntoResponse {
+    state.log_buffer.push(format!("Starting model download from: {}", payload.url));
     let task_id = state.downloader.start_download(payload.url, payload.filename);
     Json(json!({ "task_id": task_id, "status": "started" }))
 }
@@ -88,16 +101,22 @@ async fn handle_start_server(
     let ctx = payload.ctx_size.unwrap_or(4096);
     let port = payload.port.unwrap_or(8081);
 
+    state.log_buffer.push(format!("Starting llama-server with model '{}' on port {}", payload.model, port));
+
     match state.llama_manager.start(payload.model, port, threads, ctx) {
-        Ok(pid) => (StatusCode::OK, Json(json!({ "pid": pid, "status": "running" }))),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": e })),
-        ),
+        Ok(pid) => {
+            state.log_buffer.push(format!("llama-server started successfully with PID {}", pid));
+            (StatusCode::OK, Json(json!({ "pid": pid, "status": "running" })))
+        }
+        Err(e) => {
+            state.log_buffer.push(format!("Error starting llama-server: {}", e));
+            (StatusCode::BAD_REQUEST, Json(json!({ "error": e })))
+        }
     }
 }
 
 async fn handle_stop_server(State(state): State<AppState>) -> impl IntoResponse {
+    state.log_buffer.push("Stopping llama-server...".to_string());
     match state.llama_manager.stop() {
         Ok(_) => Json(json!({ "status": "stopped" })),
         Err(e) => Json(json!({ "error": e })),
@@ -118,7 +137,8 @@ async fn handle_create_key(
     State(state): State<AppState>,
     Json(payload): Json<CreateKeyReq>,
 ) -> impl IntoResponse {
-    let new_key = state.key_manager.create_key(payload.name);
+    let new_key = state.key_manager.create_key(payload.name.clone());
+    state.log_buffer.push(format!("Generated new API Key: '{}'", payload.name));
     Json(new_key)
 }
 
@@ -127,6 +147,7 @@ async fn handle_revoke_key(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let ok = state.key_manager.revoke_key(&id);
+    state.log_buffer.push(format!("Revoked API Key ID: {}", id));
     Json(json!({ "revoked": ok }))
 }
 
@@ -166,6 +187,7 @@ async fn handle_v1_chat_completions(
     Json(payload): Json<ChatCompletionRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     check_auth(&headers, &state.key_manager)?;
+    state.log_buffer.push(format!("OpenAI API Request: /v1/chat/completions (messages={})", payload.messages.len()));
     let status = state.llama_manager.status();
     let port = status.port;
     openai_api::proxy_chat_completion(payload, port).await
