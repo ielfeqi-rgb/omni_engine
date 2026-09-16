@@ -37,12 +37,17 @@
 
         /* Sidebar */
         .sidebar {
-            width: 280px;
+            width: 290px;
             background: var(--bg-secondary);
             border-left: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             padding: 20px;
+        }
+
+        html[dir="ltr"] .sidebar {
+            border-left: none;
+            border-right: 1px solid var(--border);
         }
 
         .brand {
@@ -269,13 +274,24 @@
             border-bottom-right-radius: 4px;
         }
 
+        html[dir="ltr"] .message.user {
+            align-self: flex-end;
+            border-bottom-right-radius: 14px;
+            border-bottom-left-radius: 4px;
+        }
+
         .message.assistant {
             align-self: flex-end;
             background: var(--bg-secondary);
             border: 1px solid var(--border);
             border-bottom-left-radius: 4px;
-            direction: ltr;
             text-align: left;
+        }
+
+        html[dir="ltr"] .message.assistant {
+            align-self: flex-start;
+            border-bottom-left-radius: 14px;
+            border-bottom-right-radius: 4px;
         }
 
         .chat-input-bar {
@@ -294,6 +310,7 @@
             overflow-x: auto;
             color: #38bdf8;
             border: 1px solid #1e293b;
+            text-align: left;
         }
 
         /* Table */
@@ -307,6 +324,10 @@
             padding: 12px 16px;
             text-align: right;
             border-bottom: 1px solid var(--border);
+        }
+
+        html[dir="ltr"] th, html[dir="ltr"] td {
+            text-align: left;
         }
 
         th {
@@ -409,7 +430,7 @@
                 <div class="dot" id="statusDot"></div>
                 <span id="statusText" data-i18n="statusStopped">الخادم متوقف</span>
             </div>
-            <div style="color: var(--text-secondary); font-size: 11px;" id="activeModelName">لا يوجد موديل مفعّل</div>
+            <div style="color: var(--text-secondary); font-size: 11px;" id="activeModelName" data-i18n="noActiveModel">لا يوجد موديل مفعّل</div>
         </div>
     </div>
 
@@ -434,7 +455,7 @@
                         </div>
                     </div>
                     <div class="chat-input-bar">
-                        <input type="text" id="chatInput" class="input-field" placeholder="اكتب رسالتك للذكاء الاصطناعي هنا..." onkeypress="handleKeyPress(event)">
+                        <input type="text" id="chatInput" class="input-field" data-placeholder-i18n="chatPlaceholder" placeholder="اكتب رسالتك للذكاء الاصطناعي هنا..." onkeypress="handleKeyPress(event)">
                         <button class="btn" onclick="sendMessage()"><span data-i18n="btnSend">إرسال 🚀</span></button>
                     </div>
                 </div>
@@ -449,7 +470,7 @@
                     </p>
                     <div style="display: flex; flex-direction: column; gap: 14px;">
                         <input type="text" id="downloadUrl" class="input-field" placeholder="https://huggingface.co/.../resolve/main/model.Q4_K_M.gguf">
-                        <input type="text" id="downloadFilename" class="input-field" placeholder="اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)">
+                        <input type="text" id="downloadFilename" class="input-field" data-placeholder-i18n="filenamePlaceholder" placeholder="اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)">
                         <button class="btn" onclick="triggerDownload()"><span data-i18n="btnStartDownload">بدء التنزيل الآن ⚡</span></button>
                     </div>
                 </div>
@@ -501,17 +522,17 @@
                         جميع الطلبات الخارجية الموجهة لمسارات `/v1/*` تتطلب مفتاح API صيغته (`omni_sk_...`) للحماية من الاستخدام غير المصرح به.
                     </p>
                     <div style="display: flex; gap: 12px; margin-bottom: 20px;">
-                        <input type="text" id="keyNameInput" class="input-field" placeholder="اسم المفتاح (مثلاً: App Key / Mobile Key)">
+                        <input type="text" id="keyNameInput" class="input-field" data-placeholder-i18n="keyNamePlaceholder" placeholder="اسم المفتاح (مثلاً: App Key / Mobile Key)">
                         <button class="btn" onclick="createApiKey()"><span data-i18n="btnGenerateKey">توليد مفتاح جديد 🔑</span></button>
                     </div>
 
                     <table>
                         <thead>
                             <tr>
-                                <th>اسم المفتاح</th>
-                                <th>مفتاح الـ API (Token)</th>
-                                <th>تاريخ الإنشاء</th>
-                                <th>إجراء</th>
+                                <th data-i18n="thKeyName">اسم المفتاح</th>
+                                <th data-i18n="thKeyToken">مفتاح الـ API (Token)</th>
+                                <th data-i18n="thCreated">تاريخ الإنشاء</th>
+                                <th data-i18n="thAction">إجراء</th>
                             </tr>
                         </thead>
                         <tbody id="apiKeysTable">
@@ -527,29 +548,29 @@
                     <div class="card-title">🖥️ <span data-i18n="specsTitle">فحص مواصفات الجهاز وقدرة الموديلات التقديرية</span></div>
                     <div class="spec-grid">
                         <div class="spec-box">
-                            <span style="font-size: 12px; color: var(--text-secondary);">عدد أنوية المعالج (CPU Cores)</span>
+                            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="lblCores">عدد أنوية المعالج (CPU Cores)</span>
                             <span class="spec-value" id="specCores">-</span>
                         </div>
                         <div class="spec-box">
-                            <span style="font-size: 12px; color: var(--text-secondary);">إجمالي الذاكرة (Total RAM)</span>
+                            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="lblTotalRam">إجمالي الذاكرة (Total RAM)</span>
                             <span class="spec-value" id="specTotalRam">- GB</span>
                         </div>
                         <div class="spec-box">
-                            <span style="font-size: 12px; color: var(--text-secondary);">الذاكرة المتاحة (Free RAM)</span>
+                            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="lblFreeRam">الذاكرة المتاحة (Free RAM)</span>
                             <span class="spec-value" id="specFreeRam">- GB</span>
                         </div>
                     </div>
                     <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid var(--accent); padding: 16px; border-radius: 12px; margin-bottom: 10px;">
-                        <div style="font-weight: 700; color: #818cf8; margin-bottom: 4px;">📊 الموديل التقديري المناسب لجهازك:</div>
-                        <div style="font-size: 16px; font-weight: 800; color: white;" id="specRecParams">جاري الفحص...</div>
+                        <div style="font-weight: 700; color: #818cf8; margin-bottom: 4px;" data-i18n="lblRecModel">📊 الموديل التقديري المناسب لجهازك:</div>
+                        <div style="font-size: 16px; font-weight: 800; color: white;" id="specRecParams">...</div>
                         <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;" id="specRecDesc"></div>
                     </div>
                 </div>
 
                 <div class="card" style="margin-top: 20px;">
                     <div class="card-title" style="display: flex; justify-content: space-between;">
-                        <span>💻 سجلات الخادم المباشرة (Live Terminal Stream Logs)</span>
-                        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="fetchLogs()">تحديث السجل 🔄</button>
+                        <span data-i18n="logsTitle">💻 سجلات الخادم المباشرة (Live Terminal Stream Logs)</span>
+                        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="fetchLogs()"><span data-i18n="btnRefreshLogs">تحديث السجل 🔄</span></button>
                     </div>
                     <pre id="terminalLogs" style="height: 320px; overflow-y: auto; background: #070b12; color: #10b981; font-family: 'Fira Code', monospace; padding: 16px; border-radius: 12px; font-size: 12px; line-height: 1.5; border: 1px solid var(--border);"></pre>
                 </div>
@@ -558,13 +579,13 @@
             <!-- TAB 6: DOCS & EXTERNAL API -->
             <div class="panel" id="panel-docs">
                 <div class="card">
-                    <div class="card-title">🌐 كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)</div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">
+                    <div class="card-title">🌐 <span data-i18n="docsTitle">كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)</span></div>
+                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;" data-i18n="docsDesc">
                         المحرك متوافق 100% مع معايير OpenAI API. يمكنك توجيه أي مكتبة أو تطبيق إلى:
                     </p>
-                    <pre>http://127.0.0.1:8090/v1  (أو رابط الـ IP الخاص بجهازك)</pre>
+                    <pre>http://127.0.0.1:8090/v1  (or http://YOUR_LOCAL_IP:8090/v1)</pre>
                     
-                    <h4 style="margin-top: 20px; font-size: 14px;">مثال لاستخدام cURL:</h4>
+                    <h4 style="margin-top: 20px; font-size: 14px;">cURL Example:</h4>
                     <pre>curl http://127.0.0.1:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer omni_sk_YOUR_KEY_HERE" \
@@ -572,6 +593,21 @@
     "messages": [{"role": "user", "content": "Hello AI!"}],
     "stream": false
   }'</pre>
+
+                    <h4 style="margin-top: 20px; font-size: 14px;">Python OpenAI SDK Example:</h4>
+                    <pre>from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8090/v1",
+    api_key="omni_sk_YOUR_KEY_HERE"
+)
+
+response = client.chat.completions.create(
+    model="omni-model",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+
+print(response.choices[0].message.content)</pre>
                 </div>
             </div>
 
@@ -582,27 +618,27 @@
     <div class="modal-overlay" id="modal-settings">
         <div class="modal-card">
             <div class="card-title" style="display: flex; justify-content: space-between;">
-                <span>⚙️ الإعدادات العامة (Settings)</span>
+                <span>⚙️ <span data-i18n="settingsTitle">الإعدادات العامة (Settings)</span></span>
                 <button style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;" onclick="closeModal('settings')">✖</button>
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 14px;">
-                <label style="font-size: 14px; font-weight: 700;">🌐 واجهة اللغة (UI Language):</label>
+                <label style="font-size: 14px; font-weight: 700;" data-i18n="lblLanguage">🌐 واجهة اللغة (UI Language):</label>
                 <select id="langSelect" class="input-field" onchange="changeLanguage(this.value)">
                     <option value="ar" selected>العربية (Arabic) 🇪🇬</option>
-                    <option value="en">English (الإنجليزية) 🇬🇧</option>
-                    <option value="fr">Français (الفرنسية) 🇫🇷</option>
+                    <option value="en">English 🇬🇧</option>
+                    <option value="fr">Français 🇫🇷</option>
                 </select>
             </div>
 
             <hr style="border: 0; border-top: 1px solid var(--border);">
 
             <div style="display: flex; flex-direction: column; gap: 10px;">
-                <label style="font-size: 14px; font-weight: 700; color: var(--danger);">🔴 التحكم بالسيرفر والعملية الحية:</label>
+                <label style="font-size: 14px; font-weight: 700; color: var(--danger);" data-i18n="lblPowerControls">🔴 التحكم بالسيرفر والعملية الحية:</label>
                 <button class="btn btn-danger" onclick="shutdownServer()" style="width: 100%; padding: 14px; font-size: 15px;">
-                    🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)
+                    <span data-i18n="btnShutdown">🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)</span>
                 </button>
-                <p style="font-size: 12px; color: var(--text-secondary);">هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.</p>
+                <p style="font-size: 12px; color: var(--text-secondary);" data-i18n="shutdownDesc">هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.</p>
             </div>
         </div>
     </div>
@@ -611,17 +647,17 @@
     <div class="modal-overlay" id="modal-about">
         <div class="modal-card">
             <div class="card-title" style="display: flex; justify-content: space-between;">
-                <span>ℹ️ عن مشروع Omni Engine</span>
+                <span>ℹ️ <span data-i18n="aboutTitle">عن مشروع Omni Engine</span></span>
                 <button style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;" onclick="closeModal('about')">✖</button>
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.6;">
-                <p><strong>الاسم:</strong> Omni AI Engine v1.0 (Standalone Rust Edition)</p>
-                <p><strong>المطور والمؤسس:</strong> ielfeqi-rgb</p>
-                <p><strong>رابط الـ GitHub الرسمي:</strong> <a href="https://github.com/ielfeqi-rgb" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 700;">https://github.com/ielfeqi-rgb</a></p>
+                <p><strong data-i18n="aboutName">الاسم: Omni AI Engine v1.0 (Standalone Rust Edition)</strong></p>
+                <p><strong data-i18n="aboutAuthor">المطور والمؤسس: ielfeqi-rgb</strong></p>
+                <p><strong data-i18n="aboutGithub">رابط الـ GitHub الرسمي:</strong> <a href="https://github.com/ielfeqi-rgb" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 700;">https://github.com/ielfeqi-rgb</a></p>
 
                 <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border); padding: 16px; border-radius: 12px; margin-top: 10px;">
-                    <div style="font-weight: 800; color: #f59e0b; margin-bottom: 6px;">📜 بند سياسة الخصوصية (Privacy Policy):</div>
+                    <div style="font-weight: 800; color: #f59e0b; margin-bottom: 6px;" data-i18n="privacyHeader">📜 بند سياسة الخصوصية (Privacy Policy):</div>
                     <p id="sarcasticPrivacyText" style="font-size: 13px; color: #cbd5e1; font-style: italic;">
                         "بتدور على بند الخصوصية ليه يا عم؟ المحرك ده شغال 100% أوفلاين على كمبيوترك المباشر! يعني حتى لو حبّينا نسرق أو نبيع بياناتك، مش هنعرف! لأن ما عندناش سيرفرات ولا قاعدة بيانات نبعتها عليها... محادثاتك بتعيش وتموت جوه الرام بتاع جهازك، فـ إطمن ومتقلقش خالص!"
                     </p>
@@ -640,31 +676,181 @@
                 navKeys: 'مفاتيح الـ API (API Keys)',
                 navLogs: 'السجلات والمواصفات (Logs & Specs)',
                 navDocs: 'التوصيل الخارجي (OpenAI Spec)',
+                statusStopped: 'الخادم متوقف',
+                statusRunning: 'الخادم يعمل (PID {pid})',
+                noActiveModel: 'لا يوجد موديل مفعّل',
+                btnSettings: 'الإعدادات',
+                btnAbout: 'عن المشروع',
+                btnRefresh: 'تحديث',
+                chatWelcome: 'مرحباً بك في محرك Omni AI Engine (Rust Edition). اختر أو نزّل موديل GGUF وابدأ المحادثة فوراً!',
+                chatPlaceholder: 'اكتب رسالتك للذكاء الاصطناعي هنا...',
+                btnSend: 'إرسال 🚀',
+                downloaderTitle: 'تنزيل موديل ذكاء اصطناعي (GGUF) عبر رابط مباشر',
+                downloaderDesc: 'أدخل رابط التنزيل المباشر لموديل بصيغة GGUF (مثلاً من HuggingFace) وسيتم تحميله وتخزينه محلياً في المحرك.',
+                filenamePlaceholder: 'اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)',
+                btnStartDownload: 'بدء التنزيل الآن ⚡',
+                tasksTitle: 'مهام التنزيل الحالية والسابقة',
+                noDownloads: 'لا توجد عمليات تنزيل جارية حالياً.',
+                engineTitle: 'التحكم في تشغيل محرك llama-server',
+                labelSelectModel: 'اختر الموديل لتشغيله:',
+                labelThreads: 'عدد الأنوية (Threads):',
+                labelCtx: 'حجم السياق (Context Size):',
+                labelPort: 'منفذ الـ API الداخلي (Port):',
+                btnStartEngine: 'تشغيل المحرك ▶️',
+                btnStopEngine: 'إيقاف المحرك 🛑',
+                keysTitle: 'إنشاء وإدارة مفاتيح الـ API Keys',
+                keysDesc: 'جميع الطلبات الخارجية الموجهة لمسارات /v1/* تتطلب مفتاح API صيغته (omni_sk_...) للحماية.',
+                keyNamePlaceholder: 'اسم المفتاح (مثلاً: App Key / Mobile Key)',
+                btnGenerateKey: 'توليد مفتاح جديد 🔑',
+                thKeyName: 'اسم المفتاح',
+                thKeyToken: 'مفتاح الـ API (Token)',
+                thCreated: 'تاريخ الإنشاء',
+                thAction: 'إجراء',
+                specsTitle: 'فحص مواصفات الجهاز وقدرة الموديلات التقديرية',
+                lblCores: 'عدد أنوية المعالج (CPU Cores)',
+                lblTotalRam: 'إجمالي الذاكرة (Total RAM)',
+                lblFreeRam: 'الذاكرة المتاحة (Free RAM)',
+                lblRecModel: '📊 الموديل التقديري المناسب لجهازك:',
+                logsTitle: '💻 سجلات الخادم المباشرة (Live Terminal Stream Logs)',
+                btnRefreshLogs: 'تحديث السجل 🔄',
+                docsTitle: 'كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)',
+                docsDesc: 'المحرك متوافق 100% مع معايير OpenAI API.',
+                settingsTitle: 'الإعدادات العامة (Settings)',
+                lblLanguage: '🌐 واجهة اللغة (UI Language):',
+                lblPowerControls: '🔴 التحكم بالسيرفر والعملية الحية:',
+                btnShutdown: '🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)',
+                shutdownDesc: 'هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.',
+                aboutTitle: 'عن مشروع Omni Engine',
+                aboutName: 'الاسم: Omni AI Engine v1.0 (Standalone Rust Edition)',
+                aboutAuthor: 'المطور والمؤسس: ielfeqi-rgb',
+                aboutGithub: 'رابط الـ GitHub الرسمي:',
+                privacyHeader: '📜 بند سياسة الخصوصية (Privacy Policy):',
                 privacy: '"بتدور على بند الخصوصية ليه يا عم؟ المحرك ده شغال 100% أوفلاين على كمبيوترك المباشر! يعني حتى لو حبّينا نسرق أو نبيع بياناتك، مش هنعرف! لأن ما عندناش سيرفرات ولا قاعدة بيانات نبعتها عليها... محادثاتك بتعيش وتموت جوه الرام بتاع جهازك، فـ إطمن ومتقلقش خالص!"'
             },
             en: {
                 dir: 'ltr',
                 navChat: 'Smart Chat',
                 navDownloader: 'Model Downloader (GGUF)',
-                navEngine: 'Server Management (Llama Engine)',
+                navEngine: 'Server Management',
                 navKeys: 'API Keys',
                 navLogs: 'Logs & Hardware Specs',
                 navDocs: 'OpenAI API Docs',
-                privacy: '"Why are you looking for a privacy policy? This software runs 100% offline on your machine! Even if we desperately wanted to harvest your data, we literally cannot because we own zero external cloud servers. Your data stays and dies inside your local RAM. Relax."'
+                statusStopped: 'Server Stopped',
+                statusRunning: 'Server Running (PID {pid})',
+                noActiveModel: 'No active model',
+                btnSettings: 'Settings',
+                btnAbout: 'About Project',
+                btnRefresh: 'Refresh',
+                chatWelcome: 'Welcome to Omni AI Engine (Rust Edition). Select or download a GGUF model to start chatting immediately!',
+                chatPlaceholder: 'Type your message to AI here...',
+                btnSend: 'Send 🚀',
+                downloaderTitle: 'Download AI Model (GGUF) via Direct URL',
+                downloaderDesc: 'Enter direct GGUF download URL (e.g. from HuggingFace) to download and store locally.',
+                filenamePlaceholder: 'Saved Filename (Optional, e.g. llama3-8b.gguf)',
+                btnStartDownload: 'Start Download Now ⚡',
+                tasksTitle: 'Current and Past Download Tasks',
+                noDownloads: 'No active downloads currently.',
+                engineTitle: 'Llama Server Control & Execution',
+                labelSelectModel: 'Select Model to Run:',
+                labelThreads: 'CPU Threads:',
+                labelCtx: 'Context Size:',
+                labelPort: 'Internal API Port:',
+                btnStartEngine: 'Start Engine ▶️',
+                btnStopEngine: 'Stop Engine 🛑',
+                keysTitle: 'Create & Manage API Keys',
+                keysDesc: 'All external requests to /v1/* endpoints require an API Key formatted as (omni_sk_...).',
+                keyNamePlaceholder: 'Key Name (e.g. App Key / Mobile Key)',
+                btnGenerateKey: 'Generate New Key 🔑',
+                thKeyName: 'Key Name',
+                thKeyToken: 'API Key (Token)',
+                thCreated: 'Created At',
+                thAction: 'Action',
+                specsTitle: 'Hardware Specs & Model Estimation',
+                lblCores: 'CPU Cores',
+                lblTotalRam: 'Total RAM',
+                lblFreeRam: 'Available RAM',
+                lblRecModel: '📊 Recommended Model Size for Your Device:',
+                logsTitle: '💻 Live Terminal Server Logs',
+                btnRefreshLogs: 'Refresh Logs 🔄',
+                docsTitle: 'How to Connect from External Apps (OpenAI Compatible)',
+                docsDesc: 'The engine is 100% compatible with OpenAI API standards.',
+                settingsTitle: 'General Settings',
+                lblLanguage: '🌐 UI Language:',
+                lblPowerControls: '🔴 Server & Live Process Control:',
+                btnShutdown: '🔴 Safe Power Shutdown (Stop Server & Engine)',
+                shutdownDesc: 'This button terminates the Rust omni_engine and llama-server completely.',
+                aboutTitle: 'About Omni Engine Project',
+                aboutName: 'Name: Omni AI Engine v1.0 (Standalone Rust Edition)',
+                aboutAuthor: 'Developer & Founder: ielfeqi-rgb',
+                aboutGithub: 'Official GitHub Link:',
+                privacyHeader: '📜 Privacy Policy Statement:',
+                privacy: '"Why on earth are you reading a privacy policy? This software runs 100% offline directly on your machine! Even if we desperately wanted to steal or sell your data, we literally cannot because we own zero cloud servers or remote databases. Your chats live and die inside your local RAM. Relax."'
             },
             fr: {
                 dir: 'ltr',
                 navChat: 'Chat Intelligent',
-                navDownloader: 'Téléchargeur (GGUF)',
+                navDownloader: 'Téléchargeur de Modèles (GGUF)',
                 navEngine: 'Gestion du Serveur',
                 navKeys: 'Clés API',
                 navLogs: 'Journaux et Spécifications',
-                navDocs: 'API OpenAI',
-                privacy: '"Pourquoi cherchez-vous une politique de confidentialité ? Ce logiciel fonctionne à 100% hors ligne sur votre machine ! Vos données restent exclusivement dans votre mémoire RAM."'
+                navDocs: 'API OpenAI Docs',
+                statusStopped: 'Serveur Arrêté',
+                statusRunning: 'Serveur en Cours (PID {pid})',
+                noActiveModel: 'Aucun modèle actif',
+                btnSettings: 'Paramètres',
+                btnAbout: 'À Propos',
+                btnRefresh: 'Actualiser',
+                chatWelcome: 'Bienvenue sur Omni AI Engine (Rust Edition). Sélectionnez ou téléchargez un modèle GGUF pour discuter !',
+                chatPlaceholder: 'Tapez votre message ici...',
+                btnSend: 'Envoyer 🚀',
+                downloaderTitle: 'Télécharger un Modèle IA (GGUF) via URL Directe',
+                downloaderDesc: 'Entrez l\'URL de téléchargement direct GGUF pour enregistrer le modèle localement.',
+                filenamePlaceholder: 'Nom du Fichier (Optionnel, ex. llama3-8b.gguf)',
+                btnStartDownload: 'Démarrer le Téléchargement ⚡',
+                tasksTitle: 'Tâches de Téléchargement',
+                noDownloads: 'Aucun téléchargement en cours.',
+                engineTitle: 'Contrôle du Serveur Llama',
+                labelSelectModel: 'Sélectionner le Modèle :',
+                labelThreads: 'Threads CPU :',
+                labelCtx: 'Taille de Contexte :',
+                labelPort: 'Port API Interne :',
+                btnStartEngine: 'Démarrer l\'Engine ▶️',
+                btnStopEngine: 'Arrêter l\'Engine 🛑',
+                keysTitle: 'Créer et Gérer les Clés API',
+                keysDesc: 'Toutes les requêtes externes vers /v1/* nécessitent une clé API au format (omni_sk_...).',
+                keyNamePlaceholder: 'Nom de la Clé (ex. Clé App)',
+                btnGenerateKey: 'Générer une Nouvelle Clé 🔑',
+                thKeyName: 'Nom de la Clé',
+                thKeyToken: 'Clé API (Token)',
+                thCreated: 'Date de Création',
+                thAction: 'Action',
+                specsTitle: 'Spécifications Matérielles et Estimation',
+                lblCores: 'Cœurs CPU',
+                lblTotalRam: 'RAM Totale',
+                lblFreeRam: 'RAM Disponible',
+                lblRecModel: '📊 Taille de Modèle Recommandée :',
+                logsTitle: '💻 Journaux Serveur en Direct',
+                btnRefreshLogs: 'Actualiser 🔄',
+                docsTitle: 'Comment se Connecter depuis des Applications Externes (Compatible OpenAI)',
+                docsDesc: 'L\'engine est 100% compatible avec les normes de l\'API OpenAI.',
+                settingsTitle: 'Paramètres Généraux',
+                lblLanguage: '🌐 Langue de l\'Interface :',
+                lblPowerControls: '🔴 Contrôle du Serveur :',
+                btnShutdown: '🔴 Arrêt Sécurisé du Serveur',
+                shutdownDesc: 'Ce bouton arrête complètement le processus Rust omni_engine et llama-server.',
+                aboutTitle: 'À Propos du Projet Omni Engine',
+                aboutName: 'Nom : Omni AI Engine v1.0 (Standalone Rust Edition)',
+                aboutAuthor: 'Développeur et Fondateur : ielfeqi-rgb',
+                aboutGithub: 'Lien GitHub Officiel :',
+                privacyHeader: '📜 Déclaration de Politique de Confidentialité :',
+                privacy: '"Pourquoi lisez-vous une politique de confidentialité ? Ce logiciel fonctionne à 100% hors ligne directement sur votre machine ! Vos discussions restent exclusivement dans votre mémoire RAM."'
             }
         };
 
+        let currentLang = 'ar';
+
         function changeLanguage(lang) {
+            currentLang = lang;
             const data = i18n[lang] || i18n.ar;
             document.documentElement.dir = data.dir;
             document.getElementById('sarcasticPrivacyText').innerText = data.privacy;
@@ -673,6 +859,13 @@
                 const key = el.getAttribute('data-i18n');
                 if(data[key]) el.innerText = data[key];
             });
+
+            document.querySelectorAll('[data-placeholder-i18n]').forEach(el => {
+                const key = el.getAttribute('data-placeholder-i18n');
+                if(data[key]) el.setAttribute('placeholder', data[key]);
+            });
+
+            fetchStatus();
         }
 
         function openModal(id) {
@@ -737,22 +930,23 @@
                 const dot = document.getElementById('statusDot');
                 const text = document.getElementById('statusText');
                 const modelText = document.getElementById('activeModelName');
+                const dataLang = i18n[currentLang] || i18n.ar;
 
                 if(data.is_running) {
                     dot.classList.add('active');
-                    text.innerText = 'الخادم يعمل (PID ' + data.pid + ')';
-                    modelText.innerText = 'الموديل المفعّل: ' + (data.active_model || 'غير محدد');
+                    text.innerText = (dataLang.statusRunning || 'Server Running').replace('{pid}', data.pid);
+                    modelText.innerText = (dataLang.activeModel || 'Active Model:') + ' ' + (data.active_model || '');
                 } else {
                     dot.classList.remove('active');
-                    text.innerText = 'الخادم متوقف';
-                    modelText.innerText = 'لا يوجد موديل مفعّل';
+                    text.innerText = dataLang.statusStopped || 'Server Stopped';
+                    modelText.innerText = dataLang.noActiveModel || 'No active model';
                 }
 
                 // Populate model select
                 const select = document.getElementById('modelSelect');
                 select.innerHTML = '';
                 if(data.available_models.length === 0) {
-                    select.innerHTML = '<option value="">لا توجد موديلات نزلت بعد (استخدم التنزيل)</option>';
+                    select.innerHTML = `<option value="">${currentLang === 'en' ? 'No models downloaded yet' : (currentLang === 'fr' ? 'Aucun modèle téléchargé' : 'لا توجد موديلات نزلت بعد')}</option>`;
                 } else {
                     data.available_models.forEach(m => {
                         const opt = document.createElement('option');
@@ -781,17 +975,17 @@
             });
             const data = await res.json();
             if(res.ok) {
-                alert('تم تشغيل خادم الذكاء الاصطناعي بنجاح!');
+                alert(currentLang === 'en' ? 'Engine started successfully!' : (currentLang === 'fr' ? 'Engine démarré !' : 'تم تشغيل خادم الذكاء الاصطناعي بنجاح!'));
                 fetchStatus();
             } else {
-                alert('خطأ: ' + (data.error || 'فشل التشغيل'));
+                alert((currentLang === 'en' ? 'Error: ' : 'خطأ: ') + (data.error || 'Failed'));
             }
         }
 
         async function stopEngine() {
             const res = await fetch('/api/server/stop', { method: 'POST' });
             if(res.ok) {
-                alert('تم إيقاف الخادم');
+                alert(currentLang === 'en' ? 'Engine stopped' : (currentLang === 'fr' ? 'Engine arrêté' : 'تم إيقاف الخادم'));
                 fetchStatus();
             }
         }
@@ -800,7 +994,7 @@
             const url = document.getElementById('downloadUrl').value.trim();
             const filename = document.getElementById('downloadFilename').value.trim();
 
-            if(!url) return alert('أدخل رابط التنزيل أولاً');
+            if(!url) return alert(currentLang === 'en' ? 'Enter download URL first' : 'أدخل رابط التنزيل أولاً');
 
             const res = await fetch('/api/models/download', {
                 method: 'POST',
@@ -809,7 +1003,7 @@
             });
 
             if(res.ok) {
-                alert('بدأت عملية التنزيل في الخلفية!');
+                alert(currentLang === 'en' ? 'Download started in background!' : 'بدأت عملية التنزيل في الخلفية!');
                 document.getElementById('downloadUrl').value = '';
                 fetchDownloads();
             }
@@ -820,9 +1014,10 @@
             const tasks = await res.json();
             const container = document.getElementById('downloadsList');
             container.innerHTML = '';
+            const dataLang = i18n[currentLang] || i18n.ar;
 
             if(tasks.length === 0) {
-                container.innerHTML = '<p style="color: var(--text-secondary);">لا توجد عمليات تنزيل جارية حالياً.</p>';
+                container.innerHTML = `<p style="color: var(--text-secondary);">${dataLang.noDownloads}</p>`;
                 return;
             }
 
@@ -838,7 +1033,7 @@
                         <div class="progress-fill" style="width: ${t.percent}%"></div>
                     </div>
                     <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
-                        ${t.is_completed ? '✅ اكتمال التنزيل' : (t.error ? '❌ خطأ: ' + t.error : 'جاري التنزيل...')}
+                        ${t.is_completed ? '✅ Completed' : (t.error ? '❌ Error: ' + t.error : 'Downloading...')}
                     </div>
                 `;
                 container.appendChild(item);
@@ -850,6 +1045,7 @@
             const keys = await res.json();
             const tbody = document.getElementById('apiKeysTable');
             tbody.innerHTML = '';
+            const dataLang = i18n[currentLang] || i18n.ar;
 
             keys.forEach(k => {
                 const tr = document.createElement('tr');
@@ -857,7 +1053,7 @@
                     <td>${k.name}</td>
                     <td><code style="color: #38bdf8;">${k.key}</code></td>
                     <td>${k.created_at}</td>
-                    <td><button class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;" onclick="revokeKey('${k.id}')">حذف</button></td>
+                    <td><button class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;" onclick="revokeKey('${k.id}')">${dataLang.thAction === 'Action' ? 'Delete' : 'حذف'}</button></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -877,7 +1073,7 @@
         }
 
         async function revokeKey(id) {
-            if(!confirm('هل أنت تأكد من إيقاف هذا المفتاح؟')) return;
+            if(!confirm(currentLang === 'en' ? 'Revoke this API Key?' : 'هل أنت تأكد من إيقاف هذا المفتاح؟')) return;
             await fetch('/api/keys/revoke/' + id, { method: 'DELETE' });
             fetchKeys();
         }
@@ -905,7 +1101,7 @@
             // Assistant placeholder
             const assistantDiv = document.createElement('div');
             assistantDiv.className = 'message assistant';
-            assistantDiv.innerText = 'جاري التفكير والتوليد...';
+            assistantDiv.innerText = currentLang === 'en' ? 'Thinking & generating...' : (currentLang === 'fr' ? 'Génération...' : 'جاري التفكير والتوليد...');
             chatMessages.appendChild(assistantDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -930,10 +1126,10 @@
                 if(res.ok && data.choices && data.choices[0]) {
                     assistantDiv.innerText = data.choices[0].message.content;
                 } else {
-                    assistantDiv.innerText = '⚠️ خطأ: ' + (data.error?.message || 'تأكد من تشغيل المحرك واختيار الموديل');
+                    assistantDiv.innerText = '⚠️ ' + (data.error?.message || (currentLang === 'en' ? 'Ensure engine is started and model is selected' : 'تأكد من تشغيل المحرك واختيار الموديل'));
                 }
             } catch(e) {
-                assistantDiv.innerText = '⚠️ تعذر الاتصال بالمحرك: ' + e.message;
+                assistantDiv.innerText = '⚠️ ' + (currentLang === 'en' ? 'Failed to connect: ' : 'تعذر الاتصال: ') + e.message;
             }
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
