@@ -75,7 +75,12 @@ impl ModelDownloader {
 
         tokio::spawn(async move {
             info!("Starting GGUF download from: {}", url);
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (X11; Linux x86_64)")
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
             match client.get(&url).send().await {
                 Ok(response) => {
                     if !response.status().is_success() {
