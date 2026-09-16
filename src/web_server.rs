@@ -38,6 +38,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/downloads", get(handle_get_downloads))
         .route("/api/server/start", post(handle_start_server))
         .route("/api/server/stop", post(handle_stop_server))
+        .route("/api/shutdown", post(handle_shutdown_server))
         .route("/api/keys", get(handle_list_keys))
         .route("/api/keys/generate", post(handle_create_key))
         .route("/api/keys/revoke/:id", delete(handle_revoke_key))
@@ -121,6 +122,18 @@ async fn handle_stop_server(State(state): State<AppState>) -> impl IntoResponse 
         Ok(_) => Json(json!({ "status": "stopped" })),
         Err(e) => Json(json!({ "error": e })),
     }
+}
+
+async fn handle_shutdown_server(State(state): State<AppState>) -> impl IntoResponse {
+    state.log_buffer.push("Shutting down entire Omni Engine process... Goodbye!".to_string());
+    let _ = state.llama_manager.stop();
+
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        std::process::exit(0);
+    });
+
+    Json(json!({ "status": "shutting_down", "message": "Omni Engine is shutting down safely." }))
 }
 
 async fn handle_list_keys(State(state): State<AppState>) -> impl IntoResponse {

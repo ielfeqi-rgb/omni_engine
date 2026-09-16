@@ -353,6 +353,38 @@
             font-weight: 800;
             color: #38bdf8;
         }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(8px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-card {
+            background: #1e293b;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 30px;
+            width: 90%;
+            max-width: 540px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
     </style>
 </head>
 <body>
@@ -364,18 +396,18 @@
         </div>
 
         <div class="nav-menu">
-            <div class="nav-item active" onclick="switchTab('chat')">💬 المحادثة الذكية</div>
-            <div class="nav-item" onclick="switchTab('downloader')">📥 تنزيل الموديلات (GGUF)</div>
-            <div class="nav-item" onclick="switchTab('engine')">⚙️ إدارة الخادم (Llama Engine)</div>
-            <div class="nav-item" onclick="switchTab('keys')">🔑 مفاتيح الـ API (API Keys)</div>
-            <div class="nav-item" onclick="switchTab('logs')">💻 السجلات والمواصفات (Logs & Specs)</div>
-            <div class="nav-item" onclick="switchTab('docs')">🌐 التوصيل الخارجي (OpenAI Spec)</div>
+            <div class="nav-item active" id="nav-chat" onclick="switchTab('chat')">💬 <span data-i18n="navChat">المحادثة الذكية</span></div>
+            <div class="nav-item" id="nav-downloader" onclick="switchTab('downloader')">📥 <span data-i18n="navDownloader">تنزيل الموديلات (GGUF)</span></div>
+            <div class="nav-item" id="nav-engine" onclick="switchTab('engine')">⚙️ <span data-i18n="navEngine">إدارة الخادم (Llama Engine)</span></div>
+            <div class="nav-item" id="nav-keys" onclick="switchTab('keys')">🔑 <span data-i18n="navKeys">مفاتيح الـ API (API Keys)</span></div>
+            <div class="nav-item" id="nav-logs" onclick="switchTab('logs')">💻 <span data-i18n="navLogs">السجلات والمواصفات (Logs & Specs)</span></div>
+            <div class="nav-item" id="nav-docs" onclick="switchTab('docs')">🌐 <span data-i18n="navDocs">التوصيل الخارجي (OpenAI Spec)</span></div>
         </div>
 
         <div class="status-badge">
             <div class="status-indicator">
                 <div class="dot" id="statusDot"></div>
-                <span id="statusText">الخادم متوقف</span>
+                <span id="statusText" data-i18n="statusStopped">الخادم متوقف</span>
             </div>
             <div style="color: var(--text-secondary); font-size: 11px;" id="activeModelName">لا يوجد موديل مفعّل</div>
         </div>
@@ -384,9 +416,11 @@
     <!-- Main Content -->
     <div class="main-content">
         <div class="topbar">
-            <div class="topbar-title" id="tabTitle">المحادثة الذكية</div>
+            <div class="topbar-title" id="tabTitle" data-i18n="navChat">المحادثة الذكية</div>
             <div style="display: flex; gap: 10px;">
-                <button class="btn btn-secondary" onclick="fetchStatus()">🔄 تحديث الحالة</button>
+                <button class="btn btn-secondary" onclick="openModal('settings')">⚙️ <span data-i18n="btnSettings">الإعدادات</span></button>
+                <button class="btn btn-secondary" onclick="openModal('about')">ℹ️ <span data-i18n="btnAbout">عن المشروع</span></button>
+                <button class="btn btn-secondary" onclick="fetchStatus()">🔄 <span data-i18n="btnRefresh">تحديث</span></button>
             </div>
         </div>
 
@@ -395,13 +429,13 @@
             <div class="panel active" id="panel-chat">
                 <div class="chat-container">
                     <div class="chat-messages" id="chatMessages">
-                        <div class="message assistant">
+                        <div class="message assistant" data-i18n="chatWelcome">
                             مرحباً بك في محرك **Omni AI Engine (Rust Edition)**. اختر أو نزّل موديل GGUF وابدأ المحادثة فوراً!
                         </div>
                     </div>
                     <div class="chat-input-bar">
                         <input type="text" id="chatInput" class="input-field" placeholder="اكتب رسالتك للذكاء الاصطناعي هنا..." onkeypress="handleKeyPress(event)">
-                        <button class="btn" onclick="sendMessage()">إرسال 🚀</button>
+                        <button class="btn" onclick="sendMessage()"><span data-i18n="btnSend">إرسال 🚀</span></button>
                     </div>
                 </div>
             </div>
@@ -409,21 +443,21 @@
             <!-- TAB 2: DOWNLOADER -->
             <div class="panel" id="panel-downloader">
                 <div class="card">
-                    <div class="card-title">📥 تنزيل موديل ذكاء اصطناعي (GGUF) عبر رابط مباشر</div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 20px;">
+                    <div class="card-title">📥 <span data-i18n="downloaderTitle">تنزيل موديل ذكاء اصطناعي (GGUF) عبر رابط مباشر</span></div>
+                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 20px;" data-i18n="downloaderDesc">
                         أدخل رابط التنزيل المباشر لموديل بصيغة GGUF (مثلاً من HuggingFace) وسيتم تحميله وتخزينه محلياً في المحرك.
                     </p>
                     <div style="display: flex; flex-direction: column; gap: 14px;">
                         <input type="text" id="downloadUrl" class="input-field" placeholder="https://huggingface.co/.../resolve/main/model.Q4_K_M.gguf">
                         <input type="text" id="downloadFilename" class="input-field" placeholder="اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)">
-                        <button class="btn" onclick="triggerDownload()">بدء التنزيل الآن ⚡</button>
+                        <button class="btn" onclick="triggerDownload()"><span data-i18n="btnStartDownload">بدء التنزيل الآن ⚡</span></button>
                     </div>
                 </div>
 
                 <div class="card" style="margin-top: 20px;">
-                    <div class="card-title">📊 مهام التنزيل الحالية والسابقة</div>
+                    <div class="card-title">📊 <span data-i18n="tasksTitle">مهام التنزيل الحالية والسابقة</span></div>
                     <div id="downloadsList">
-                        <p style="color: var(--text-secondary);">لا توجد عمليات تنزيل جارية حالياً.</p>
+                        <p style="color: var(--text-secondary);" data-i18n="noDownloads">لا توجد عمليات تنزيل جارية حالياً.</p>
                     </div>
                 </div>
             </div>
@@ -431,30 +465,30 @@
             <!-- TAB 3: ENGINE CONTROLS -->
             <div class="panel" id="panel-engine">
                 <div class="card">
-                    <div class="card-title">⚡ التحكم في تشغيل محرك llama-server</div>
+                    <div class="card-title">⚡ <span data-i18n="engineTitle">التحكم في تشغيل محرك llama-server</span></div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
                         <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);">اختر الموديل لتشغيله:</label>
+                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelSelectModel">اختر الموديل لتشغيله:</label>
                             <select id="modelSelect" class="input-field" style="margin-top: 6px;">
                                 <option value="">جاري تحميل الموديلات...</option>
                             </select>
                         </div>
                         <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);">عدد الأنوية (Threads):</label>
+                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelThreads">عدد الأنوية (Threads):</label>
                             <input type="number" id="engineThreads" class="input-field" value="4" style="margin-top: 6px;">
                         </div>
                         <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);">حجم السياق (Context Size):</label>
+                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelCtx">حجم السياق (Context Size):</label>
                             <input type="number" id="engineCtx" class="input-field" value="4096" style="margin-top: 6px;">
                         </div>
                         <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);">منفذ الـ API الداخلي (Port):</label>
+                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelPort">منفذ الـ API الداخلي (Port):</label>
                             <input type="number" id="enginePort" class="input-field" value="8081" readonly style="margin-top: 6px;">
                         </div>
                     </div>
                     <div style="display: flex; gap: 12px;">
-                        <button class="btn" onclick="startEngine()">تشغيل المحرك ▶️</button>
-                        <button class="btn btn-danger" onclick="stopEngine()">إيقاف المحرك 🛑</button>
+                        <button class="btn" onclick="startEngine()"><span data-i18n="btnStartEngine">تشغيل المحرك ▶️</span></button>
+                        <button class="btn btn-danger" onclick="stopEngine()"><span data-i18n="btnStopEngine">إيقاف المحرك 🛑</span></button>
                     </div>
                 </div>
             </div>
@@ -462,13 +496,13 @@
             <!-- TAB 4: API KEYS -->
             <div class="panel" id="panel-keys">
                 <div class="card">
-                    <div class="card-title">🔑 إنشاء وإدارة مفاتيح الـ API Keys</div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">
+                    <div class="card-title">🔑 <span data-i18n="keysTitle">إنشاء وإدارة مفاتيح الـ API Keys</span></div>
+                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;" data-i18n="keysDesc">
                         جميع الطلبات الخارجية الموجهة لمسارات `/v1/*` تتطلب مفتاح API صيغته (`omni_sk_...`) للحماية من الاستخدام غير المصرح به.
                     </p>
                     <div style="display: flex; gap: 12px; margin-bottom: 20px;">
                         <input type="text" id="keyNameInput" class="input-field" placeholder="اسم المفتاح (مثلاً: App Key / Mobile Key)">
-                        <button class="btn" onclick="createApiKey()">توليد مفتاح جديد 🔑</button>
+                        <button class="btn" onclick="createApiKey()"><span data-i18n="btnGenerateKey">توليد مفتاح جديد 🔑</span></button>
                     </div>
 
                     <table>
@@ -490,7 +524,7 @@
             <!-- TAB 5: LOGS & SPECS -->
             <div class="panel" id="panel-logs">
                 <div class="card">
-                    <div class="card-title">🖥️ فحص مواصفات الجهاز وقدرة الموديلات التقديرية</div>
+                    <div class="card-title">🖥️ <span data-i18n="specsTitle">فحص مواصفات الجهاز وقدرة الموديلات التقديرية</span></div>
                     <div class="spec-grid">
                         <div class="spec-box">
                             <span style="font-size: 12px; color: var(--text-secondary);">عدد أنوية المعالج (CPU Cores)</span>
@@ -538,44 +572,135 @@
     "messages": [{"role": "user", "content": "Hello AI!"}],
     "stream": false
   }'</pre>
-
-                    <h4 style="margin-top: 20px; font-size: 14px;">مثال باستخدام Python OpenAI Library:</h4>
-                    <pre>from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8090/v1",
-    api_key="omni_sk_YOUR_KEY_HERE"
-)
-
-response = client.chat.completions.create(
-    model="omni-model",
-    messages=[{"role": "user", "content": "مرحبا بك!"}]
-)
-
-print(response.choices[0].message.content)</pre>
                 </div>
             </div>
 
         </div>
     </div>
 
+    <!-- MODAL 1: SETTINGS -->
+    <div class="modal-overlay" id="modal-settings">
+        <div class="modal-card">
+            <div class="card-title" style="display: flex; justify-content: space-between;">
+                <span>⚙️ الإعدادات العامة (Settings)</span>
+                <button style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;" onclick="closeModal('settings')">✖</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+                <label style="font-size: 14px; font-weight: 700;">🌐 واجهة اللغة (UI Language):</label>
+                <select id="langSelect" class="input-field" onchange="changeLanguage(this.value)">
+                    <option value="ar" selected>العربية (Arabic) 🇪🇬</option>
+                    <option value="en">English (الإنجليزية) 🇬🇧</option>
+                    <option value="fr">Français (الفرنسية) 🇫🇷</option>
+                </select>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid var(--border);">
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <label style="font-size: 14px; font-weight: 700; color: var(--danger);">🔴 التحكم بالسيرفر والعملية الحية:</label>
+                <button class="btn btn-danger" onclick="shutdownServer()" style="width: 100%; padding: 14px; font-size: 15px;">
+                    🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)
+                </button>
+                <p style="font-size: 12px; color: var(--text-secondary);">هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: ABOUT & PRIVACY -->
+    <div class="modal-overlay" id="modal-about">
+        <div class="modal-card">
+            <div class="card-title" style="display: flex; justify-content: space-between;">
+                <span>ℹ️ عن مشروع Omni Engine</span>
+                <button style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;" onclick="closeModal('about')">✖</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.6;">
+                <p><strong>الاسم:</strong> Omni AI Engine v1.0 (Standalone Rust Edition)</p>
+                <p><strong>المطور والمؤسس:</strong> ielfeqi-rgb</p>
+                <p><strong>رابط الـ GitHub الرسمي:</strong> <a href="https://github.com/ielfeqi-rgb" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 700;">https://github.com/ielfeqi-rgb</a></p>
+
+                <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border); padding: 16px; border-radius: 12px; margin-top: 10px;">
+                    <div style="font-weight: 800; color: #f59e0b; margin-bottom: 6px;">📜 بند سياسة الخصوصية (Privacy Policy):</div>
+                    <p id="sarcasticPrivacyText" style="font-size: 13px; color: #cbd5e1; font-style: italic;">
+                        "بتدور على بند الخصوصية ليه يا عم؟ المحرك ده شغال 100% أوفلاين على كمبيوترك المباشر! يعني حتى لو حبّينا نسرق أو نبيع بياناتك، مش هنعرف! لأن ما عندناش سيرفرات ولا قاعدة بيانات نبعتها عليها... محادثاتك بتعيش وتموت جوه الرام بتاع جهازك، فـ إطمن ومتقلقش خالص!"
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
+        const i18n = {
+            ar: {
+                dir: 'rtl',
+                navChat: 'المحادثة الذكية',
+                navDownloader: 'تنزيل الموديلات (GGUF)',
+                navEngine: 'إدارة الخادم (Llama Engine)',
+                navKeys: 'مفاتيح الـ API (API Keys)',
+                navLogs: 'السجلات والمواصفات (Logs & Specs)',
+                navDocs: 'التوصيل الخارجي (OpenAI Spec)',
+                privacy: '"بتدور على بند الخصوصية ليه يا عم؟ المحرك ده شغال 100% أوفلاين على كمبيوترك المباشر! يعني حتى لو حبّينا نسرق أو نبيع بياناتك، مش هنعرف! لأن ما عندناش سيرفرات ولا قاعدة بيانات نبعتها عليها... محادثاتك بتعيش وتموت جوه الرام بتاع جهازك، فـ إطمن ومتقلقش خالص!"'
+            },
+            en: {
+                dir: 'ltr',
+                navChat: 'Smart Chat',
+                navDownloader: 'Model Downloader (GGUF)',
+                navEngine: 'Server Management (Llama Engine)',
+                navKeys: 'API Keys',
+                navLogs: 'Logs & Hardware Specs',
+                navDocs: 'OpenAI API Docs',
+                privacy: '"Why are you looking for a privacy policy? This software runs 100% offline on your machine! Even if we desperately wanted to harvest your data, we literally cannot because we own zero external cloud servers. Your data stays and dies inside your local RAM. Relax."'
+            },
+            fr: {
+                dir: 'ltr',
+                navChat: 'Chat Intelligent',
+                navDownloader: 'Téléchargeur (GGUF)',
+                navEngine: 'Gestion du Serveur',
+                navKeys: 'Clés API',
+                navLogs: 'Journaux et Spécifications',
+                navDocs: 'API OpenAI',
+                privacy: '"Pourquoi cherchez-vous une politique de confidentialité ? Ce logiciel fonctionne à 100% hors ligne sur votre machine ! Vos données restent exclusivement dans votre mémoire RAM."'
+            }
+        };
+
+        function changeLanguage(lang) {
+            const data = i18n[lang] || i18n.ar;
+            document.documentElement.dir = data.dir;
+            document.getElementById('sarcasticPrivacyText').innerText = data.privacy;
+            
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if(data[key]) el.innerText = data[key];
+            });
+        }
+
+        function openModal(id) {
+            document.getElementById('modal-' + id).classList.add('active');
+        }
+
+        function closeModal(id) {
+            document.getElementById('modal-' + id).classList.remove('active');
+        }
+
+        async function shutdownServer() {
+            if(!confirm('هل أنت متأكد من إيقاف السيرفر والمحرك بالكامل واغلاق التطبيق؟')) return;
+            try {
+                await fetch('/api/shutdown', { method: 'POST' });
+                alert('تم إرسال أمر الإيقاف! سيتم إغلاق التطبيق الآن.');
+                window.close();
+            } catch(e) {
+                alert('تم إغلاق الخادم.');
+            }
+        }
+
         function switchTab(tabId) {
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.panel').forEach(el => el.classList.remove('active'));
 
-            event.target.classList.add('active');
+            const navEl = document.getElementById('nav-' + tabId);
+            if(navEl) navEl.classList.add('active');
             document.getElementById('panel-' + tabId).classList.add('active');
-            
-            const titles = {
-                'chat': 'المحادثة الذكية',
-                'downloader': 'تنزيل الموديلات (GGUF)',
-                'engine': 'إدارة الخادم (Llama Engine)',
-                'keys': 'مفاتيح الـ API Keys',
-                'logs': 'السجلات والمواصفات (Logs & Specs)',
-                'docs': 'التوصيل الخارجي (OpenAI Spec)'
-            };
-            document.getElementById('tabTitle').innerText = titles[tabId];
 
             if(tabId === 'keys') fetchKeys();
             if(tabId === 'logs') { fetchSpecs(); fetchLogs(); }
