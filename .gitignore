@@ -1,3 +1,5 @@
 /target
 /models/*.gguf
-/config/apikeys.json
+/config/
+omni_engine
+

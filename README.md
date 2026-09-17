@@ -1,4 +1,4 @@
-# Omni AI Engine v1.0 (Standalone Rust Edition)
+# Omni AI Engine v1.0.1 (Standalone Rust Edition)
 
 > **Standalone Project Notice**: This project is a completely independent AI engine written in Rust. It operates autonomously and bears no relationship to any other repository or framework.
 
@@ -8,22 +8,22 @@
 
 **Omni AI Engine** is a single-binary, zero-runtime-dependency AI execution engine compiled natively in **Rust** wrapping `llama.cpp`. 
 
-It features an embedded web dashboard, an on-demand GGUF model downloader supporting HTTP redirects, an **OpenAI-compatible REST API (`/v1/chat/completions`)**, and an **API Key security middleware layer**.
+It features a full **Command-Line Interface (CLI)**, an embedded web dashboard, an on-demand GGUF model downloader supporting HTTP redirects, an **OpenAI-compatible REST API (`/v1/chat/completions`)**, and an **API Key security middleware layer**.
 
 ---
 
 ## 📌 Release Policy & License
 
-### Single Final Release (v1.0)
-This software is published as version 1.0 and constitutes the complete and final release. No feature requests will be reviewed, no roadmaps will be published, and no bug fixes will be issued. The codebase is provided as-is.
+### Release v1.0.1
+Version 1.0.1 introduces a comprehensive native **Terminal CLI & Engine Controller** allowing users to query system diagnostics, start and stop the local engine, run inference prompts directly from the console, manage API keys, and launch the web server.
 
 ### Unrestricted Open Source License
 This project is licensed under the **Unrestricted MIT / Public Domain License**. You are granted full rights to use, modify, fork, commercialize, or redistribute this software without seeking prior permission.
 
 ### Arabic Summary / ملخص باللغة العربية
-**مشروع محرك Omni AI Engine v1.0**: محرك ذكاء اصطناعي مستقل ومجمع بالكامل بلغة Rust.
+**مشروع محرك Omni AI Engine v1.0.1**: محرك ذكاء اصطناعي مستقل ومجمع بالكامل بلغة Rust.
 - **الترخيص**: حر ومفتوح المصدر بالكامل (MIT / Public Domain). لك مطلق الحرية في استخدامه أو تعديله أو بيعه أو إعادة توزيعه دون إذن من المطور.
-- **الخصوصية والتحديثات**: هذا هو الإصدار النهائي الكامل v1.0. الكود يعمل 100% محلياً على جهازك دون إرسال بيانات لخوادم خارجية.
+- **الجديد في v1.0.1**: إضافة تحكم كامل من سطر الأوامر (Terminal CLI) مع دعم أوامر الفحص (`status`, `models`)، والتشغيل والإيقاف (`start`, `stop`)، وطرح الأسئلة المباشرة أو الدردشة من التيرمينال (`ask`, `chat`)، وإدارة مفاتيح الـ API (`keys`).
 
 ---
 
@@ -33,8 +33,43 @@ We do not collect, process, or sell user data. This is not driven by external pr
 
 ---
 
+## 💻 Native Terminal CLI Usage
+
+Omni AI Engine includes a full CLI controller directly accessible from your terminal:
+
+```bash
+# 1. Inspect Hardware Specs & Engine Status
+./omni_engine status
+
+# 2. List Installed GGUF Models
+./omni_engine models
+
+# 3. Start Local Engine with a Model
+./omni_engine start qwen2.5-1.5b.gguf --port 8081 --ctx 2048
+
+# 4. Ask a Quick Question Directly from Terminal
+./omni_engine ask "Explain how TCP handshake works in simple terms"
+
+# 5. Interactive Multi-Turn Terminal Chat Session
+./omni_engine chat
+
+# 6. Manage API Keys
+./omni_engine keys list
+./omni_engine keys new "My-Server-Key"
+./omni_engine keys revoke <KEY_ID>
+
+# 7. Stop the Running Engine
+./omni_engine stop
+
+# 8. Launch the Web UI Dashboard & OpenAI HTTP Proxy
+./omni_engine serve --port 8090
+```
+
+---
+
 ## ✨ Core Features & Specifications
 
+* **Command-Line & Headless First**: Full CLI support for scripting, remote servers, and automation without opening a browser.
 * **Bare-Metal Native Execution**: Developed in Rust without Garbage Collection or Virtual Machine overhead. Serves HTTP requests directly via Linux kernel socket polling (`epoll`).
 * **100% OpenAI API Compatibility**: Exposes standard `/v1/chat/completions` endpoints supporting Server-Sent Events (SSE) streaming for direct integration with Cursor, Python `openai`, and Open WebUI.
 * **Hardware Diagnostics & Parameter Estimator**: Inspects system RAM and CPU capabilities to estimate maximum GGUF model sizes (7B, 13B, 32B, 70B+).
@@ -60,7 +95,7 @@ Compiled distribution binaries and release packages are published on the GitHub 
 ### Build & Run from Source
 ```bash
 cargo build --release
-./target/release/omni_engine
+./target/release/omni_engine serve
 ```
 
 ### Access Ports

@@ -1,6 +1,6 @@
 [package]
 name = "omni_engine"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["Omni AI Team"]
 description = "Standalone Rust AI Engine wrapping llama.cpp with Web UI, Model Downloader, OpenAI API & API Key Auth"
