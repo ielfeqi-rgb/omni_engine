@@ -1,0 +1,12 @@
+# Build targets
+target/
+
+# Local sensitive files
+*.key
+*.token
+*.env
+
+# System artifacts
+.DS_Store
+preview_*.png
+RESEARCH_PAPER.pdf
