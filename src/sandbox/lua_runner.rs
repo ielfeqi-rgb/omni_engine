@@ -30,6 +30,15 @@ impl LuaSandboxRunner {
     /// Execute Lua code with native Rust-bridged tools (vfs, browser, sys, terminal)
     pub fn run_script(&self, lua_code: &str) -> LuaRunResult {
         let lua = Lua::new();
+        let _ = lua.set_hook(
+            mlua::HookTriggers::default().every_nth_instruction(10_000),
+            |_lua, _debug| Err(mlua::Error::RuntimeError("CPU instruction quota exceeded (infinite loop prevented)".to_string())),
+        );
+        let _ = lua.globals().set("os", mlua::Value::Nil);
+        let _ = lua.globals().set("io", mlua::Value::Nil);
+        let _ = lua.globals().set("package", mlua::Value::Nil);
+        let _ = lua.globals().set("require", mlua::Value::Nil);
+
         let logs = Arc::new(std::sync::Mutex::new(Vec::new()));
 
         // 1. Bridge print function to capture logs
