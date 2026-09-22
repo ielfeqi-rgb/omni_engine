@@ -35,10 +35,11 @@ impl PrePassTriage {
         let mut is_execution_task = false;
         let mut detected_targets = Vec::new();
 
-        // 1. Web / News / Online signals
+        // 1. Web / News / Online / Information signals
         let web_signals = [
             "web", "internet", "news", "online", "search", "fetch", "download", "google",
-            "wikipedia", "articles", "نت", "انترنت", "أخبار", "اخبار", "مقال", "بحث", "تصفح"
+            "wikipedia", "articles", "today", "latest", "events", "world",
+            "نت", "انترنت", "أخبار", "اخبار", "مقال", "بحث", "تصفح", "احداث", "أحداث", "العالم", "جديد", "سوق"
         ];
         if web_signals.iter().any(|s| q.contains(s)) {
             required_tools.push(ToolCapability::WebBrowser);
@@ -48,32 +49,33 @@ impl PrePassTriage {
         // 2. Terminal / OS / Game launcher / Script execution signals
         let terminal_signals = [
             "terminal", "exec", "run", "launch", "launcher", "minecraft", "install", "build",
-            "compile", "cargo", "rust", "python", "bash", "shell", "apt", "script",
-            "ترمنال", "طرفية", "شغل", "شغّل", "لانشر", "ماين كرافت", "تثبيت", "برمجة", "كومبايل"
+            "compile", "cargo", "rust", "python", "bash", "shell", "apt", "script", "flatpak",
+            "ترمنال", "طرفية", "شغل", "شغّل", "لانشر", "ماين كرافت", "تثبيت", "برمجة", "كومبايل", "نفذ", "نفّذ"
         ];
         if terminal_signals.iter().any(|s| q.contains(s)) {
             required_tools.push(ToolCapability::TerminalBridge);
             is_execution_task = true;
         }
 
+        // Target filenames
+        for word in q.split_whitespace() {
+            let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ',' || c == '.');
+            if clean.ends_with(".txt") || clean.ends_with(".csv") || clean.ends_with(".json") || clean.ends_with(".rs") || clean.ends_with(".py") || clean.ends_with(".sh") || clean.ends_with(".md") {
+                detected_targets.push(clean.to_string());
+            }
+        }
+
         // 3. File / Storage / Document generation signals
         let file_signals = [
-            "file", "txt", "csv", "json", "doc", "save", "write", "create file", "export",
-            "ملف", "اكتب في", "حفظ", "انشئ ملف", "تصدير"
+            "file", "txt", "csv", "json", "doc", "save", "write", "create file", "export", "notes", "log", "summary",
+            "ملف", "اكتب في", "حفظ", "انشئ ملف", "تصدير", "تقرير", "سجل", "احفظ", "مستند", "ملخص"
         ];
-        if file_signals.iter().any(|s| q.contains(s)) || is_execution_task {
+        let has_explicit_file_intent = file_signals.iter().any(|s| q.contains(s)) || !detected_targets.is_empty();
+        if has_explicit_file_intent || required_tools.contains(&ToolCapability::WebBrowser) {
             if !required_tools.contains(&ToolCapability::MemoryVfs) {
                 required_tools.push(ToolCapability::MemoryVfs);
             }
             is_execution_task = true;
-        }
-
-        // Target filenames
-        for word in q.split_whitespace() {
-            let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ',' || c == '.');
-            if clean.ends_with(".txt") || clean.ends_with(".csv") || clean.ends_with(".json") || clean.ends_with(".rs") || clean.ends_with(".py") {
-                detected_targets.push(clean.to_string());
-            }
         }
 
         // System 2 Tri-Plan Synthesis
@@ -93,6 +95,17 @@ impl PrePassTriage {
                         "no html regex or string.match on web text".to_string(),
                         "never index or get length of nil variable".to_string(),
                         "pipe browser output directly into vfs.write".to_string(),
+                    ],
+                )
+            } else if required_tools.contains(&ToolCapability::TerminalBridge) && !required_tools.contains(&ToolCapability::MemoryVfs) {
+                (
+                    "terminal.exec(\"<command>\") -> execute direct host shell command".to_string(),
+                    "terminal.exec(\"<fallback_command>\") -> alternative flag or package".to_string(),
+                    "terminal.logs(20) -> inspect failure logs and diagnose".to_string(),
+                    vec![
+                        "terminal only: do NOT write files or use vfs".to_string(),
+                        "linux native only, no windows pe .exe".to_string(),
+                        "safe commands only, check exit codes with terminal.status".to_string(),
                     ],
                 )
             } else if required_tools.contains(&ToolCapability::TerminalBridge) {
@@ -187,5 +200,15 @@ mod tests {
         assert!(plan.plan_c.contains("web.fetch"));
         assert!(plan.caveman_constraints.iter().any(|c| c.contains("no html regex")));
         assert!(plan.distilled_something_i_know.contains("[SOMETHING I KNOW"));
+    }
+
+    #[test]
+    fn test_pre_pass_triage_terminal_only() {
+        let intent = PrePassTriage::evaluate("Check cargo check and compile code in terminal");
+        assert!(intent.is_execution_task);
+        assert_eq!(intent.required_tools, vec![ToolCapability::TerminalBridge]);
+        let plan = intent.dual_system_plan.expect("DualSystemPlan should exist");
+        assert!(plan.plan_a.contains("terminal.exec"));
+        assert!(plan.caveman_constraints.iter().any(|c| c.contains("terminal only")));
     }
 }

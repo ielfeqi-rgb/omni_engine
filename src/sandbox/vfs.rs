@@ -33,9 +33,22 @@ impl MemoryVfs {
         }
     }
 
+    /// Expand ~ to user $HOME and normalize paths for host portability
+    pub fn resolve_path<P: AsRef<Path>>(path: P) -> PathBuf {
+        let p = path.as_ref();
+        let p_str = p.to_string_lossy();
+        if p_str.starts_with("~/") || p_str == "~" {
+            if let Ok(home) = std::env::var("HOME") {
+                let sub = p_str.trim_start_matches('~').trim_start_matches('/');
+                return PathBuf::from(home).join(sub);
+            }
+        }
+        p.to_path_buf()
+    }
+
     /// Preload or mount a real file from host into RAM sandbox (read-only copy)
     pub fn preload_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
-        let path_buf = path.as_ref().to_path_buf();
+        let path_buf = Self::resolve_path(path);
         let mut original = self.original_snapshots.write().unwrap();
         let mut active = self.files.write().unwrap();
         original.insert(path_buf.clone(), content.to_vec());
@@ -44,14 +57,14 @@ impl MemoryVfs {
 
     /// Model writes or edits a file inside the isolated RAM VFS
     pub fn write_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
-        let path_buf = path.as_ref().to_path_buf();
+        let path_buf = Self::resolve_path(path);
         let mut active = self.files.write().unwrap();
         active.insert(path_buf, content.to_vec());
     }
 
     /// Read file content from RAM VFS
     pub fn read_file<P: AsRef<Path>>(&self, path: P) -> Option<Vec<u8>> {
-        let path_buf = path.as_ref().to_path_buf();
+        let path_buf = Self::resolve_path(path);
         let active = self.files.read().unwrap();
         active.get(&path_buf).cloned()
     }
@@ -63,14 +76,14 @@ impl MemoryVfs {
 
     /// Check if file exists in RAM VFS
     pub fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
-        let path_buf = path.as_ref().to_path_buf();
+        let path_buf = Self::resolve_path(path);
         let active = self.files.read().unwrap();
         active.contains_key(&path_buf)
     }
 
     /// Delete file inside RAM VFS
     pub fn delete_file<P: AsRef<Path>>(&self, path: P) -> bool {
-        let path_buf = path.as_ref().to_path_buf();
+        let path_buf = Self::resolve_path(path);
         let mut active = self.files.write().unwrap();
         active.remove(&path_buf).is_some()
     }
@@ -133,21 +146,22 @@ impl MemoryVfs {
         let mut committed = 0;
 
         for diff in &diffs {
+            let target_path = Self::resolve_path(&diff.path);
             match diff.change_type {
                 FileChangeType::Created | FileChangeType::Modified => {
-                    if let Some(parent) = diff.path.parent() {
+                    if let Some(parent) = target_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
                     if let Some(content) = self.read_file(&diff.path) {
-                        std::fs::write(&diff.path, content)
-                            .map_err(|e| format!("Failed to write to host file {:?}: {}", diff.path, e))?;
+                        std::fs::write(&target_path, content)
+                            .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
                         committed += 1;
                     }
                 }
                 FileChangeType::Deleted => {
-                    if diff.path.exists() {
-                        std::fs::remove_file(&diff.path)
-                            .map_err(|e| format!("Failed to remove host file {:?}: {}", diff.path, e))?;
+                    if target_path.exists() {
+                        std::fs::remove_file(&target_path)
+                            .map_err(|e| format!("Failed to remove host file {:?}: {}", target_path, e))?;
                         committed += 1;
                     }
                 }
@@ -200,5 +214,13 @@ mod tests {
         let res_unauth = vfs.commit_to_host(false);
         assert!(res_unauth.is_err());
         assert!(res_unauth.unwrap_err().contains("Authorization Denied"));
+    }
+
+    #[test]
+    fn test_resolve_path_home_expansion() {
+        if let Ok(home) = std::env::var("HOME") {
+            let resolved = MemoryVfs::resolve_path("~/documents/notes.txt");
+            assert_eq!(resolved, PathBuf::from(home).join("documents/notes.txt"));
+        }
     }
 }
