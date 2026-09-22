@@ -11,6 +11,9 @@ pub enum ExecutiveAction {
     WriteFile { path: PathBuf, content: String },
     RunSandbox { code: String },
     RunLua { script: String },
+    TerminalExec { command: String },
+    TerminalLogs { lines: usize },
+    TerminalStatus { job_id: u64 },
     RequestCommit { summary: String },
     None,
 }
@@ -25,11 +28,16 @@ pub struct ExecutionResult {
 pub struct ExecutiveHands {
     pub vfs: Arc<MemoryVfs>,
     pub base_dir: PathBuf,
+    pub terminal: Option<Arc<crate::sandbox::TerminalSessionBridge>>,
 }
 
 impl ExecutiveHands {
     pub fn new(vfs: Arc<MemoryVfs>, base_dir: PathBuf) -> Self {
-        Self { vfs, base_dir }
+        Self { vfs, base_dir, terminal: None }
+    }
+
+    pub fn with_terminal(vfs: Arc<MemoryVfs>, base_dir: PathBuf, terminal: Arc<crate::sandbox::TerminalSessionBridge>) -> Self {
+        Self { vfs, base_dir, terminal: Some(terminal) }
     }
 
     /// Parse raw text response from the model and identify executive commands
@@ -52,6 +60,29 @@ impl ExecutiveHands {
                 }
                 if cmd_part.starts_with("inspect_browser") {
                     return ExecutiveAction::InspectBrowser;
+                }
+                if cmd_part.starts_with("terminal_exec(") {
+                    let mut raw = cmd_part.trim_start_matches("terminal_exec(").trim_end_matches(')');
+                    if (raw.starts_with('"') && raw.ends_with('"')) || (raw.starts_with('\'') && raw.ends_with('\'')) {
+                        if raw.len() >= 2 {
+                            raw = &raw[1..raw.len() - 1];
+                        }
+                    }
+                    return ExecutiveAction::TerminalExec { command: raw.to_string() };
+                }
+                if cmd_part.starts_with("terminal_logs") {
+                    let lines = if cmd_part.starts_with("terminal_logs(") {
+                        let inner = cmd_part.trim_start_matches("terminal_logs(").trim_end_matches(')');
+                        inner.parse::<usize>().unwrap_or(20)
+                    } else {
+                        20
+                    };
+                    return ExecutiveAction::TerminalLogs { lines };
+                }
+                if cmd_part.starts_with("terminal_status(") {
+                    let id_str = cmd_part.trim_start_matches("terminal_status(").trim_end_matches(')');
+                    let job_id = id_str.parse::<u64>().unwrap_or(0);
+                    return ExecutiveAction::TerminalStatus { job_id };
                 }
             }
         }
@@ -168,7 +199,11 @@ impl ExecutiveHands {
                 }
             }
             ExecutiveAction::RunLua { script } => {
-                let runner = crate::sandbox::LuaSandboxRunner::new(self.vfs.clone());
+                let runner = if let Some(term) = &self.terminal {
+                    crate::sandbox::LuaSandboxRunner::with_terminal(self.vfs.clone(), term.clone())
+                } else {
+                    crate::sandbox::LuaSandboxRunner::new(self.vfs.clone())
+                };
                 let result = runner.run_script(&script);
                 if result.success {
                     let log_summary = if result.output_log.is_empty() {
@@ -185,6 +220,55 @@ impl ExecutiveHands {
                     ExecutionResult {
                         success: false,
                         output: format!("LUA_EXEC_FAILED: {}", result.error.unwrap_or_else(|| "Unknown runtime error".to_string())),
+                        requires_user_confirmation: false,
+                    }
+                }
+            }
+            ExecutiveAction::TerminalExec { command } => {
+                if let Some(term) = &self.terminal {
+                    let (job_id, status) = term.execute(&command);
+                    let success = matches!(status, crate::sandbox::JobStatus::Running | crate::sandbox::JobStatus::Completed { exit_code: 0 });
+                    ExecutionResult {
+                        success,
+                        output: format!("TERMINAL_DISPATCHED: Job #{} (Status: {:?})", job_id, status),
+                        requires_user_confirmation: true,
+                    }
+                } else {
+                    ExecutionResult {
+                        success: false,
+                        output: "TERMINAL_UNAVAILABLE: TerminalSessionBridge is not attached to this agent session.".to_string(),
+                        requires_user_confirmation: false,
+                    }
+                }
+            }
+            ExecutiveAction::TerminalLogs { lines } => {
+                if let Some(term) = &self.terminal {
+                    let recent_logs = term.get_logs(lines);
+                    ExecutionResult {
+                        success: true,
+                        output: format!("TERMINAL_LOGS ({} lines):\n{}", recent_logs.len(), recent_logs.join("\n")),
+                        requires_user_confirmation: false,
+                    }
+                } else {
+                    ExecutionResult {
+                        success: false,
+                        output: "TERMINAL_UNAVAILABLE: TerminalSessionBridge is not attached.".to_string(),
+                        requires_user_confirmation: false,
+                    }
+                }
+            }
+            ExecutiveAction::TerminalStatus { job_id } => {
+                if let Some(term) = &self.terminal {
+                    let status = term.poll_status(job_id);
+                    ExecutionResult {
+                        success: true,
+                        output: format!("TERMINAL_STATUS: Job #{} = {:?}", job_id, status),
+                        requires_user_confirmation: false,
+                    }
+                } else {
+                    ExecutionResult {
+                        success: false,
+                        output: "TERMINAL_UNAVAILABLE: TerminalSessionBridge is not attached.".to_string(),
                         requires_user_confirmation: false,
                     }
                 }
@@ -353,4 +437,43 @@ print("Nikola Tesla investigative report successfully staged in RAM VFS.")
         assert!(doc.contains("INVESTIGATIVE DOSSIER: THE ARCHITECT OF THE ELECTRIC AGE"));
         assert!(doc.contains("Polyphase AC"));
     }
+
+    #[test]
+    fn test_terminal_bridge_action_parsing_and_execution() {
+        let vfs = Arc::new(MemoryVfs::new());
+        let terminal = Arc::new(crate::sandbox::TerminalSessionBridge::new(100));
+        let hands = ExecutiveHands::with_terminal(vfs, PathBuf::from("."), terminal.clone());
+
+        // 1. Test parsing
+        let reply = "I will check the files.\nACTION: terminal_exec(\"echo 'PERSISTENT_SESSION_OK'\")";
+        let action = hands.parse_action(reply);
+        assert_eq!(action, ExecutiveAction::TerminalExec { command: "echo 'PERSISTENT_SESSION_OK'".to_string() });
+
+        // 2. Test execution
+        let result = hands.execute(action);
+        assert!(result.success);
+        assert!(result.output.contains("TERMINAL_DISPATCHED: Job #1"));
+
+        // Wait for thread to finish
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // 3. Test logs action
+        let logs_reply = "ACTION: terminal_logs(5)";
+        let logs_action = hands.parse_action(logs_reply);
+        assert_eq!(logs_action, ExecutiveAction::TerminalLogs { lines: 5 });
+
+        let logs_result = hands.execute(logs_action);
+        assert!(logs_result.success);
+        assert!(logs_result.output.contains("PERSISTENT_SESSION_OK"));
+
+        // 4. Test status action
+        let status_reply = "ACTION: terminal_status(1)";
+        let status_action = hands.parse_action(status_reply);
+        assert_eq!(status_action, ExecutiveAction::TerminalStatus { job_id: 1 });
+
+        let status_result = hands.execute(status_action);
+        assert!(status_result.success);
+        assert!(status_result.output.contains("Completed"));
+    }
 }
+
