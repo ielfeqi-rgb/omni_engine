@@ -2,17 +2,29 @@ use crate::planner::system_profile::ToolCapability;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DualSystemPlan {
+    pub is_execution_task: bool,
+    pub required_tools: Vec<ToolCapability>,
+    pub plan_a: String,
+    pub plan_b: String,
+    pub plan_c: String,
+    pub caveman_constraints: Vec<String>,
+    pub distilled_something_i_know: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecutionIntent {
     pub is_execution_task: bool,
     pub required_tools: Vec<ToolCapability>,
     pub core_intent: String,
     pub detected_targets: Vec<String>,
+    pub dual_system_plan: Option<DualSystemPlan>,
 }
 
 /// Epistemic Pre-Pass Triage (Pass 1).
 /// Evaluates user inquiry structure in an isolated ephemeral execution pass.
-/// Extracts required toolsets and intent while guaranteeing ZERO context residue
-/// and ZERO pollution in the primary Causal DAG.
+/// Extracts required toolsets, intent, and synthesizes System 2 Tri-Plans (A, B, C)
+/// while guaranteeing ZERO context residue and ZERO pollution in the primary Causal DAG.
 pub struct PrePassTriage;
 
 impl PrePassTriage {
@@ -64,11 +76,75 @@ impl PrePassTriage {
             }
         }
 
+        // System 2 Tri-Plan Synthesis
+        let dual_system_plan = if is_execution_task {
+            let target_str = if detected_targets.is_empty() {
+                "output.txt".to_string()
+            } else {
+                detected_targets.join(", ")
+            };
+
+            let (plan_a, plan_b, plan_c, mut caveman_constraints) = if required_tools.contains(&ToolCapability::WebBrowser) {
+                (
+                    format!("browser.search(\"{}\") -> direct vfs.write(\"{}\", news)", query.trim(), target_str),
+                    format!("browser.open(\"https://news.google.com\") -> vfs.write(\"{}\", ascii_summary)", target_str),
+                    format!("web.fetch(\"https://news.google.com/rss\") -> strip_tags -> vfs.write(\"{}\", text)", target_str),
+                    vec![
+                        "no html regex or string.match on web text".to_string(),
+                        "never index or get length of nil variable".to_string(),
+                        "pipe browser output directly into vfs.write".to_string(),
+                    ],
+                )
+            } else if required_tools.contains(&ToolCapability::TerminalBridge) {
+                (
+                    "terminal.exec(\"which <cmd> || flatpak list\") -> verify existing binary".to_string(),
+                    "terminal.exec(\"install command or portable script\")".to_string(),
+                    format!("vfs.write(\"{}\", \"#!/usr/bin/env bash\\n...\") -> synthesize launcher script", target_str),
+                    vec![
+                        "linux native only, no windows pe .exe".to_string(),
+                        "safe commands only, check exit codes".to_string(),
+                    ],
+                )
+            } else {
+                (
+                    format!("vfs.write(\"{}\", content) -> pure direct write", target_str),
+                    format!("vfs.write(\"{}\", fallback_content) -> minimal structure", target_str),
+                    "terminal.exec(\"echo '...' > output\") -> host shell fallback".to_string(),
+                    vec![
+                        "stage in memory vfs before commit".to_string(),
+                    ],
+                )
+            };
+
+            caveman_constraints.push("output executable lua block ```lua ... ``` only".to_string());
+
+            let mut blueprint = Vec::new();
+            blueprint.push("[SOMETHING I KNOW / SYSTEM 2 BLUEPRINT]:".to_string());
+            blueprint.push(format!("* TARGET: {}", target_str));
+            blueprint.push(format!("* PLAN A (Primary): {}", plan_a));
+            blueprint.push(format!("* PLAN B (Fallback): {}", plan_b));
+            blueprint.push(format!("* PLAN C (Last Resort): {}", plan_c));
+            blueprint.push(format!("* CAVEMAN INVARIANTS: {}", caveman_constraints.join("; ")));
+
+            Some(DualSystemPlan {
+                is_execution_task: true,
+                required_tools: required_tools.clone(),
+                plan_a,
+                plan_b,
+                plan_c,
+                caveman_constraints,
+                distilled_something_i_know: blueprint.join("\n"),
+            })
+        } else {
+            None
+        };
+
         ExecutionIntent {
             is_execution_task,
             required_tools,
             core_intent: query.trim().to_string(),
             detected_targets,
+            dual_system_plan,
         }
     }
 }
@@ -98,5 +174,18 @@ mod tests {
         let intent = PrePassTriage::evaluate("How does quantum gravity work?");
         assert!(!intent.is_execution_task);
         assert!(intent.required_tools.is_empty());
+        assert!(intent.dual_system_plan.is_none());
+    }
+
+    #[test]
+    fn test_dual_system_tri_plan_synthesis() {
+        let intent = PrePassTriage::evaluate("Download news from internet and save to /home/hema/today_news.txt");
+        assert!(intent.is_execution_task);
+        let plan = intent.dual_system_plan.expect("DualSystemPlan should be generated");
+        assert!(plan.plan_a.contains("browser.search"));
+        assert!(plan.plan_b.contains("browser.open"));
+        assert!(plan.plan_c.contains("web.fetch"));
+        assert!(plan.caveman_constraints.iter().any(|c| c.contains("no html regex")));
+        assert!(plan.distilled_something_i_know.contains("[SOMETHING I KNOW"));
     }
 }

@@ -55,7 +55,7 @@ r#"You are Omni Assistant, an intelligent and helpful assistant running on {}.
         }
 
         if tools.contains(&ToolCapability::WebBrowser) {
-            tools_desc.push("  * `browser.search(query)`: searches the web for latest news, headlines, or articles and returns structured text summaries.");
+            tools_desc.push("  * `browser.search(query)`: searches the web for latest news, headlines, or articles and returns structured text summaries. NEVER parse HTML or regex; write result directly to vfs.");
             tools_desc.push("  * `browser.open(url)`: fetches a web page and projects interactive elements into a clean ASCII grid.");
             tools_desc.push("  * `web.fetch(url)`: performs raw HTTP GET for specific URLs.");
 
@@ -104,6 +104,36 @@ Execute with absolute precision. Output executable Lua code blocks to accomplish
             examples_str
         )
     }
+
+    pub fn build_system_2_grounded_prompt(
+        tools: &[ToolCapability],
+        something_i_know: &str,
+        causal_feedback: Option<&str>,
+    ) -> String {
+        let base = Self::build_tailored_prompt(tools);
+        let mut sections = Vec::new();
+        sections.push(base);
+
+        if !something_i_know.is_empty() {
+            sections.push(format!(
+r#"[SOMETHING I KNOW (SYSTEM 2 BLUEPRINT)]:
+{}
+Follow this blueprint strictly."#,
+                something_i_know.trim()
+            ));
+        }
+
+        if let Some(feedback) = causal_feedback {
+            sections.push(format!(
+r#"[CAUSAL FEEDBACK - DEAD END PRUNED VIA KV ROLLBACK]:
+{}
+CRITICAL INSTRUCTION: Your previous attempt trapped and its tokens were purged from the KV cache. Obey the causal lesson above and execute the fallback plan without repeating the trapped pattern."#,
+                feedback.trim()
+            ));
+        }
+
+        sections.join("\n\n")
+    }
 }
 
 #[cfg(test)]
@@ -130,5 +160,18 @@ mod tests {
         let prompt = GroundedSystemProfile::build_tailored_prompt(&[ToolCapability::TerminalBridge]);
         assert!(prompt.contains("terminal.exec"));
         assert!(!prompt.contains("browser.search"));
+    }
+
+    #[test]
+    fn test_system_2_grounded_prompt_with_feedback() {
+        let prompt = GroundedSystemProfile::build_system_2_grounded_prompt(
+            &[ToolCapability::WebBrowser, ToolCapability::MemoryVfs],
+            "* PLAN A: browser.search -> vfs.write",
+            Some("Trap: attempt to index nil. Rule: use browser.search directly."),
+        );
+        assert!(prompt.contains("[SOMETHING I KNOW (SYSTEM 2 BLUEPRINT)]"));
+        assert!(prompt.contains("* PLAN A: browser.search -> vfs.write"));
+        assert!(prompt.contains("[CAUSAL FEEDBACK - DEAD END PRUNED VIA KV ROLLBACK]"));
+        assert!(prompt.contains("Trap: attempt to index nil"));
     }
 }

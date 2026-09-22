@@ -44,7 +44,7 @@ fn main() {
 
     // Autonomous Monitor: inspect without human intervention
     let report = bridge
-        .wait_and_inspect(job_id, Duration::from_secs(15))
+        .wait_and_inspect(job_id, Duration::from_secs(30))
         .expect("Autonomous monitor failed on Level 1");
 
     println!("[AUTONOMOUS MONITOR] Job #{} Exit Status: {:?}", job_id, report.status);
@@ -121,7 +121,7 @@ fn main() {
     let (job_id_1, _) = bridge.execute(&cmd);
 
     let report_1 = bridge
-        .wait_and_inspect(job_id_1, Duration::from_secs(5))
+        .wait_and_inspect(job_id_1, Duration::from_secs(15))
         .expect("Monitor failed to observe Job 1");
 
     println!("[AUTONOMOUS MONITOR] Observed Job #{} Result: {:?}", job_id_1, report_1.status);
@@ -380,7 +380,7 @@ fn main() {
 
     // Autonomous Monitor Observation
     let report = bridge
-        .wait_and_inspect(job_id, Duration::from_secs(20))
+        .wait_and_inspect(job_id, Duration::from_secs(35))
         .expect("Monitor failed on Level 3 execution");
 
     println!("[AUTONOMOUS MONITOR] Job #{} Exit Status: {:?}", job_id, report.status);

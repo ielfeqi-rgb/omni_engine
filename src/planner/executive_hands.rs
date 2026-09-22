@@ -454,8 +454,17 @@ print("Nikola Tesla investigative report successfully staged in RAM VFS.")
         assert!(result.success);
         assert!(result.output.contains("TERMINAL_DISPATCHED: Job #1"));
 
-        // Wait for thread to finish
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        // Poll for completion (up to 2 seconds)
+        let mut completed = false;
+        for _ in 0..40 {
+            let st = hands.execute(hands.parse_action("ACTION: terminal_status(1)"));
+            if st.output.contains("Completed") {
+                completed = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(completed, "Terminal job should have completed within timeout");
 
         // 3. Test logs action
         let logs_reply = "ACTION: terminal_logs(5)";

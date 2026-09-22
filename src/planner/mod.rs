@@ -9,5 +9,6 @@ pub mod system_profile;
 
 pub use executive_hands::{ExecutiveHands, ExecutiveAction};
 pub use mode_router::{ModeRouter, ReasoningMode};
-pub use pre_pass_triage::{ExecutionIntent, PrePassTriage};
+pub use pre_pass_triage::{ExecutionIntent, PrePassTriage, DualSystemPlan};
+pub use supervisor::InternalSupervisorProbe;
 pub use system_profile::{GroundedSystemProfile, ToolCapability};
