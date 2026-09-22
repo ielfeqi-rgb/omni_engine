@@ -14,6 +14,16 @@ pub enum JobStatus {
 }
 
 #[derive(Debug, Clone)]
+pub struct DiagnosticReport {
+    pub job_id: u64,
+    pub status: JobStatus,
+    pub stdout_lines: Vec<String>,
+    pub stderr_lines: Vec<String>,
+    pub compiler_errors: Vec<String>,
+    pub is_success: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct TerminalJob {
     pub job_id: u64,
     pub command: String,
@@ -207,10 +217,58 @@ impl TerminalSessionBridge {
         jobs.iter().find(|j| j.job_id == job_id).map(|j| j.status.clone())
     }
 
-    /// Get total number of running jobs
-    pub fn active_jobs_count(&self) -> usize {
-        let jobs = self.jobs.lock().unwrap();
-        jobs.iter().filter(|j| j.status == JobStatus::Running).count()
+    /// Autonomously monitor a job until completion or timeout, extracting structured diagnostics.
+    pub fn wait_and_inspect(&self, job_id: u64, timeout: std::time::Duration) -> Result<DiagnosticReport, String> {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = self.poll_status(job_id) {
+                match status {
+                    JobStatus::Running => {
+                        if start.elapsed() >= timeout {
+                            return Err(format!("Timeout after {:?} waiting for Job #{}", timeout, job_id));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(30));
+                    }
+                    _ => {
+                        // Small grace period for pipe flushing
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        let buf = self.log_buffer.lock().unwrap();
+                        let job_tag = format!("[Job #{}]", job_id);
+                        let job_err_tag = format!("[Job #{} STDERR]", job_id);
+
+                        let mut stdout_lines = Vec::new();
+                        let mut stderr_lines = Vec::new();
+                        let mut compiler_errors = Vec::new();
+
+                        for line in buf.iter() {
+                            if line.contains(&job_err_tag) {
+                                let clean = line.replace(&job_err_tag, "").trim().to_string();
+                                if clean.contains("error[E") || clean.contains("error:") || clean.contains("panic") || clean.contains("Traceback") || clean.contains("assert") {
+                                    compiler_errors.push(clean.clone());
+                                }
+                                stderr_lines.push(clean);
+                            } else if line.contains(&job_tag) {
+                                let clean = line.replace(&job_tag, "").trim().to_string();
+                                stdout_lines.push(clean);
+                            }
+                        }
+
+                        let is_success = matches!(status, JobStatus::Completed { exit_code: 0 });
+
+                        return Ok(DiagnosticReport {
+                            job_id,
+                            status,
+                            stdout_lines,
+                            stderr_lines,
+                            compiler_errors,
+                            is_success,
+                        });
+                    }
+                }
+            } else {
+                return Err(format!("Job #{} not found", job_id));
+            }
+        }
     }
 
     fn append_log(&self, line: String) {

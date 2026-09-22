@@ -91,6 +91,16 @@ impl InternalSupervisorProbe {
         }
     }
 
+    pub fn mark_branch_validated(&self, branch_id: &str) {
+        let mut b = self.branches.lock().unwrap();
+        for branch in b.iter_mut() {
+            if branch.branch_id == branch_id {
+                branch.status = BranchStatus::ValidatedAndMerged;
+                self.record_telemetry(&format!("BRANCH_VALIDATED: id='{}'", branch_id));
+            }
+        }
+    }
+
     /// Trap detection + Causal Distillation + Surgical KV-Pruning signal
     pub fn prune_branch_with_causal_lesson(
         &self,

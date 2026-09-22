@@ -5,6 +5,14 @@ edition = "2021"
 authors = ["Omni AI Team"]
 description = "Standalone Rust AI Engine wrapping llama.cpp with Web UI, Model Downloader, OpenAI API & API Key Auth"
 
+[lib]
+name = "omni_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omni_engine"
+path = "src/main.rs"
+
 [dependencies]
 tokio = { version = "1.38", features = ["full"] }
 axum = { version = "0.7", features = ["macros"] }
