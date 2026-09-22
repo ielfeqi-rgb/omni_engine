@@ -1,6 +1,14 @@
 use crate::planner::system_profile::ToolCapability;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SpeculativeTarget {
+    TermHost,
+    WebBrowser,
+    DirectVfs,
+    PureChat,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DualSystemPlan {
     pub is_execution_task: bool,
@@ -19,6 +27,7 @@ pub struct ExecutionIntent {
     pub core_intent: String,
     pub detected_targets: Vec<String>,
     pub dual_system_plan: Option<DualSystemPlan>,
+    pub speculative_target: SpeculativeTarget,
 }
 
 /// Epistemic Pre-Pass Triage (Pass 1).
@@ -152,13 +161,55 @@ impl PrePassTriage {
             None
         };
 
+        let speculative_target = if required_tools.contains(&ToolCapability::TerminalBridge) {
+            SpeculativeTarget::TermHost
+        } else if required_tools.contains(&ToolCapability::WebBrowser) {
+            SpeculativeTarget::WebBrowser
+        } else if required_tools.contains(&ToolCapability::MemoryVfs) {
+            SpeculativeTarget::DirectVfs
+        } else {
+            SpeculativeTarget::PureChat
+        };
+
         ExecutionIntent {
             is_execution_task,
             required_tools,
             core_intent: query.trim().to_string(),
             detected_targets,
             dual_system_plan,
+            speculative_target,
         }
+    }
+
+    pub fn probe_fast_intent(query: &str) -> SpeculativeTarget {
+        let q = query.trim().to_lowercase();
+        let terminal_signals = [
+            "terminal", "exec", "run", "launch", "launcher", "minecraft", "install", "build",
+            "compile", "cargo", "rust", "python", "bash", "shell", "apt", "script", "flatpak",
+            "ترمنال", "طرفية", "شغل", "شغّل", "لانشر", "ماين كرافت", "تثبيت", "برمجة", "كومبايل", "نفذ", "نفّذ"
+        ];
+        if terminal_signals.iter().any(|s| q.contains(s)) {
+            return SpeculativeTarget::TermHost;
+        }
+
+        let web_signals = [
+            "web", "internet", "news", "online", "search", "fetch", "download", "google",
+            "wikipedia", "articles", "today", "latest", "events", "world",
+            "نت", "انترنت", "أخبار", "اخبار", "مقال", "بحث", "تصفح", "احداث", "أحداث", "العالم", "جديد", "سوق"
+        ];
+        if web_signals.iter().any(|s| q.contains(s)) {
+            return SpeculativeTarget::WebBrowser;
+        }
+
+        let file_signals = [
+            "file", "txt", "csv", "json", "doc", "save", "write", "create file", "export", "notes", "log", "summary",
+            "ملف", "اكتب في", "حفظ", "انشئ ملف", "تصدير", "تقرير", "سجل", "احفظ", "مستند", "ملخص"
+        ];
+        if file_signals.iter().any(|s| q.contains(s)) {
+            return SpeculativeTarget::DirectVfs;
+        }
+
+        SpeculativeTarget::PureChat
     }
 }
 
@@ -210,5 +261,30 @@ mod tests {
         let plan = intent.dual_system_plan.expect("DualSystemPlan should exist");
         assert!(plan.plan_a.contains("terminal.exec"));
         assert!(plan.caveman_constraints.iter().any(|c| c.contains("terminal only")));
+        assert_eq!(intent.speculative_target, SpeculativeTarget::TermHost);
+    }
+
+    #[test]
+    fn test_speculative_intent_probe_targets() {
+        assert_eq!(
+            PrePassTriage::probe_fast_intent("run cargo build in terminal"),
+            SpeculativeTarget::TermHost
+        );
+        assert_eq!(
+            PrePassTriage::probe_fast_intent("شغل أمر الطرفية"),
+            SpeculativeTarget::TermHost
+        );
+        assert_eq!(
+            PrePassTriage::probe_fast_intent("get latest world news online"),
+            SpeculativeTarget::WebBrowser
+        );
+        assert_eq!(
+            PrePassTriage::probe_fast_intent("write summary to report.txt"),
+            SpeculativeTarget::DirectVfs
+        );
+        assert_eq!(
+            PrePassTriage::probe_fast_intent("what is the theory of relativity?"),
+            SpeculativeTarget::PureChat
+        );
     }
 }
