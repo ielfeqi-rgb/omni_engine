@@ -161,7 +161,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             None,
         );
         if !conversation.is_empty() {
-            conversation[0].content = initial_system_prompt;
+            conversation[0].content = initial_system_prompt.clone();
         }
 
         // Pass 2: System 1 Execution Pass
@@ -357,16 +357,40 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                                 // Crucial: full_response is NOT pushed to conversation (KV cache rollback!)
                                 continue;
                             } else {
-                                // Final attempt failed
                                 println!(
                                     "  {} {}",
-                                    "⚡ [EXECUTIVE ACTION FAILED AFTER RETRIES]:".bright_red().bold(),
-                                    exec_res.output.bright_red()
+                                    "💀 [EPISTEMIC APOPTOSIS TRIGGERED]:".bright_red().bold(),
+                                    "Generation 1 dead-end reached (3 traps). Purging rotten branch.".red()
+                                );
+
+                                let testament = supervisor.trigger_epistemic_apoptosis(&full_response);
+                                println!(
+                                    "  {} Extracted {} raw testament tokens directly.",
+                                    "🧬 [ANCESTRAL TESTAMENT ACQUIRED]:".bright_purple().bold(),
+                                    testament.testament_tokens_raw.len()
+                                );
+
+                                println!(
+                                    "  {} Rebirthing fresh generation with ancestral epigenetic prefix...",
+                                    "✨ [EPIGENETIC CACHE REBIRTH]:".bright_cyan().bold()
+                                );
+
+                                conversation.clear();
+                                let reborn_system = format!(
+                                    "{}\n\n[ANCESTRAL EPIGENETIC MEMORY FROM PREVIOUS EXTINCT GENERATION]:\n{}\n[SURVIVE: Strict compliance with ancestral memory required.]",
+                                    initial_system_prompt,
+                                    testament.testament_tokens_raw
                                 );
                                 conversation.push(ChatMessage {
-                                    role: "assistant".to_string(),
-                                    content: full_response,
+                                    role: "system".to_string(),
+                                    content: reborn_system,
                                 });
+                                conversation.push(ChatMessage {
+                                    role: "user".to_string(),
+                                    content: format!("{} (AVOID EXTINCTION: Follow ancestral rules directly)", query),
+                                });
+
+                                println!();
                                 break;
                             }
                         } else {

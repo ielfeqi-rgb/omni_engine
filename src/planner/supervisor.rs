@@ -207,11 +207,44 @@ impl InternalSupervisorProbe {
         )
     }
 
+    pub fn trigger_epistemic_apoptosis(&self, raw_dying_stream: &str) -> AncestralTestament {
+        let mut b = self.branches.lock().unwrap();
+        b.clear();
+        let mut l = self.lessons.lock().unwrap();
+        l.clear();
+
+        let clean_testament = raw_dying_stream
+            .lines()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && (s.starts_with('-') || s.starts_with('*') || s.contains("DO NOT") || s.contains("CRITICAL") || s.contains("AVOID") || s.contains("RULE")))
+            .collect::<Vec<&str>>()
+            .join("\n");
+
+        let final_testament = if clean_testament.is_empty() {
+            raw_dying_stream.trim().to_string()
+        } else {
+            clean_testament
+        };
+
+        self.record_telemetry("EPISTEMIC_APOPTOSIS: Rotten tree purged. Ancestral testament preserved.");
+
+        AncestralTestament {
+            testament_tokens_raw: final_testament,
+            generation_index: 2,
+        }
+    }
+
     fn record_telemetry(&self, entry: &str) {
         let mut stream = self.probe_telemetry_stream.lock().unwrap();
         let ts = self.session_start.elapsed().as_millis();
         stream.push(format!("[{:#06}ms] {}", ts, entry));
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AncestralTestament {
+    pub testament_tokens_raw: String,
+    pub generation_index: usize,
 }
 
 #[cfg(test)]
@@ -260,5 +293,26 @@ mod tests {
         let dump = supervisor.dump_supervisor_dense_telemetry();
         assert!(dump.contains("branches_total=2"));
         assert!(dump.contains("active_lessons=1"));
+    }
+
+    #[test]
+    fn test_supervisor_epistemic_apoptosis_and_ancestral_testament() {
+        let supervisor = InternalSupervisorProbe::new();
+        supervisor.register_branch("B1", "Plan A", vec!["main.rs".to_string()]);
+
+        let dying_stream = r#"
+            I tried to use regex and failed repeatedly.
+            - CRITICAL: AVOID parsing raw HTML with string.match
+            - RULE: Pipe browser.search directly to vfs.write
+        "#;
+
+        let testament = supervisor.trigger_epistemic_apoptosis(dying_stream);
+        assert_eq!(testament.generation_index, 2);
+        assert!(testament.testament_tokens_raw.contains("CRITICAL: AVOID parsing"));
+        assert!(testament.testament_tokens_raw.contains("RULE: Pipe browser.search"));
+
+        let dump = supervisor.dump_supervisor_dense_telemetry();
+        assert!(dump.contains("branches_total=0"));
+        assert!(dump.contains("active_lessons=0"));
     }
 }
