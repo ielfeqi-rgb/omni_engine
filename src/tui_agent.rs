@@ -98,6 +98,22 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             _ => {}
         }
 
+        // Pass 1: Ephemeral Micro-Triage (Zero context penalty, zero Causal DAG pollution)
+        let intent = crate::planner::PrePassTriage::evaluate(query);
+        println!(
+            "  {} [Task={}, Tools={:?}, Targets={:?}]",
+            "🧭 [EPISTEMIC TRIAGE PASS 1]:".bright_magenta().bold(),
+            intent.is_execution_task,
+            intent.required_tools,
+            intent.detected_targets
+        );
+
+        // Synthesize Tailored System Prompt for Pass 2 (Pristine, zero residue)
+        let tailored_system_prompt = crate::planner::GroundedSystemProfile::build_tailored_prompt(&intent.required_tools);
+        if !conversation.is_empty() {
+            conversation[0].content = tailored_system_prompt;
+        }
+
         // Triage Assessment: FastInteractive vs DeepAutonomous
         let triage = crate::planner::ModeRouter::assess_request(query);
         match triage.selected_mode {
@@ -121,7 +137,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             }
         }
 
-        // Model invocation with streaming-style Spinner and Live Output
+        // Pass 2: Grounded Execution Pass (Model sees user query with pristine tailored context)
         conversation.push(ChatMessage {
             role: "user".to_string(),
             content: query.to_string(),

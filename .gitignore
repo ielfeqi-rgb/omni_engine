@@ -10,3 +10,5 @@ target/
 .DS_Store
 preview_*.png
 RESEARCH_PAPER.pdf
+config/
+models
