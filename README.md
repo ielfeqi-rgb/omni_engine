@@ -1,25 +1,3 @@
----
-language:
-- en
-license: apache-2.0
-base_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
-tags:
-- rust
-- agentic-ai
-- causal-inference
-- kv-cache
-- sovereign-ai
-- edge-ai
-- autonomous-agents
-- zero-dependency
-- lua-sandbox
-datasets:
-- custom
-metrics:
-- accuracy
-pipeline_tag: text-generation
----
-
 # Omni Engine v2.0: Sovereign Autonomous Agent Runtime & Causal-DAG KV-Cache Pruning
 
 [![Rust 1.75+](https://img.shields.io/badge/Rust-1.75%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
@@ -45,7 +23,7 @@ When a small model (1.5B–3B) attempts complex multi-step reasoning, standard i
 **Omni Engine re-engineers this foundation from first principles in pure Rust:**
 - **Zero Host Prerequisites**: In-binary embedded Lua 5.4 sandbox (`mlua` 0.9 vendored) with zero pip/npm/go installations needed on the host.
 - **In-Memory RAM Virtual Disk (`MemoryVfs`)**: All file manipulations, spreadsheets, and intermediate documents are created strictly in volatile memory. A single byte never touches the host disk without an interactive user confirmation gate `(y/N)`.
-- **Causal-DAG KV-Cache Rollback**: An exact mathematical graph maps dependencies between steps. When an execution fails, the engine physically cuts the failed tokens out of the tensor KV cache ($O(1)$ rollback), eliminates irrelevant historical noise, and reactively hydrates necessary prerequisites in sub-100 microseconds.
+- **Causal-DAG KV-Cache Rollback**: An exact mathematical graph maps dependencies between steps. When an execution fails, the engine physically cuts the failed tokens out of the tensor KV cache (O(1) rollback), eliminates irrelevant historical noise, and reactively hydrates necessary prerequisites in sub-100 microseconds.
 
 ---
 
@@ -91,22 +69,39 @@ When a small model (1.5B–3B) attempts complex multi-step reasoning, standard i
 ## 3. Deep Mathematical Formalism: Causal DAG & The Attractor Escape Proof
 
 ### 3.1 The Monotonic Failure Model
+
 Let context length $L = N + t - 1$. Under standard Grouped-Query Attention (GQA):
-$$\alpha_{t, i}^{(h)} = \frac{\exp\left(\frac{\mathbf{q}_t^{(h)} (\mathbf{k}_i^{(h)})^T}{\sqrt{d_k}}\right)}{\sum_{j=1}^L \exp\left(\frac{\mathbf{q}_t^{(h)} (\mathbf{k}_j^{(h)})^T}{\sqrt{d_k}}\right)}$$
+
+$$
+\alpha_{t, i}^{(h)} = \frac{\exp\left(\frac{\mathbf{q}_t^{(h)} (\mathbf{k}_i^{(h)})^T}{\sqrt{d_k}}\right)}{\sum_{j=1}^L \exp\left(\frac{\mathbf{q}_t^{(h)} (\mathbf{k}_j^{(h)})^T}{\sqrt{d_k}}\right)}
+$$
 
 In standard append-only caching:
-$$L_{\text{standard}}(m) = L_0 + \sum_{k=1}^m \left( |\mathbf{y}_k| + |\mathbf{o}_k| \right)$$
+
+$$
+L_{\text{standard}}(m) = L_0 + \sum_{k=1}^m \left( |\mathbf{y}_k| + |\mathbf{o}_k| \right)
+$$
+
 where $|\mathbf{y}_k|$ is the step output and $|\mathbf{o}_k|$ is error feedback.
 
 **Theorem 1 (Attention Dilution in Monotonic Caching):**  
 Partition the cache indices into causally relevant root-cause tokens $\mathcal{R}$ and accumulated intermediate exploratory noise $\mathcal{N}$ ($L = |\mathcal{R}| + |\mathcal{N}|$, $\mathcal{R} \cap \mathcal{N} = \emptyset$, $|\mathcal{N}| \gg |\mathcal{R}|$):
-$$\lim_{|\mathcal{N}| \to \infty} \sum_{i \in \mathcal{R}} \alpha_{t, i} = \lim_{|\mathcal{N}| \to \infty} \frac{\sum_{i \in \mathcal{R}} \exp(u_i)}{\sum_{i \in \mathcal{R}} \exp(u_i) + \sum_{j \in \mathcal{N}} \exp(u_j)} = 0$$
+
+$$
+\lim_{|\mathcal{N}| \to \infty} \sum_{i \in \mathcal{R}} \alpha_{t, i} = \lim_{|\mathcal{N}| \to \infty} \frac{\sum_{i \in \mathcal{R}} \exp(u_i)}{\sum_{i \in \mathcal{R}} \exp(u_i) + \sum_{j \in \mathcal{N}} \exp(u_j)} = 0
+$$
+
 *Proof:* As intermediate exploration continues, the denominator diverges to $+\infty$, mathematically forcing attention on the original root-cause state to zero.
 
-### 3.2 The Causal Directed Acyclic Graph ($DAG$)
+### 3.2 The Causal Directed Acyclic Graph (DAG)
+
 We define agent execution history as a dynamic graph $\mathcal{G} = (\mathcal{V}, \mathcal{E})$.  
 Each step $v_i \in \mathcal{V}$ corresponds to:
-$$v_i = \langle \text{id}_i, \mathcal{D}_i, I(v_i), O(v_i), \tau_i, \sigma_i \rangle$$
+
+$$
+v_i = \langle \text{id}_i, \mathcal{D}_i, I(v_i), O(v_i), \tau_i, \sigma_i \rangle
+$$
+
 Where:
 - $I(v_i) \subset \mathcal{U}$: Entities read/consumed by step $i$.
 - $O(v_i) \subset \mathcal{U}$: Entities written/modified by step $i$.
@@ -114,21 +109,34 @@ Where:
 - $\sigma_i \in \{\text{Active}, \text{Evicted}\}$: Tensor allocation status.
 
 Dependency edges are computed via deterministic set intersection:
-$$e_{i \to j} \in \mathcal{E} \iff O(v_i) \cap I(v_j) \neq \emptyset$$
+
+$$
+e_{i \to j} \in \mathcal{E} \iff O(v_i) \cap I(v_j) \neq \emptyset
+$$
 
 ### 3.3 Mathematical Ancestral Cone Isolation
+
 When an execution crash occurs at step $v_{\text{crash}}$ referencing error target entity $E_{\text{target}}$:
-$$\mathcal{C}(E_{\text{target}}) = \{v_k \in \mathcal{V} \mid E_{\text{target}} \in O(v_k) \cup I(v_k)\}$$
+
+$$
+\mathcal{C}(E_{\text{target}}) = \{v_k \in \mathcal{V} \mid E_{\text{target}} \in O(v_k) \cup I(v_k)\}
+$$
 
 All intermediate operations $v_{\text{noise}} \notin \mathcal{C}(E_{\text{target}})$ are physically masked out:
-$$L_{\text{causal}} = \sum_{v_k \in \mathcal{C}(E_{\text{target}})} |\tau_k| \ll L_{\text{standard}}$$
 
-### 3.4 Surgical $O(1)$ In-Place Rollback
+$$
+L_{\text{causal}} = \sum_{v_k \in \mathcal{C}(E_{\text{target}})} |\tau_k| \ll L_{\text{standard}}
+$$
+
+### 3.4 Surgical O(1) In-Place Rollback
+
 When step $v_i$ fails, rather than appending failure tokens to the prompt, Omni Engine triggers an in-place KV sequence truncation:
-$$\text{PruneKV}(p_{\text{start}}^{(i)}, p_{\text{head}}) \implies p_{\text{head}} \leftarrow p_{\text{start}}^{(i)}$$
-This operates in physical $O(1)$ tensor complexity, removing the failure basin from the autoregressive probability density function.
 
----
+$$
+\text{PruneKV}(p_{\text{start}}^{(i)}, p_{\text{head}}) \implies p_{\text{head}} \leftarrow p_{\text{start}}^{(i)}
+$$
+
+This operates in physical O(1) tensor complexity, removing the failure basin from the autoregressive probability density function.
 
 ## 4. Empirical Benchmarks (Real Edge Telemetry)
 
@@ -138,20 +146,20 @@ Evaluated on compact edge hardware (4 Physical Cores, 16 GB RAM, Qwen 2.5 Coder 
 | Metric | Standard Stateful Caching (vLLM / llama-server) | Omni Engine Causal-DAG Pruning | Advantage |
 | :--- | :--- | :--- | :--- |
 | **Turn 1 Output** | `"VQKRHT"` (Wrong) | `"VQKRHT"` (Wrong) | Identical Baseline |
-| **Cache Handling** | Appends error to active KV | In-place Rollback $[72, \text{end})$ | **$O(1)$ Truncation** |
+| **Cache Handling** | Appends error to active KV | In-place Rollback [72, end) | **O(1) Truncation** |
 | **Turn 2 Output** | `"VQKRHT"` (Identical Repeat) | `"QRKWBS"` (100% Correct) | **Escape Attractor** |
 | **Turn 3 Output** | Unmatched / Infinite Trap | N/A (Resolved on Turn 2) | **Clean Termination** |
 | **Success Rate** | **0.0% (Infinite Lock-in)** | **100.0% (Turn 2 Recovery)** | **Deterministic** |
-| **Active Context** | 383 tokens (Compounding) | 221 tokens (Strictly bounded) | **$-42.3\%$ Context Bloat** |
+| **Active Context** | 383 tokens (Compounding) | 221 tokens (Strictly bounded) | **-42.3% Context Bloat** |
 
 ### 4.2 Cross-Turn Causal Isolation & Hydration Benchmark
 | Dimension | Standard Monotonic Stateful Caching | Omni Causal-DAG Architecture | Advantage |
 | :--- | :--- | :--- | :--- |
-| **Active KV Context** | 1,850 tokens | 294 tokens | **$-84.1\%$ Active Tokens** |
-| **Active RAM Footprint** | 358.4 MB | 42.6 MB | **$-88.1\%$ Memory Savings** |
+| **Active KV Context** | 1,850 tokens | 294 tokens | **-84.1% Active Tokens** |
+| **Active RAM Footprint** | 358.4 MB | 42.6 MB | **-88.1% Memory Savings** |
 | **Noise Contamination** | 72.8% (Unrelated operations retained) | 0.0% (Ancestral cone isolated) | **Zero Attention Dilution** |
-| **Hydration Latency** | N/A (Retains all bloat) | 0.00 ms ($< 100\,\mu\text{s}$) | **Instantaneous Swapping** |
-| **Time-To-First-Token** | Monotonically decaying | Flat, constant latency | **$16.3\times$ Speedup** |
+| **Hydration Latency** | N/A (Retains all bloat) | 0.00 ms (< 100 µs) | **Instantaneous Swapping** |
+| **Time-To-First-Token** | Monotonically decaying | Flat, constant latency | **16.3x Speedup** |
 
 ---
 
@@ -174,7 +182,7 @@ Evaluated on compact edge hardware (4 Physical Cores, 16 GB RAM, Qwen 2.5 Coder 
 ### Pillar 3: Terminal Browser Lens (`BrowserTerminalLens`)
 * Replaces heavy Chromium/Playwright browsers with an ultra-compact ASCII projection matrix.
 * Compresses live DOM trees into numbered interactive coordinate elements `[#1 Input]`, `[#2 Link]`.
-* Bounded to a strict terminal dimension (80 columns $\times$ 24 rows), saving up to 92% of vision/multimodal token overhead.
+* Bounded to a strict terminal dimension (80 columns × 24 rows), saving up to 92% of vision/multimodal token overhead.
 
 ### Pillar 4: Autonomous Mode Router
 * **Fast Interactive Mode**: For direct questions and conversational queries, bypassing speculative trees for sub-50ms latency.
@@ -231,7 +239,7 @@ cargo build --release
 
 ## 7. Research Paper & Formal Citation
 
-The complete academic paper with formal theorems, mathematical proofs, set-theoretic formulations, and benchmark tables is included in this repository:
+The complete academic paper with formal theorems, mathematical proofs, set-theoretic formulations, and benchmark tables is available:
 - **Title**: *Causal-DAG KV-Cache Pruning and Reactive Hydration: Eliminating Attention Dilution and Memory Bloat in Autonomous LLM Reasoning Loops*
 - **Author & Lead Architect**: **Ibrahim Elfeqi** (`ielfeqi@gmail.com`)
 - **Official Repository**: [https://github.com/ielfeqi-rgb/omni_engine](https://github.com/ielfeqi-rgb/omni_engine)
