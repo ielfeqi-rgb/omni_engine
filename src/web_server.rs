@@ -1,3 +1,5 @@
+// [GUIDANCE] No tests exist for any HTTP handler. Add integration tests.
+// The shutdown handler (line ~129) does not catch SIGTERM/SIGINT -- orphan processes result.
 use crate::auth::KeyManager;
 use crate::downloader::ModelDownloader;
 use crate::llama_manager::LlamaManager;

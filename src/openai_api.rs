@@ -1,3 +1,6 @@
+// [GUIDANCE] This module has ZERO tests. It is the main user-facing API endpoint.
+// Add timeout to reqwest client: .timeout(Duration::from_secs(300))
+// Add at least one integration test (mock llama-server or use a real model).
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},

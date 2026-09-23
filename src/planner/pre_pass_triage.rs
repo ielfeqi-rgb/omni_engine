@@ -1,3 +1,6 @@
+// [GUIDANCE] This is a keyword-based string matcher, not an ML classifier.
+// It works well for its purpose. The name "Speculative Intent Probe" oversells it.
+// Consider renaming to IntentRouter or KeywordClassifier.
 use crate::planner::system_profile::ToolCapability;
 use serde::{Deserialize, Serialize};
 

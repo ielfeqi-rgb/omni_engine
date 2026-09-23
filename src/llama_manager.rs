@@ -38,13 +38,21 @@ impl LlamaManager {
     }
 
     pub fn locate_binary(&self) -> Option<PathBuf> {
+        // [GUIDANCE] CRITICAL: Lines 44-47 are hardcoded to YOUR machine.
+        // Replace with env var LLAMA_SERVER_PATH or config file lookup.
+        // Also: this entire module spawns llama-server as a subprocess and talks to it via HTTP.
+        // That means you have ZERO access to the model's KV-cache, logits, or tokens.
+        // To implement real KV-cache theories, you need either:
+        //   A) Direct C FFI bindings to llama.h (see tools/reports/kv_cache_feasibility.md)
+        //   B) The llama-cpp-2 Rust crate
+        //   C) Python bridge via llama-cpp-python (quickest to test theories)
         let candidates = vec![
             self.base_dir.join("bin").join("llama-server"),
             self.base_dir.join("llama-server"),
-            PathBuf::from("/home/hema/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"),
+            PathBuf::from("/home/hema/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"), // [FIX] Remove: hardcoded user path
             PathBuf::from("../M.A.R.K.E.T/bin/llama-server"),
-            PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_v2/bin/llama-server"),
-            PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_complete/bin/llama-server"),
+            PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_v2/bin/llama-server"), // [FIX] Remove: hardcoded user path
+            PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_complete/bin/llama-server"), // [FIX] Remove: hardcoded user path
             PathBuf::from("./bin/llama-server"),
             PathBuf::from("llama-server"),
             PathBuf::from("/usr/local/bin/llama-server"),

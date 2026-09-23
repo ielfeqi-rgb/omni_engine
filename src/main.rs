@@ -1,3 +1,6 @@
+// [GUIDANCE] Remove this line after Phase 0 stabilization.
+// It hides ALL dead-code warnings. Remove it, then fix each warning individually.
+// Functions truly kept for future use can get per-item #[allow(dead_code)].
 #![allow(dead_code)]
 
 mod auth;
@@ -53,6 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Check for custom port in args (e.g. `serve --port 8095`)
+    // [GUIDANCE] Use env!("CARGO_PKG_VERSION") instead of hardcoded version strings.
+    // Currently main.rs says "v2.0.0", line 81 says "v1.0.1", cli.rs says "v1.0.1".
     let mut port: u16 = 8090;
     let mut i = 1;
     while i < args.len() {
@@ -87,6 +92,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let router = create_router(state);
 
+    // [GUIDANCE] SECURITY: Default to "127.0.0.1" not "0.0.0.0".
+    // 0.0.0.0 exposes the LLM endpoint to your entire network (public Wi-Fi = anyone can use your model).
+    // Add a --bind flag for explicit network exposure when intended.
     let bind_addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 

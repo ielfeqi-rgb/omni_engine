@@ -1,3 +1,7 @@
+// [GUIDANCE] This is a branch-tracking state machine, not an AI supervisor.
+// "Epistemic apoptosis" = branches.clear() + lessons.clear(). Not neural state deletion.
+// This module is USEFUL as infrastructure for managing hypotheses, but the naming oversells it.
+// Rename: HypothesisTracker or BranchManager would be more honest.
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

@@ -1,3 +1,4 @@
+// [GUIDANCE] Same dead_code suppression issue as main.rs. Remove after Phase 0.
 #![allow(dead_code)]
 
 pub mod auth;

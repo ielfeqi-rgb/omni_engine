@@ -30,6 +30,9 @@ impl LuaSandboxRunner {
     /// Execute Lua code with native Rust-bridged tools (vfs, browser, sys, terminal)
     pub fn run_script(&self, lua_code: &str) -> LuaRunResult {
         let lua = Lua::new();
+        // [GUIDANCE] DANGER: If this set_hook fails silently, the infinite-loop protection is GONE.
+        // A hostile Lua script can hang the process forever. This should panic!, not `let _ = ...`.
+        // Replace with: lua.set_hook(...).expect("FATAL: Lua CPU safety hook failed to install");
         let _ = lua.set_hook(
             mlua::HookTriggers::default().every_nth_instruction(10_000),
             |_lua, _debug| Err(mlua::Error::RuntimeError("CPU instruction quota exceeded (infinite loop prevented)".to_string())),
