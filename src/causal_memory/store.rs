@@ -28,15 +28,18 @@ impl std::error::Error for HydrationError {}
 pub struct StoreEntry {
     pub is_compressed: bool,
     pub payload: Vec<u8>,
-    pub token_ids: Vec<i32>,
+    pub token_ids: Option<Vec<i32>>,
 }
 
 /// In-memory byte store for evicted step artifacts during agent context management.
 ///
-/// NOTE on compression performance:
-/// For small conversational strings (< 100 bytes / ~25 tokens), DEFLATE compression provides
-/// negligible byte savings or may slightly expand the payload due to header overhead.
-/// Compression is primarily beneficial for large tool payloads, compiler logs, and source files.
+/// NOTE on memory footprint and compression:
+/// - Storing raw 32-bit token IDs (`i32`) consumes 4 bytes per token, which can equal
+///   or exceed the size of the original text payload. Therefore, `token_ids` are optional
+///   and only retained when exact token-boundary reproduction is required.
+/// - For small conversational strings (< 100 bytes / ~25 tokens), DEFLATE compression
+///   provides negligible byte savings or may slightly expand the payload. It is intended
+///   primarily for large tool output payloads, compiler logs, and source files.
 pub struct CompressedCacheStore {
     chunks: RwLock<HashMap<usize, StoreEntry>>,
 }
@@ -48,9 +51,13 @@ impl CompressedCacheStore {
         }
     }
 
-    /// Stores text and optional token IDs with automatic DEFLATE compression.
-    /// If DEFLATE does not reduce payload size, stores raw bytes with `is_compressed = false`.
-    pub fn compress_and_store_tokens(&self, step_id: usize, text: &str, token_ids: &[i32]) -> usize {
+    /// Stores text payload with automatic DEFLATE compression, optionally recording exact token IDs.
+    pub fn store_step(
+        &self,
+        step_id: usize,
+        text: &str,
+        token_ids: Option<&[i32]>,
+    ) -> usize {
         let raw_bytes = text.as_bytes();
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
         let (is_compressed, payload) = match encoder.write_all(raw_bytes).and_then(|_| encoder.finish()) {
@@ -58,11 +65,11 @@ impl CompressedCacheStore {
             _ => (false, raw_bytes.to_vec()),
         };
 
-        let stored_len = payload.len();
+        let stored_len = payload.len() + token_ids.map_or(0, |t| t.len() * 4);
         let entry = StoreEntry {
             is_compressed,
             payload,
-            token_ids: token_ids.to_vec(),
+            token_ids: token_ids.map(|t| t.to_vec()),
         };
 
         self.chunks.write().insert(step_id, entry);
@@ -71,13 +78,18 @@ impl CompressedCacheStore {
 
     /// Backwards-compatible text-only compression
     pub fn compress_and_store(&self, step_id: usize, text: &str) -> usize {
-        self.compress_and_store_tokens(step_id, text, &[])
+        self.store_step(step_id, text, None)
     }
 
-    /// Decompresses and restores original UTF-8 payload and token IDs.
-    /// Clones the entry inside the read lock and performs decompression OUTSIDE the lock
-    /// to prevent lock contention across concurrent workers.
-    pub fn hydrate_entry(&self, step_id: usize) -> Result<(String, Vec<i32>), HydrationError> {
+    /// Backwards-compatible tokens-and-text compression
+    pub fn compress_and_store_tokens(&self, step_id: usize, text: &str, tokens: &[i32]) -> usize {
+        self.store_step(step_id, text, if tokens.is_empty() { None } else { Some(tokens) })
+    }
+
+    /// Decompresses and restores original UTF-8 payload and optional token IDs.
+    /// The entry is cloned inside the read lock and decompression is performed outside
+    /// the lock scope to minimize lock duration.
+    pub fn hydrate_entry(&self, step_id: usize) -> Result<(String, Option<Vec<i32>>), HydrationError> {
         let entry = {
             let map = self.chunks.read();
             map.get(&step_id).cloned().ok_or(HydrationError::NotFound)?
@@ -110,7 +122,7 @@ impl CompressedCacheStore {
         self.chunks
             .read()
             .values()
-            .map(|v| v.payload.len() + v.token_ids.len() * 4)
+            .map(|v| v.payload.len() + v.token_ids.as_ref().map_or(0, |t| t.len() * 4))
             .sum()
     }
 }

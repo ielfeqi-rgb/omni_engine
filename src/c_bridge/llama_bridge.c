@@ -146,6 +146,28 @@ int omni_llama_sample_greedy(struct llama_context * ctx, struct llama_model * mo
     return best_id;
 }
 
+int omni_llama_n_vocab(struct llama_model * model) {
+    if (!model) return -1;
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    if (!vocab) return -1;
+    return (int)llama_vocab_n_tokens(vocab);
+}
+
+int omni_llama_get_logits(struct llama_context * ctx, struct llama_model * model, float * out_logits, int max_vocab) {
+    if (!ctx || !model || !out_logits || max_vocab <= 0) return -1;
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    if (!vocab) return -1;
+    float * logits = llama_get_logits_ith(ctx, -1);
+    if (!logits) {
+        logits = llama_get_logits(ctx);
+    }
+    if (!logits) return -1;
+    int n_vocab = (int)llama_vocab_n_tokens(vocab);
+    int to_copy = (max_vocab < n_vocab) ? max_vocab : n_vocab;
+    memcpy(out_logits, logits, to_copy * sizeof(float));
+    return to_copy;
+}
+
 // ---------------------------------------------------------------------------
 // REAL KV-CACHE MANIPULATION API
 // ---------------------------------------------------------------------------

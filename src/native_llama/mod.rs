@@ -60,6 +60,13 @@ extern "C" {
     fn omni_llama_kv_cache_seq_cp(ctx: *mut c_void, seq_src: i32, seq_dst: i32, p0: i32, p1: i32);
     fn omni_llama_kv_cache_seq_shift(ctx: *mut c_void, seq_id: i32, p0: i32, p1: i32, delta: i32);
     fn omni_llama_kv_cache_seq_pos_max(ctx: *mut c_void, seq_id: i32) -> i32;
+    fn omni_llama_n_vocab(model: *mut c_void) -> i32;
+    fn omni_llama_get_logits(
+        ctx: *mut c_void,
+        model: *mut c_void,
+        out_logits: *mut f32,
+        max_vocab: i32,
+    ) -> i32;
 }
 
 /// Initialize the llama.cpp backend once per process lifecycle.
@@ -154,6 +161,12 @@ impl NativeLlamaModel {
         Ok(String::from_utf8_lossy(&buf).to_string())
     }
 
+    /// Returns the vocabulary size of the model.
+    pub fn n_vocab(&self) -> usize {
+        let n = unsafe { omni_llama_n_vocab(self.raw_model) };
+        n.max(0) as usize
+    }
+
     /// Spawn an active execution context with dedicated KV-cache memory.
     pub fn create_context(
         self: &Arc<Self>,
@@ -240,6 +253,28 @@ impl NativeLlamaContext {
             return Err("Failed to sample token from logits".to_string());
         }
         Ok(token)
+    }
+
+    /// Extracts output logits for the last evaluated token across the full vocabulary.
+    pub fn get_logits(&self) -> Result<Vec<f32>, String> {
+        let n_vocab = self.model.n_vocab();
+        if n_vocab == 0 {
+            return Err("Model vocabulary size is 0".to_string());
+        }
+        let mut logits = vec![0.0f32; n_vocab];
+        let copied = unsafe {
+            omni_llama_get_logits(
+                self.raw_ctx,
+                self.model.raw_model,
+                logits.as_mut_ptr(),
+                n_vocab as i32,
+            )
+        };
+        if copied < 0 {
+            return Err("Failed to retrieve logits from llama context".to_string());
+        }
+        logits.truncate(copied as usize);
+        Ok(logits)
     }
 
     /// Autoregressively generate up to `max_tokens` from a prompt.

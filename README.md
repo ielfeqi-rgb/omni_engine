@@ -267,9 +267,9 @@ The complete academic paper with formal theorems, mathematical proofs, set-theor
 
 ---
 
-## 8. Open-Source Terms & Commercial Freedom
+## 8. Open-Source Terms & License
 
-This project is licensed under the **Dual Open-Source License: Creative Commons Attribution 4.0 International (CC BY 4.0) & Apache License 2.0**.
+This project is licensed under the **Dual Open-Source License: Creative Commons Attribution 4.0 International (CC BY 4.0) for research documentation and Apache License 2.0 for source code**.
 
-- **Total Freedom**: Anyone is fully permitted to inspect, study, fork, deploy, modify, and build commercial or non-commercial applications upon this framework for profit without paying royalties.
-- **Strict Attribution Requirement**: Any derivative work, distribution, research publication, or commercial deployment utilizing this methodology **MUST** explicitly credit the original authorship of **Ibrahim Elfeqi** (`ielfeqi@gmail.com`) and reference the upstream project repository at [https://github.com/ielfeqi-rgb/omni_engine](https://github.com/ielfeqi-rgb/omni_engine).
+- **Commercial & Research Freedom**: Anyone is permitted to inspect, study, fork, deploy, modify, and build commercial or non-commercial applications upon this framework under the terms of the Apache License 2.0.
+- **Attribution Requirement**: In accordance with Apache License 2.0 Section 4 and CC BY 4.0 Section 3, all derivative works, distributions, or research publications must retain copyright notices and credit the original authorship of **Ibrahim Elfeqi** (`ielfeqi@gmail.com`) and reference the project repository at [https://github.com/ielfeqi-rgb/omni_engine](https://github.com/ielfeqi-rgb/omni_engine).
