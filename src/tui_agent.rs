@@ -12,12 +12,26 @@ use crate::sandbox::{
 
 pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
     let llama_manager = LlamaManager::new(base_dir.clone());
-    let status = llama_manager.status();
+    let mut status = llama_manager.status();
 
     if !status.is_running {
-        eprintln!("{}", "  [!] llama-server engine is currently idle.".yellow().bold());
-        eprintln!("{}", "  Please launch a model first using: omni_engine start <model.gguf>".dimmed());
-        return;
+        let available = llama_manager.list_available_models();
+        if available.is_empty() {
+            eprintln!("{}", "  [!] No GGUF models found in models/ directory.".red());
+            return;
+        }
+        let chosen = if available.contains(&"qwen-0.5b.gguf".to_string()) {
+            "qwen-0.5b.gguf".to_string()
+        } else {
+            available[0].clone()
+        };
+        println!("{}", format!("  ⏳ Engine is idle. Auto-launching '{}' on port {}...", chosen, port).yellow());
+        if let Err(e) = llama_manager.start(chosen.clone(), port, 0, 2048) {
+            eprintln!("  [!] Failed to auto-start model: {}", e);
+            return;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        status = llama_manager.status();
     }
 
     let active_model = status.active_model.clone().unwrap_or_else(|| "Local GGUF Model".to_string());
