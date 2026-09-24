@@ -333,7 +333,21 @@ impl SwarmCoordinator {
         let mut ctx = self.worker_model.create_context(4096, 512, 4)?;
 
         let system_msg = format!(
-            "You are an autonomous scout in a search swarm. Your objective is: {}\nYou have access to these real commands:\nSEARCH: <search query>\nFETCH: <url>\nREPORT: <factual discovery>\nDONE\nOutput exactly ONE command per step. No prose, no apologies.",
+            "You are an autonomous research scout in a search swarm. Your objective is: {}\n\
+            Available commands:\n\
+            - SEARCH: <search query>\n\
+            - FETCH: <result number 1, 2 or URL>\n\
+            - REPORT: <concise verified facts discovered>\n\
+            - DONE\n\n\
+            Rule: Output exactly ONE command per step.\n\
+            When you see the factual answer in search results, output REPORT: <the factual answer>.\n\n\
+            Example flow:\n\
+            User: Objective: When was Voyager 1 launched?\n\
+            Assistant: SEARCH: Voyager 1 launch date\n\
+            User: OBSERVATION: Found 1 source: 1. [Voyager 1 - NASA] Launched September 5, 1977 from Cape Canaveral.\n\
+            Assistant: REPORT: Voyager 1 was launched on September 5, 1977 from Cape Canaveral.\n\
+            User: OBSERVATION: Recorded.\n\
+            Assistant: DONE",
             subgoal.description
         );
         let user_msg = format!("Execute step 1 for objective: {}", subgoal.description);
@@ -343,11 +357,11 @@ impl SwarmCoordinator {
         ctx.eval_tokens(&prompt_tokens, 0)?;
         let mut graph = CausalGraph::with_prefix_offset(prompt_tokens.len());
 
-
         let mut step_id = 1;
         let mut collected_finding = String::new();
         let mut rollbacks_count = 0;
         let mut tokens_saved = 0;
+        let mut last_search_results: Vec<SearchResult> = Vec::new();
 
         while step_id <= self.config.max_steps_per_worker {
             // Autoregressively sample tokens until newline or closing tag
@@ -394,10 +408,11 @@ impl SwarmCoordinator {
                     println!("     🌐 {} \"{}\"", "DISPATCHING REAL SEARCH:".bright_cyan().bold(), query.bright_white());
                     match self.web_lens.search(&query, 2) {
                         Ok(results) if !results.is_empty() => {
+                            last_search_results = results.clone();
                             let mut results_str = format!("Found {} sources:\n", results.len());
                             for (i, r) in results.iter().enumerate() {
-                                let snippet_clean = if r.snippet.len() > 160 {
-                                    format!("{}...", &r.snippet[..160])
+                                let snippet_clean = if r.snippet.len() > 400 {
+                                    format!("{}...", &r.snippet[..400])
                                 } else {
                                     r.snippet.clone()
                                 };
@@ -407,7 +422,7 @@ impl SwarmCoordinator {
                             let obs = Self::format_observation_turn(
                                 &self.worker_model,
                                 &results_str,
-                                "State your next command (FETCH, SEARCH, or REPORT):"
+                                "State facts found using: REPORT: <facts>\nOr inspect page using: FETCH: <1 or 2>"
                             );
 
                             let obs_tokens = self.worker_model.tokenize(&obs, false)?;
@@ -459,13 +474,26 @@ impl SwarmCoordinator {
                     }
                 }
                 SwarmAction::Fetch { url } => {
-                    println!("     📥 {} \"{}\"", "FETCHING WEB PAGE:".bright_cyan().bold(), url.bright_white());
-                    match self.web_lens.fetch_text(&url, 800) {
+                    // Resolve numeric index (e.g. "1", "[1]") or matching title to full URL
+                    let resolved_url = if let Ok(idx) = url.trim().trim_matches('[').trim_matches(']').parse::<usize>() {
+                        last_search_results.get(idx.saturating_sub(1)).map(|r| r.url.clone()).unwrap_or(url.clone())
+                    } else if let Some(found) = last_search_results.iter().find(|r| {
+                        let lower_u = url.to_lowercase();
+                        let lower_t = r.title.to_lowercase();
+                        lower_t.contains(&lower_u) || lower_u.contains(&lower_t)
+                    }) {
+                        found.url.clone()
+                    } else {
+                        url.clone()
+                    };
+
+                    println!("     📥 {} \"{}\"", "FETCHING WEB PAGE:".bright_cyan().bold(), resolved_url.bright_white());
+                    match self.web_lens.fetch_text(&resolved_url, 800) {
                         Ok(content) => {
                             let obs = Self::format_observation_turn(
                                 &self.worker_model,
                                 &format!("Page text:\n{}", content),
-                                "Synthesize facts and output REPORT or DONE:"
+                                "Synthesize facts and output: REPORT: <facts>"
                             );
                             let obs_tokens = self.worker_model.tokenize(&obs, false)?;
                             if ctx.current_cursor() + obs_tokens.len() >= ctx.n_ctx() - 128 {
@@ -486,8 +514,8 @@ impl SwarmCoordinator {
 
                             let retry = Self::format_observation_turn(
                                 &self.worker_model,
-                                &format!("Failed to fetch URL '{}'.", url),
-                                "Use SEARCH with different terms or REPORT what you have."
+                                &format!("Failed to fetch URL '{}'.", resolved_url),
+                                "Output REPORT with facts already discovered, or use SEARCH."
                             );
                             let retry_tokens = self.worker_model.tokenize(&retry, false)?;
                             if ctx.current_cursor() + retry_tokens.len() < ctx.n_ctx() - 128 {
@@ -498,11 +526,21 @@ impl SwarmCoordinator {
                         }
                     }
                 }
-
                 SwarmAction::Report { finding } => {
                     println!("     📝 {} {}", "WORKER DISCOVERY:".bright_green().bold(), finding.bright_white());
                     collected_finding.push_str(&finding);
                     collected_finding.push('\n');
+
+                    let obs = Self::format_observation_turn(
+                        &self.worker_model,
+                        "Finding noted.",
+                        "Output DONE if task complete, or continue with next command:"
+                    );
+                    let obs_tokens = self.worker_model.tokenize(&obs, false)?;
+                    if ctx.current_cursor() + obs_tokens.len() < ctx.n_ctx() - 128 {
+                        ctx.eval_tokens(&obs_tokens, 0)?;
+                        graph.record_step_with_context(step_id + 3000, "Report acknowledged", &[entity_name], &[entity_name], &ctx);
+                    }
                     step_id += 1;
                 }
                 SwarmAction::Done => {
@@ -559,8 +597,8 @@ impl SwarmCoordinator {
             ));
         }
 
-        let system_msg = "You are a chief research synthesizer. Ground your response strictly on the factual discoveries made by the swarm workers. Provide a clear, comprehensive, and factual answer to the user's objective.";
-        let user_msg = format!("Objective: {}\n\nWorker Discoveries:\n{}Synthesize the final answer:", original_goal, findings_block);
+        let system_msg = "You are a research synthesis assistant. Ground your response strictly on the factual discoveries made by the swarm workers. Provide a concise, clear, and factual summary directly answering the objective.";
+        let user_msg = format!("Research Objective: {}\n\nWorker Discoveries:\n{}\nProvide the final factual answer directly:", original_goal, findings_block);
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
 
         let final_report = ctx.generate(&prompt, 512)?;
@@ -569,23 +607,48 @@ impl SwarmCoordinator {
 
     /// Parse raw text generated by the worker model into typed SwarmAction
     pub fn parse_action(text: &str) -> SwarmAction {
-        let trimmed = text.trim();
+        let mut cleaned = text.trim();
+        if let Some(rest) = cleaned.strip_prefix("Assistant:") {
+            cleaned = rest.trim();
+        }
 
-        for line in trimmed.lines() {
-            let l = line.trim();
-            if l.starts_with("SEARCH:") {
-                let q = l.trim_start_matches("SEARCH:").trim().trim_matches('"').trim_matches('\'');
+        for line in cleaned.lines() {
+            let mut l = line.trim();
+            if let Some(rest) = l.strip_prefix("Assistant:") {
+                l = rest.trim();
+            }
+
+            // Strip bullet points or numbering
+            if let Some(rest) = l.strip_prefix("- ")
+                .or_else(|| l.strip_prefix("* "))
+                .or_else(|| l.strip_prefix("1. "))
+                .or_else(|| l.strip_prefix("2. "))
+            {
+                l = rest.trim();
+            }
+
+            // Strip common prefixes
+            if let Some(rest) = l.strip_prefix("Action:").or_else(|| l.strip_prefix("action:")) {
+                l = rest.trim();
+            }
+            if let Some(rest) = l.strip_prefix("Command:").or_else(|| l.strip_prefix("command:")) {
+                l = rest.trim();
+            }
+
+            let upper = l.to_uppercase();
+            if upper.starts_with("SEARCH:") {
+                let q = l[7..].trim().trim_matches('"').trim_matches('\'');
                 return SwarmAction::Search { query: q.to_string() };
             }
-            if l.starts_with("FETCH:") {
-                let u = l.trim_start_matches("FETCH:").trim().trim_matches('"').trim_matches('\'');
+            if upper.starts_with("FETCH:") {
+                let u = l[6..].trim().trim_matches('"').trim_matches('\'');
                 return SwarmAction::Fetch { url: u.to_string() };
             }
-            if l.starts_with("REPORT:") {
-                let f = l.trim_start_matches("REPORT:").trim();
+            if upper.starts_with("REPORT:") {
+                let f = l[7..].trim();
                 return SwarmAction::Report { finding: f.to_string() };
             }
-            if l == "DONE" || l.starts_with("DONE:") {
+            if upper == "DONE" || upper.starts_with("DONE:") || upper.starts_with("DONE ") {
                 return SwarmAction::Done;
             }
             if l.starts_with("```lua") {
@@ -596,6 +659,7 @@ impl SwarmCoordinator {
 
         SwarmAction::None
     }
+
 }
 
 #[cfg(test)]

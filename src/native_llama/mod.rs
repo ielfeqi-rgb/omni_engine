@@ -294,7 +294,8 @@ impl NativeLlamaContext {
             let piece = self.model.token_to_piece(next_tok)?;
 
             // Check EOS tokens across model architectures (<|im_end|>, <|endoftext|>, <|eot_id|>, </s>, etc.)
-            if piece.contains("<|im_end|>")
+            if piece.is_empty()
+                || piece.contains("<|im_end|>")
                 || piece.contains("<|endoftext|>")
                 || piece.contains("<|eot_id|>")
                 || piece.contains("</s>")
@@ -303,9 +304,19 @@ impl NativeLlamaContext {
                 break;
             }
 
-
             generated.push_str(&piece);
             self.eval_tokens(&[next_tok], 0)?;
+
+            // Guard against autoregressive loop repetition
+            let tail_len = 32;
+            if generated.len() >= tail_len * 2 {
+                let tail = &generated[generated.len() - tail_len..];
+                if generated[..generated.len() - tail_len].contains(tail) {
+                    let trimmed = generated[..generated.len() - tail_len].trim_end();
+                    generated = trimmed.to_string();
+                    break;
+                }
+            }
         }
 
         Ok(generated)

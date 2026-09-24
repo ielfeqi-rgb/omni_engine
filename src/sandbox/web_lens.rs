@@ -25,28 +25,28 @@ impl WebLens {
 
     /// Primary search dispatcher with multi-source fallback:
     /// 1. DuckDuckGo HTML / Lite
-    /// 2. Google News RSS
-    /// 3. Wikipedia API
+    /// 2. Wikipedia Full-Text Search API
+    /// 3. Google News RSS
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Err("Empty search query".to_string());
         }
 
-        // Try DuckDuckGo Lite first
+        // 1. Try DuckDuckGo Lite first
         match self.search_duckduckgo(trimmed, limit) {
             Ok(results) if !results.is_empty() => return Ok(results),
             _ => {}
         }
 
-        // Try Google RSS fallback
-        match self.search_google_rss(trimmed, limit) {
+        // 2. Try Wikipedia full-text search API
+        match self.search_wikipedia(trimmed, limit) {
             Ok(results) if !results.is_empty() => return Ok(results),
             _ => {}
         }
 
-        // Try Wikipedia API fallback
-        match self.search_wikipedia(trimmed, limit) {
+        // 3. Try Google RSS fallback
+        match self.search_google_rss(trimmed, limit) {
             Ok(results) if !results.is_empty() => return Ok(results),
             _ => {}
         }
@@ -78,44 +78,61 @@ impl WebLens {
         let mut results = Vec::new();
         let mut cursor = 0;
 
-        while let Some(link_start) = html[cursor..].find("class=\"result-link\"") {
+        while let Some(rel_pos) = html[cursor..].find("result-link") {
             if results.len() >= limit {
                 break;
             }
-            let pos = cursor + link_start;
-            // Find href
-            if let Some(href_pos) = html[pos..].find("href=\"") {
-                let href_start = pos + href_pos + 6;
-                if let Some(href_end) = html[href_start..].find('"') {
-                    let mut raw_url = html[href_start..href_start + href_end].to_string();
-                    // Un-redirect uddg if present
-                    if let Some(uddg_idx) = raw_url.find("uddg=") {
-                        let enc = &raw_url[uddg_idx + 5..];
-                        let end_enc = enc.find('&').unwrap_or(enc.len());
-                        if let Ok(decoded) = urlencoding::decode(&enc[..end_enc]) {
-                            raw_url = decoded.to_string();
-                        }
-                    }
+            let pos = cursor + rel_pos;
 
-                    // Find link text (Title)
-                    let title = if let Some(tag_end) = html[href_start + href_end..].find('>') {
-                        let title_start = href_start + href_end + tag_end + 1;
-                        if let Some(tag_close) = html[title_start..].find("</a>") {
-                            Self::strip_html_tags(&html[title_start..title_start + tag_close])
+            // Look backward for '<a ' to find start of anchor tag
+            let tag_search_start = if pos > 300 { pos - 300 } else { 0 };
+            if let Some(tag_offset) = html[tag_search_start..pos].rfind("<a") {
+                let tag_start = tag_search_start + tag_offset;
+                if let Some(tag_end_offset) = html[pos..].find("</a>") {
+                    let a_full = &html[tag_start..pos + tag_end_offset + 4];
+
+                    // Extract href="..." or href='...'
+                    let raw_url = if let Some(href_idx) = a_full.find("href=") {
+                        let after_href = &a_full[href_idx + 5..];
+                        let quote_char = after_href.chars().next().unwrap_or('"');
+                        let url_start = href_idx + 6;
+                        if let Some(url_end) = a_full[url_start..].find(quote_char) {
+                            let mut u = a_full[url_start..url_start + url_end].to_string();
+                            if let Some(uddg_idx) = u.find("uddg=") {
+                                let enc = &u[uddg_idx + 5..];
+                                let end_enc = enc.find('&').unwrap_or(enc.len());
+                                if let Ok(decoded) = urlencoding::decode(&enc[..end_enc]) {
+                                    u = decoded.to_string();
+                                }
+                            }
+                            u
                         } else {
-                            "Untitled".to_string()
+                            String::new()
                         }
                     } else {
-                        "Untitled".to_string()
+                        String::new()
                     };
 
-                    // Find Snippet
-                    let snippet = if let Some(snip_start) = html[pos..].find("class=\"result-snippet\"") {
-                        let snip_pos = pos + snip_start;
-                        if let Some(content_start) = html[snip_pos..].find('>') {
-                            let text_start = snip_pos + content_start + 1;
-                            if let Some(snip_end) = html[text_start..].find("</td>") {
-                                Self::strip_html_tags(&html[text_start..text_start + snip_end])
+                    // Extract link text (Title)
+                    let title = if let Some(close_bracket) = a_full.find('>') {
+                        let title_part = &a_full[close_bracket + 1..a_full.len().saturating_sub(4)];
+                        Self::strip_html_tags(title_part)
+                    } else {
+                        String::new()
+                    };
+
+                    // Extract snippet from following td.result-snippet
+                    let after_a = pos + tag_end_offset + 4;
+                    let snippet = if let Some(snip_idx) = html[after_a..].find("result-snippet") {
+                        if snip_idx < 300 {
+                            let snip_pos = after_a + snip_idx;
+                            if let Some(td_close) = html[snip_pos..].find("</td>") {
+                                let snip_block = &html[snip_pos..snip_pos + td_close];
+                                if let Some(content_start) = snip_block.find('>') {
+                                    Self::strip_html_tags(&snip_block[content_start + 1..])
+                                } else {
+                                    String::new()
+                                }
                             } else {
                                 String::new()
                             }
@@ -135,7 +152,7 @@ impl WebLens {
                     }
                 }
             }
-            cursor = pos + 20;
+            cursor = pos + 11;
         }
 
         results
@@ -188,12 +205,11 @@ impl WebLens {
         Ok(results)
     }
 
-    /// Search Wikipedia API for encyclopedic and factual knowledge
+    /// Search Wikipedia full-text search API for encyclopedic and factual knowledge
     fn search_wikipedia(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
         let url = format!(
-            "https://en.wikipedia.org/w/api.php?action=opensearch&search={}&limit={}&namespace=0&format=json",
-            urlencoding::encode(query),
-            limit
+            "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&utf8=1&format=json",
+            urlencoding::encode(query)
         );
 
         let response = self.client.get(&url)
@@ -208,17 +224,15 @@ impl WebLens {
             .map_err(|e| format!("Failed to parse Wikipedia JSON: {}", e))?;
 
         let mut results = Vec::new();
-        if let (Some(titles), Some(snippets), Some(urls)) = (
-            json.get(1).and_then(|v| v.as_array()),
-            json.get(2).and_then(|v| v.as_array()),
-            json.get(3).and_then(|v| v.as_array()),
-        ) {
-            for i in 0..titles.len().min(limit) {
-                let title = titles[i].as_str().unwrap_or_default().to_string();
-                let snippet = snippets.get(i).and_then(|s| s.as_str()).unwrap_or_default().to_string();
-                let url = urls.get(i).and_then(|u| u.as_str()).unwrap_or_default().to_string();
+        if let Some(items) = json.get("query").and_then(|q| q.get("search")).and_then(|s| s.as_array()) {
+            for item in items.iter().take(limit) {
+                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+                let raw_snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or_default();
+                let snippet = Self::decode_html_entities(&Self::strip_html_tags(raw_snippet));
+                let encoded_title = urlencoding::encode(&title.replace(' ', "_"));
+                let url = format!("https://en.wikipedia.org/wiki/{}", encoded_title);
 
-                if !title.is_empty() && !url.is_empty() {
+                if !title.is_empty() {
                     results.push(SearchResult { title, url, snippet });
                 }
             }
@@ -249,13 +263,26 @@ impl WebLens {
 
     /// Convert raw HTML into clean readable text
     pub fn distill_html_to_text(html: &str) -> String {
-        let mut clean = String::with_capacity(html.len() / 2);
+        // Prefer main content container if present to skip navigation header clutter
+        let effective_html = if let Some(pos) = html.find("id=\"mw-content-text\"") {
+            &html[pos..]
+        } else if let Some(pos) = html.find("<main") {
+            &html[pos..]
+        } else if let Some(pos) = html.find("<article") {
+            &html[pos..]
+        } else if let Some(pos) = html.find("<body") {
+            &html[pos..]
+        } else {
+            html
+        };
+
+        let mut clean = String::with_capacity(effective_html.len() / 2);
         let mut in_script = false;
         let mut in_style = false;
         let mut in_tag = false;
 
-        let lower = html.to_lowercase();
-        let bytes = html.as_bytes();
+        let lower = effective_html.to_lowercase();
+        let bytes = effective_html.as_bytes();
         let len = bytes.len();
         let mut i = 0;
 
@@ -425,4 +452,12 @@ mod tests {
         let decoded = urlencoding::decode(&encoded).unwrap();
         assert_eq!(decoded, original);
     }
+
+    #[test]
+    fn test_live_search_jwst() {
+        let lens = WebLens::new();
+        let res = lens.search("James Webb Space Telescope launch date", 2);
+        println!("\n=== LIVE SEARCH TEST RESULT ===\n{:#?}\n", res);
+    }
 }
+
