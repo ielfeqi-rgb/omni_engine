@@ -286,8 +286,12 @@ impl NativeLlamaContext {
     pub fn kv_cache_seq_rm(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
         let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
         if ok {
-            let removed_count = if p1 > p0 { (p1 - p0) as usize } else { 0 };
-            self.current_cursor = self.current_cursor.saturating_sub(removed_count);
+            if p1 < 0 {
+                self.current_cursor = p0.max(0) as usize;
+            } else {
+                let removed_count = if p1 > p0 { (p1 - p0) as usize } else { 0 };
+                self.current_cursor = self.current_cursor.saturating_sub(removed_count);
+            }
             info!(
                 "Physical KV Rollback executed: seq={}, [{}..{}), new_cursor={}",
                 seq_id, p0, p1, self.current_cursor
@@ -314,13 +318,13 @@ impl NativeLlamaContext {
     }
 
     /// EPISTEMIC APOPTOSIS:
-    /// Completely zeroes out all physical KV-cache tensors and resets cell allocation.
+    /// Completely clears all active cell positions in the KV-cache and resets cursor.
     pub fn kv_cache_clear(&mut self) {
         unsafe {
             omni_llama_kv_cache_clear(self.raw_ctx);
         }
         self.current_cursor = 0;
-        info!("Epistemic Apoptosis executed: entire KV-cache zeroed.");
+        info!("Physical KV-cache purged (Epistemic Apoptosis)");
     }
 
     pub fn current_cursor(&self) -> usize {

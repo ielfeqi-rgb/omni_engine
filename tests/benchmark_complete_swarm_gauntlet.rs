@@ -1,8 +1,8 @@
 use omni_engine::sandbox::terminal_bridge::TerminalSessionBridge;
 use omni_engine::sandbox::vfs::MemoryVfs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ async fn test_omni_complete_swarm_gauntlet_suite() {
 
     // Elastic burst: Spawn 16 concurrent worker tasks dynamically
     let mut burst_handles = Vec::new();
-    for worker_idx in 1..=16 {
+    for _worker_idx in 1..=16 {
         let token_counter = active_tokens_generated.clone();
         burst_handles.push(tokio::spawn(async move {
             let mut local_tokens = 0;
