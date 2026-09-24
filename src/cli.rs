@@ -62,6 +62,15 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
             handle_causal_test(&args[2..], &base_dir);
             Ok(true)
         }
+        "swarm" | "search" => {
+            let swarm_args = args[2..].to_vec();
+            let swarm_dir = base_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                handle_swarm(&swarm_args, &swarm_dir);
+            }).await;
+            Ok(true)
+        }
+
         "serve" => {
 
             // User explicitly wants to serve web UI / API
@@ -90,10 +99,12 @@ COMMANDS:
     stop                        Stop the currently running llama-server
     ask "<prompt>" [OPTIONS]    Send a single prompt to the running engine and print reply
     chat                        Start an interactive multi-turn chat session in the terminal
+    swarm "<goal>" [OPTIONS]    Launch autonomous dual-model search swarm with live KV-cache rollback
     keys <subcommand>           Manage API keys (list, new, revoke)
     kv-test [model]             Run physical KV-cache manipulation test (seq_rm, seq_cp, clear)
     causal-test [model]         Run live Causal DAG & Self-Healing recovery benchmark on hardware
     serve [OPTIONS]             Launch the full Web UI and OpenAI HTTP proxy server
+
 
 OPTIONS FOR 'start':
     --port <PORT>               Port for llama-server (default: 8081)
@@ -724,5 +735,134 @@ pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
     println!("\n================================================================================");
     println!("🎉 CLI BENCHMARK COMPLETE: Causal KV Self-Healing & Parity Fully Verified!");
     println!("================================================================================\n");
+}
+
+pub fn handle_swarm(args: &[String], base_dir: &PathBuf) {
+    if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
+        println!(r#"
+================================================================================
+   🐝 OMNI ENGINE - Autonomous Dual-Model Search Swarm
+================================================================================
+USAGE:
+    omni_engine swarm "<query/research goal>" [OPTIONS]
+
+OPTIONS:
+    --model <PATH>            Use single model for both orchestrator and workers
+    --orchestrator <PATH>     Path to System 2 Orchestrator model GGUF
+    --worker <PATH>           Path to System 1 Swarm Worker model GGUF
+    --subgoals <N>            Maximum sub-goals to decompose (default: 3)
+    --steps <N>               Maximum steps per worker (default: 5)
+    --models-dir <DIR>        Directory containing GGUF models
+
+EXAMPLES:
+    omni_engine swarm "latest developments in room temperature superconductors"
+    omni_engine swarm "Rust vs Go memory layout" --model models/qwen-0.5b.gguf
+================================================================================
+"#);
+        return;
+    }
+
+    let mut user_goal = String::new();
+    let mut custom_model: Option<PathBuf> = None;
+    let mut orch_path: Option<PathBuf> = None;
+    let mut worker_path: Option<PathBuf> = None;
+    let mut max_subgoals = 3;
+    let mut max_steps = 5;
+    let mut models_dir = base_dir.join("models");
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--model" if i + 1 < args.len() => {
+                custom_model = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--orchestrator" if i + 1 < args.len() => {
+                orch_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--worker" if i + 1 < args.len() => {
+                worker_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--subgoals" if i + 1 < args.len() => {
+                max_subgoals = args[i + 1].parse().unwrap_or(3);
+                i += 2;
+            }
+            "--steps" if i + 1 < args.len() => {
+                max_steps = args[i + 1].parse().unwrap_or(5);
+                i += 2;
+            }
+            "--models-dir" if i + 1 < args.len() => {
+                models_dir = PathBuf::from(&args[i + 1]);
+                i += 2;
+            }
+            arg if !arg.starts_with("--") && user_goal.is_empty() => {
+                user_goal = arg.to_string();
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    if user_goal.is_empty() {
+        eprintln!("❌ Error: Missing research goal or query.");
+        eprintln!("Usage: omni_engine swarm \"<query>\" [OPTIONS]");
+        return;
+    }
+
+    let config = if let Some(m) = custom_model {
+        crate::planner::SwarmConfig {
+            orchestrator_model_path: m.clone(),
+            worker_model_path: m,
+            max_subgoals,
+            max_steps_per_worker: max_steps,
+            verbose: true,
+        }
+    } else if let (Some(o), Some(w)) = (orch_path, worker_path) {
+        crate::planner::SwarmConfig {
+            orchestrator_model_path: o,
+            worker_model_path: w,
+            max_subgoals,
+            max_steps_per_worker: max_steps,
+            verbose: true,
+        }
+    } else if let Some(cfg) = crate::planner::SwarmConfig::auto_detect(&base_dir) {
+        crate::planner::SwarmConfig {
+            orchestrator_model_path: cfg.orchestrator_model_path,
+            worker_model_path: cfg.worker_model_path,
+            max_subgoals,
+            max_steps_per_worker: max_steps,
+            verbose: true,
+        }
+    } else {
+        eprintln!("❌ No GGUF models detected.");
+        eprintln!("💡 Place any open GGUF model in '{}' or pass '--model <PATH>'", models_dir.display());
+        return;
+    };
+
+    println!("⚡ Initializing Sovereign Swarm Coordinator...");
+    let coordinator = match crate::planner::SwarmCoordinator::new(config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Failed to initialize SwarmCoordinator: {}", e);
+            return;
+        }
+    };
+
+    match coordinator.execute_goal(&user_goal) {
+        Ok(res) => {
+            use colored::*;
+            println!("\n{}", "================================================================================".bright_cyan());
+            println!("  📋 {}", "SYNTHESIZED GROUND TRUTH REPORT:".bright_yellow().bold());
+            println!("{}\n", "================================================================================".bright_cyan());
+            println!("{}\n", res.final_report.trim().bright_white());
+        }
+        Err(e) => {
+            eprintln!("❌ Swarm execution failed: {}", e);
+        }
+    }
 }
 

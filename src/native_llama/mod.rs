@@ -228,23 +228,29 @@ impl NativeLlamaContext {
             return Ok(());
         }
 
-        let res = unsafe {
-            omni_llama_eval_tokens(
-                self.raw_ctx,
-                tokens.as_ptr(),
-                tokens.len() as i32,
-                seq_id,
-                self.current_cursor as i32,
-            )
-        };
+        // Chunk by batch size (512) to respect llama.cpp cparams.n_batch limit
+        let chunk_size = 512;
+        for chunk in tokens.chunks(chunk_size) {
+            let res = unsafe {
+                omni_llama_eval_tokens(
+                    self.raw_ctx,
+                    chunk.as_ptr(),
+                    chunk.len() as i32,
+                    seq_id,
+                    self.current_cursor as i32,
+                )
+            };
 
-        if res != 0 {
-            return Err(format!("llama_decode failed with error code: {}", res));
+            if res != 0 {
+                return Err(format!("llama_decode failed with error code: {}", res));
+            }
+
+            self.current_cursor += chunk.len();
         }
 
-        self.current_cursor += tokens.len();
         Ok(())
     }
+
 
     /// Sample next token using greedy argmax selection over logits.
     pub fn sample_greedy(&self) -> Result<i32, String> {
@@ -287,10 +293,16 @@ impl NativeLlamaContext {
             let next_tok = self.sample_greedy()?;
             let piece = self.model.token_to_piece(next_tok)?;
 
-            // Check EOS tokens (<|im_end|>, <|endoftext|>, etc.)
-            if piece.contains("<|im_end|>") || piece.contains("<|endoftext|>") {
+            // Check EOS tokens across model architectures (<|im_end|>, <|endoftext|>, <|eot_id|>, </s>, etc.)
+            if piece.contains("<|im_end|>")
+                || piece.contains("<|endoftext|>")
+                || piece.contains("<|eot_id|>")
+                || piece.contains("</s>")
+                || piece.contains("<end_of_turn>")
+            {
                 break;
             }
+
 
             generated.push_str(&piece);
             self.eval_tokens(&[next_tok], 0)?;
