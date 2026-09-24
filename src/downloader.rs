@@ -1,9 +1,10 @@
 use futures_util::StreamExt;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tracing::{error, info};
 
@@ -35,7 +36,7 @@ impl ModelDownloader {
     }
 
     pub fn get_tasks(&self) -> Vec<DownloadTask> {
-        let guard = self.tasks.lock().unwrap();
+        let guard = self.tasks.lock();
         guard.values().cloned().collect()
     }
 
@@ -67,7 +68,8 @@ impl ModelDownloader {
             error: None,
         };
 
-        self.tasks.lock().unwrap().insert(task_id.clone(), initial_task);
+        self.tasks.lock().insert(task_id.clone(), initial_task);
+
 
         let tasks_arc = Arc::clone(&self.tasks);
         let target_path = self.models_dir.join(&filename);
@@ -86,7 +88,7 @@ impl ModelDownloader {
                     if !response.status().is_success() {
                         let err_msg = format!("HTTP error: {}", response.status());
                         error!("{}", err_msg);
-                        let mut guard = tasks_arc.lock().unwrap();
+                        let mut guard = tasks_arc.lock();
                         if let Some(t) = guard.get_mut(&id_clone) {
                             t.error = Some(err_msg);
                         }
@@ -95,7 +97,7 @@ impl ModelDownloader {
 
                     let total_bytes = response.content_length().unwrap_or(0);
                     {
-                        let mut guard = tasks_arc.lock().unwrap();
+                        let mut guard = tasks_arc.lock();
                         if let Some(t) = guard.get_mut(&id_clone) {
                             t.total_bytes = total_bytes;
                         }
@@ -111,7 +113,7 @@ impl ModelDownloader {
                                     Ok(chunk) => {
                                         if let Err(e) = file.write_all(&chunk).await {
                                             let err = format!("Write error: {}", e);
-                                            let mut guard = tasks_arc.lock().unwrap();
+                                            let mut guard = tasks_arc.lock();
                                             if let Some(t) = guard.get_mut(&id_clone) {
                                                 t.error = Some(err);
                                             }
@@ -125,7 +127,7 @@ impl ModelDownloader {
                                             0.0
                                         };
 
-                                        let mut guard = tasks_arc.lock().unwrap();
+                                        let mut guard = tasks_arc.lock();
                                         if let Some(t) = guard.get_mut(&id_clone) {
                                             t.downloaded_bytes = downloaded;
                                             t.percent = percent;
@@ -133,7 +135,7 @@ impl ModelDownloader {
                                     }
                                     Err(e) => {
                                         let err = format!("Stream error: {}", e);
-                                        let mut guard = tasks_arc.lock().unwrap();
+                                        let mut guard = tasks_arc.lock();
                                         if let Some(t) = guard.get_mut(&id_clone) {
                                             t.error = Some(err);
                                         }
@@ -142,9 +144,11 @@ impl ModelDownloader {
                                 }
                             }
 
-                            let _ = file.flush().await;
+                            if let Err(e) = file.flush().await {
+                                error!("Failed to flush file {:?}: {}", target_path, e);
+                            }
                             info!("Completed GGUF download to {:?}", target_path);
-                            let mut guard = tasks_arc.lock().unwrap();
+                            let mut guard = tasks_arc.lock();
                             if let Some(t) = guard.get_mut(&id_clone) {
                                 t.percent = 100.0;
                                 t.is_completed = true;
@@ -152,7 +156,7 @@ impl ModelDownloader {
                         }
                         Err(e) => {
                             let err = format!("Failed to create file: {}", e);
-                            let mut guard = tasks_arc.lock().unwrap();
+                            let mut guard = tasks_arc.lock();
                             if let Some(t) = guard.get_mut(&id_clone) {
                                 t.error = Some(err);
                             }
@@ -161,7 +165,7 @@ impl ModelDownloader {
                 }
                 Err(e) => {
                     let err = format!("Network request failed: {}", e);
-                    let mut guard = tasks_arc.lock().unwrap();
+                    let mut guard = tasks_arc.lock();
                     if let Some(t) = guard.get_mut(&id_clone) {
                         t.error = Some(err);
                     }
@@ -172,3 +176,4 @@ impl ModelDownloader {
         task_id
     }
 }
+

@@ -1,6 +1,6 @@
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileChangeType {
@@ -49,8 +49,8 @@ impl MemoryVfs {
     /// Preload or mount a real file from host into RAM sandbox (read-only copy)
     pub fn preload_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
         let path_buf = Self::resolve_path(path);
-        let mut original = self.original_snapshots.write().unwrap();
-        let mut active = self.files.write().unwrap();
+        let mut original = self.original_snapshots.write();
+        let mut active = self.files.write();
         original.insert(path_buf.clone(), content.to_vec());
         active.insert(path_buf, content.to_vec());
     }
@@ -58,14 +58,14 @@ impl MemoryVfs {
     /// Model writes or edits a file inside the isolated RAM VFS
     pub fn write_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
         let path_buf = Self::resolve_path(path);
-        let mut active = self.files.write().unwrap();
+        let mut active = self.files.write();
         active.insert(path_buf, content.to_vec());
     }
 
     /// Read file content from RAM VFS
     pub fn read_file<P: AsRef<Path>>(&self, path: P) -> Option<Vec<u8>> {
         let path_buf = Self::resolve_path(path);
-        let active = self.files.read().unwrap();
+        let active = self.files.read();
         active.get(&path_buf).cloned()
     }
 
@@ -77,21 +77,22 @@ impl MemoryVfs {
     /// Check if file exists in RAM VFS
     pub fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
         let path_buf = Self::resolve_path(path);
-        let active = self.files.read().unwrap();
+        let active = self.files.read();
         active.contains_key(&path_buf)
     }
 
     /// Delete file inside RAM VFS
     pub fn delete_file<P: AsRef<Path>>(&self, path: P) -> bool {
         let path_buf = Self::resolve_path(path);
-        let mut active = self.files.write().unwrap();
+        let mut active = self.files.write();
         active.remove(&path_buf).is_some()
     }
 
     /// Compute staged changes (Diffs) between original snapshots and active sandbox modifications.
     pub fn generate_staged_diffs(&self) -> Vec<StagedDiff> {
-        let active = self.files.read().unwrap();
-        let original = self.original_snapshots.read().unwrap();
+        let active = self.files.read();
+        let original = self.original_snapshots.read();
+
         let mut diffs = Vec::new();
 
         // Check for created or modified files
@@ -169,13 +170,14 @@ impl MemoryVfs {
         }
 
         // Update original snapshots to reflect committed state
-        let mut original = self.original_snapshots.write().unwrap();
-        let active = self.files.read().unwrap();
+        let mut original = self.original_snapshots.write();
+        let active = self.files.read();
         *original = active.clone();
 
         Ok(committed)
     }
 }
+
 
 #[cfg(test)]
 mod tests {

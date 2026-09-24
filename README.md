@@ -217,7 +217,13 @@ cargo build --release
 ./target/release/omni_engine ask "Generate a technology sales spreadsheet and save to sales_q3.csv"
 ```
 
-### 6.3 Local Inference Daemon & CLI Controller
+### 6.3 Direct In-Process KV-Cache Hardware Verification
+```bash
+# Verify true in-process C FFI KV-cache manipulation (eval, causal rollback, seq fork, clear)
+./omni_engine kv-test qwen-0.5b.gguf
+```
+
+### 6.4 Local Inference Daemon & CLI Controller
 ```bash
 # Inspect physical hardware specs and thread topology
 ./omni_engine status

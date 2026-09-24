@@ -77,7 +77,10 @@ pub async fn proxy_chat_completion(
     target_port: u16,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let is_stream = req.stream.unwrap_or(false);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let target_url = format!("http://127.0.0.1:{}/v1/chat/completions", target_port);
 
     info!("Proxying chat completion to {} (stream={})", target_url, is_stream);

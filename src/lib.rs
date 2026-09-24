@@ -1,5 +1,7 @@
-// [GUIDANCE] Same dead_code suppression issue as main.rs. Remove after Phase 0.
 #![allow(dead_code)]
+
+pub mod native_llama;
+
 
 pub mod auth;
 pub mod causal_memory;

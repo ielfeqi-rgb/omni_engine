@@ -9,6 +9,7 @@ mod cli;
 mod downloader;
 mod llama_manager;
 mod logger;
+pub mod native_llama;
 mod openai_api;
 mod planner;
 mod sandbox;
@@ -59,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // [GUIDANCE] Use env!("CARGO_PKG_VERSION") instead of hardcoded version strings.
     // Currently main.rs says "v2.0.0", line 81 says "v1.0.1", cli.rs says "v1.0.1".
     let mut port: u16 = 8090;
+    let mut bind_host = "127.0.0.1".to_string();
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--port" && i + 1 < args.len() {
@@ -66,12 +68,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 port = p;
             }
             i += 1;
+        } else if args[i] == "--bind" && i + 1 < args.len() {
+            bind_host = args[i + 1].clone();
+            i += 1;
         }
         i += 1;
     }
 
     println!("============================================================");
-    println!("   🚀 OMNI AI ENGINE v2.0.0 (Sovereign Autonomous Runtime)");
+    println!("   🚀 OMNI AI ENGINE v{} (Sovereign Autonomous Runtime)", env!("CARGO_PKG_VERSION"));
     println!("   Core: Rust & Lua Sandbox | Causal KV-Cache | Local AI");
     println!("============================================================");
 
@@ -80,30 +85,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let llama_manager = LlamaManager::new(base_dir.clone());
     let log_buffer = LogBuffer::new(500);
 
-    log_buffer.push("OMNI AI ENGINE v1.0.1 initialized.".to_string());
+    log_buffer.push(format!("OMNI AI ENGINE v{} initialized.", env!("CARGO_PKG_VERSION")));
     log_buffer.push("Scanning hardware specs and local model repository...".to_string());
 
     let state = AppState {
         key_manager,
         downloader,
-        llama_manager,
+        llama_manager: llama_manager.clone(),
         log_buffer,
     };
 
     let router = create_router(state);
 
-    // [GUIDANCE] SECURITY: Default to "127.0.0.1" not "0.0.0.0".
-    // 0.0.0.0 exposes the LLM endpoint to your entire network (public Wi-Fi = anyone can use your model).
-    // Add a --bind flag for explicit network exposure when intended.
-    let bind_addr = format!("0.0.0.0:{}", port);
+    let bind_addr = format!("{}:{}", bind_host, port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
     println!("🌐 Server Listening on: http://{}", bind_addr);
-    println!("💬 Web UI Dashboard:    http://127.0.0.1:{}", port);
-    println!("⚡ OpenAI Endpoint:     http://127.0.0.1:{}/v1/chat/completions", port);
+    println!("💬 Web UI Dashboard:    http://{}:{}", bind_host, port);
+    println!("⚡ OpenAI Endpoint:     http://{}:{}/v1/chat/completions", bind_host, port);
     println!("============================================================");
 
-    axum::serve(listener, router).await?;
+    tokio::select! {
+        res = axum::serve(listener, router) => {
+            if let Err(e) = res {
+                tracing::error!("Server error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n🛑 Graceful shutdown signal received. Stopping background services...");
+            let _ = llama_manager.stop();
+            println!("👋 Omni Engine stopped cleanly.");
+        }
+    }
 
     Ok(())
 }
+

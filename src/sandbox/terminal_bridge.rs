@@ -1,8 +1,9 @@
+use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +58,11 @@ impl TerminalSessionBridge {
     }
 
     pub fn arm_and_warmup(&self) -> bool {
-        let mut buf = self.log_buffer.lock().unwrap();
+        let mut buf = self.log_buffer.lock();
         buf.push_back("[TERMHOST]: Speculative pipe initialized & armed in background.".to_string());
         true
     }
+
 
     pub fn validate_safety(&self, command: &str) -> Result<(), String> {
         let trimmed = command.trim();
@@ -104,7 +106,7 @@ impl TerminalSessionBridge {
                 started_at: Instant::now(),
                 finished_at: Some(Instant::now()),
             };
-            self.jobs.lock().unwrap().push(job);
+            self.jobs.lock().push(job);
             self.append_log(format!("[SECURITY] Job #{}: {}", job_id, reason));
             return (job_id, JobStatus::Blocked { reason });
         }
@@ -118,7 +120,7 @@ impl TerminalSessionBridge {
             started_at: Instant::now(),
             finished_at: None,
         };
-        self.jobs.lock().unwrap().push(initial_job);
+        self.jobs.lock().push(initial_job);
 
         // 2. Spawn execution worker thread
         let log_buffer_clone = self.log_buffer.clone();
@@ -136,12 +138,12 @@ impl TerminalSessionBridge {
             {
                 Ok(c) => c,
                 Err(err) => {
-                    let mut jobs = jobs_clone.lock().unwrap();
+                    let mut jobs = jobs_clone.lock();
                     if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id) {
                         j.status = JobStatus::Failed { error: err.to_string() };
                         j.finished_at = Some(Instant::now());
                     }
-                    let mut buf = log_buffer_clone.lock().unwrap();
+                    let mut buf = log_buffer_clone.lock();
                     buf.push_back(format!("[ERROR] Job #{}: Failed to spawn process: {}", job_id, err));
                     if buf.len() > max_lines {
                         buf.pop_front();
@@ -154,7 +156,7 @@ impl TerminalSessionBridge {
             if let Some(stdout) = child.stdout.take() {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines().flatten() {
-                    let mut buf = log_buffer_clone.lock().unwrap();
+                    let mut buf = log_buffer_clone.lock();
                     buf.push_back(format!("[Job #{}] {}", job_id, line));
                     if buf.len() > max_lines {
                         buf.pop_front();
@@ -166,7 +168,7 @@ impl TerminalSessionBridge {
             if let Some(stderr) = child.stderr.take() {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().flatten() {
-                    let mut buf = log_buffer_clone.lock().unwrap();
+                    let mut buf = log_buffer_clone.lock();
                     buf.push_back(format!("[Job #{} STDERR] {}", job_id, line));
                     if buf.len() > max_lines {
                         buf.pop_front();
@@ -175,14 +177,14 @@ impl TerminalSessionBridge {
             }
 
             let status_res = child.wait();
-            let mut jobs = jobs_clone.lock().unwrap();
+            let mut jobs = jobs_clone.lock();
             if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id) {
                 j.finished_at = Some(Instant::now());
                 match status_res {
                     Ok(exit_status) => {
                         let code = exit_status.code().unwrap_or(-1);
                         j.status = JobStatus::Completed { exit_code: code };
-                        let mut buf = log_buffer_clone.lock().unwrap();
+                        let mut buf = log_buffer_clone.lock();
                         buf.push_back(format!("[TERMINAL] Job #{}: Process exited with status code {}", job_id, code));
                         if buf.len() > max_lines {
                             buf.pop_front();
@@ -190,7 +192,7 @@ impl TerminalSessionBridge {
                     }
                     Err(e) => {
                         j.status = JobStatus::Failed { error: e.to_string() };
-                        let mut buf = log_buffer_clone.lock().unwrap();
+                        let mut buf = log_buffer_clone.lock();
                         buf.push_back(format!("[TERMINAL] Job #{}: Process wait error: {}", job_id, e));
                         if buf.len() > max_lines {
                             buf.pop_front();
@@ -205,20 +207,20 @@ impl TerminalSessionBridge {
 
     /// Read the latest N lines from the circular log buffer
     pub fn get_logs(&self, tail_lines: usize) -> Vec<String> {
-        let buf = self.log_buffer.lock().unwrap();
+        let buf = self.log_buffer.lock();
         let count = if tail_lines == 0 { buf.len() } else { tail_lines.min(buf.len()) };
         buf.iter().rev().take(count).rev().cloned().collect()
     }
 
     /// Clear in-memory log buffer
     pub fn clear_logs(&self) {
-        let mut buf = self.log_buffer.lock().unwrap();
+        let mut buf = self.log_buffer.lock();
         buf.clear();
     }
 
     /// Poll status of a specific job
     pub fn poll_status(&self, job_id: u64) -> Option<JobStatus> {
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock();
         jobs.iter().find(|j| j.job_id == job_id).map(|j| j.status.clone())
     }
 
@@ -237,7 +239,7 @@ impl TerminalSessionBridge {
                     _ => {
                         // Small grace period for pipe flushing
                         std::thread::sleep(std::time::Duration::from_millis(50));
-                        let buf = self.log_buffer.lock().unwrap();
+                        let buf = self.log_buffer.lock();
                         let job_tag = format!("[Job #{}]", job_id);
                         let job_err_tag = format!("[Job #{} STDERR]", job_id);
 
@@ -277,13 +279,14 @@ impl TerminalSessionBridge {
     }
 
     fn append_log(&self, line: String) {
-        let mut buf = self.log_buffer.lock().unwrap();
+        let mut buf = self.log_buffer.lock();
         buf.push_back(line);
         if buf.len() > self.max_buffer_lines {
             buf.pop_front();
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

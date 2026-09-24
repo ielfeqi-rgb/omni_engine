@@ -1,9 +1,10 @@
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tracing::{error, info};
 use uuid::Uuid;
-use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
@@ -22,7 +23,9 @@ pub struct KeyManager {
 impl KeyManager {
     pub fn new(base_dir: PathBuf) -> Self {
         let config_dir = base_dir.join("config");
-        let _ = fs::create_dir_all(&config_dir);
+        if let Err(e) = fs::create_dir_all(&config_dir) {
+            error!("Failed to create config directory {:?}: {}", config_dir, e);
+        }
         let config_path = config_dir.join("apikeys.json");
 
         let mut keys = Vec::new();
@@ -44,7 +47,9 @@ impl KeyManager {
             };
             info!("🗝️  Generated Master API Key: {}", primary_key.key);
             keys.push(primary_key);
-            let _ = save_keys_to_disk(&config_path, &keys);
+            if let Err(e) = save_keys_to_disk(&config_path, &keys) {
+                error!("Failed to persist master key to disk: {}", e);
+            }
         }
 
         Self {
@@ -55,12 +60,12 @@ impl KeyManager {
 
     pub fn validate_key(&self, token: &str) -> bool {
         let clean_token = token.trim_start_matches("Bearer ").trim();
-        let guard = self.keys.lock().unwrap();
+        let guard = self.keys.lock();
         guard.iter().any(|k| k.key == clean_token)
     }
 
     pub fn list_keys(&self) -> Vec<ApiKey> {
-        let guard = self.keys.lock().unwrap();
+        let guard = self.keys.lock();
         guard.clone()
     }
 
@@ -72,23 +77,28 @@ impl KeyManager {
             created_at: chrono_like_timestamp(),
         };
 
-        let mut guard = self.keys.lock().unwrap();
+        let mut guard = self.keys.lock();
         guard.push(new_key.clone());
-        let _ = save_keys_to_disk(&self.config_path, &guard);
+        if let Err(e) = save_keys_to_disk(&self.config_path, &guard) {
+            error!("Failed to persist created key to disk: {}", e);
+        }
         new_key
     }
 
     pub fn revoke_key(&self, id: &str) -> bool {
-        let mut guard = self.keys.lock().unwrap();
+        let mut guard = self.keys.lock();
         let initial_len = guard.len();
         guard.retain(|k| k.id != id);
         let removed = guard.len() < initial_len;
         if removed {
-            let _ = save_keys_to_disk(&self.config_path, &guard);
+            if let Err(e) = save_keys_to_disk(&self.config_path, &guard) {
+                error!("Failed to persist revoked key changes: {}", e);
+            }
         }
         removed
     }
 }
+
 
 fn save_keys_to_disk(path: &PathBuf, keys: &[ApiKey]) -> Result<(), String> {
     let json = serde_json::to_string_pretty(keys).map_err(|e| e.to_string())?;

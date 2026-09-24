@@ -14,6 +14,8 @@ pub struct StepNode {
 pub struct CausalGraph {
     nodes: HashMap<usize, StepNode>,
     adjacency: HashMap<usize, Vec<usize>>,
+    predecessors: HashMap<usize, Vec<usize>>,
+    entity_writers: HashMap<String, Vec<usize>>,
     pub store: CompressedCacheStore,
     current_token_cursor: usize,
 }
@@ -23,6 +25,8 @@ impl CausalGraph {
         Self {
             nodes: HashMap::new(),
             adjacency: HashMap::new(),
+            predecessors: HashMap::new(),
+            entity_writers: HashMap::new(),
             store: CompressedCacheStore::new(),
             current_token_cursor: 0,
         }
@@ -54,12 +58,26 @@ impl CausalGraph {
         };
 
         // Mathematical Dependency Resolution (Set Intersection: O(A) ∩ I(B) != ∅)
-        for (prev_id, prev_node) in &self.nodes {
-            // Did previous step write an entity that current step reads?
-            let intersection: HashSet<_> = prev_node.entities_written.intersection(&entities_read).collect();
-            if !intersection.is_empty() {
-                self.adjacency.entry(*prev_id).or_default().push(step_id);
+        // Instantaneous lookup via entity_writers index (O(1) amortized)
+        for r in &entities_read {
+            if let Some(writers) = self.entity_writers.get(r) {
+                for &writer_id in writers {
+                    if writer_id != step_id {
+                        let adj = self.adjacency.entry(writer_id).or_default();
+                        if !adj.contains(&step_id) {
+                            adj.push(step_id);
+                        }
+                        let preds = self.predecessors.entry(step_id).or_default();
+                        if !preds.contains(&writer_id) {
+                            preds.push(writer_id);
+                        }
+                    }
+                }
             }
+        }
+
+        for w in &entities_written {
+            self.entity_writers.entry(w.clone()).or_default().push(step_id);
         }
 
         self.nodes.insert(step_id, node);
@@ -73,16 +91,34 @@ impl CausalGraph {
         }
     }
 
-    /// Query all causal ancestors for an entity involved in an error
+    /// Query all causal ancestors for an entity involved in an error using full Transitive Closure
     pub fn resolve_dependencies_for_entity(&self, target_entity: &str) -> Vec<usize> {
-        let mut relevant_steps = Vec::new();
+        let mut seed_steps: Vec<usize> = Vec::new();
         for (id, node) in &self.nodes {
             if node.entities_written.contains(target_entity) || node.entities_read.contains(target_entity) {
-                relevant_steps.push(*id);
+                seed_steps.push(*id);
             }
         }
-        relevant_steps.sort();
-        relevant_steps
+
+        // Full Transitive Closure backward search using pre-indexed predecessors
+        let mut visited: HashSet<usize> = HashSet::new();
+        let mut queue = seed_steps;
+
+        while let Some(current) = queue.pop() {
+            if visited.insert(current) {
+                if let Some(preds) = self.predecessors.get(&current) {
+                    for p in preds {
+                        if !visited.contains(p) {
+                            queue.push(*p);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<usize> = visited.into_iter().collect();
+        result.sort();
+        result
     }
 
     /// Reactive Hydration: Check if any required causal ancestor is evicted, and unpack it immediately
@@ -93,7 +129,6 @@ impl CausalGraph {
         for step_id in ancestors {
             if let Some(node) = self.nodes.get(&step_id) {
                 if node.is_evicted {
-                    // Hydrate from compressed store!
                     if let Some(content) = self.store.hydrate(step_id) {
                         hydrated_context.push((step_id, content));
                     }
@@ -102,7 +137,22 @@ impl CausalGraph {
         }
         hydrated_context
     }
+
+    /// Physical KV-Cache Rollback: Directly excise this step's tokens from transformer memory
+    pub fn rollback_step_kv(
+        &self,
+        step_id: usize,
+        ctx: &mut crate::native_llama::NativeLlamaContext,
+    ) -> Result<bool, String> {
+        if let Some(node) = self.nodes.get(&step_id) {
+            let (p0, p1) = node.token_range;
+            ctx.kv_cache_seq_rm(0, p0 as i32, p1 as i32)
+        } else {
+            Err(format!("Step ID {} not found in causal graph", step_id))
+        }
+    }
 }
+
 
 #[cfg(test)]
 mod tests {

@@ -1,9 +1,10 @@
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
-use tracing::info;
+use std::sync::Arc;
+use tracing::{error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlamaEngineStatus {
@@ -27,7 +28,9 @@ pub struct LlamaManager {
 impl LlamaManager {
     pub fn new(base_dir: PathBuf) -> Self {
         let models_dir = base_dir.join("models");
-        let _ = fs::create_dir_all(&models_dir);
+        if let Err(e) = fs::create_dir_all(&models_dir) {
+            error!("Failed to create models directory {:?}: {}", models_dir, e);
+        }
 
         Self {
             base_dir,
@@ -38,27 +41,28 @@ impl LlamaManager {
     }
 
     pub fn locate_binary(&self) -> Option<PathBuf> {
-        // [GUIDANCE] CRITICAL: Lines 44-47 are hardcoded to YOUR machine.
-        // Replace with env var LLAMA_SERVER_PATH or config file lookup.
-        // Also: this entire module spawns llama-server as a subprocess and talks to it via HTTP.
-        // That means you have ZERO access to the model's KV-cache, logits, or tokens.
-        // To implement real KV-cache theories, you need either:
-        //   A) Direct C FFI bindings to llama.h (see tools/reports/kv_cache_feasibility.md)
-        //   B) The llama-cpp-2 Rust crate
-        //   C) Python bridge via llama-cpp-python (quickest to test theories)
-        let candidates = vec![
+        if let Ok(custom_path) = std::env::var("LLAMA_SERVER_PATH") {
+            let p = PathBuf::from(custom_path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        let mut candidates = vec![
             self.base_dir.join("bin").join("llama-server"),
             self.base_dir.join("llama-server"),
-            PathBuf::from("/home/hema/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"), // [FIX] Remove: hardcoded user path
-            PathBuf::from("../M.A.R.K.E.T/bin/llama-server"),
-            PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_v2/bin/llama-server"), // [FIX] Remove: hardcoded user path
-            PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_complete/bin/llama-server"), // [FIX] Remove: hardcoded user path
             PathBuf::from("./bin/llama-server"),
             PathBuf::from("llama-server"),
             PathBuf::from("/usr/local/bin/llama-server"),
             PathBuf::from("/usr/bin/llama-server"),
         ];
 
+        if let Ok(home) = std::env::var("HOME") {
+            let home_path = PathBuf::from(home);
+            candidates.push(home_path.join("omnicontext_ai/llama-server"));
+            candidates.push(home_path.join("bin/llama-server"));
+            candidates.push(home_path.join(".local/bin/llama-server"));
+        }
 
         for path in candidates {
             if path.exists() {
@@ -81,6 +85,7 @@ impl LlamaManager {
         None
     }
 
+
     pub fn list_available_models(&self) -> Vec<String> {
         let mut models = Vec::new();
         if let Ok(entries) = fs::read_dir(&self.models_dir) {
@@ -101,7 +106,7 @@ impl LlamaManager {
     }
 
     pub fn status(&self) -> LlamaEngineStatus {
-        let mut proc_guard = self.process.lock().unwrap();
+        let mut proc_guard = self.process.lock();
         let mut is_running = false;
         let mut pid = None;
 
@@ -149,7 +154,7 @@ impl LlamaManager {
         }
 
         let bin_opt = self.locate_binary();
-        let active_model = self.active_model.lock().unwrap().clone().or_else(|| {
+        let active_model = self.active_model.lock().clone().or_else(|| {
             let model_file = self.base_dir.join("config").join("active_model.txt");
             fs::read_to_string(model_file).ok().map(|s| s.trim().to_string())
         });
@@ -167,7 +172,7 @@ impl LlamaManager {
     }
 
     pub fn start(&self, model_name: String, port: u16, threads: usize, ctx_size: usize) -> Result<u32, String> {
-        let mut proc_guard = self.process.lock().unwrap();
+        let mut proc_guard = self.process.lock();
         if proc_guard.is_some() {
             return Err("llama-server engine is already running".to_string());
         }
@@ -210,7 +215,7 @@ impl LlamaManager {
             .arg("-t")
             .arg(num_threads.to_string())
             .arg("--host")
-            .arg("0.0.0.0")
+            .arg("127.0.0.1")
             .arg("--port")
             .arg(port.to_string())
             .stdin(std::process::Stdio::null())
@@ -230,7 +235,7 @@ impl LlamaManager {
                 let _ = fs::write(config_dir.join("active_model.txt"), &model_name);
 
                 *proc_guard = Some(child);
-                *self.active_model.lock().unwrap() = Some(model_name.clone());
+                *self.active_model.lock() = Some(model_name.clone());
                 info!("Started llama-server PID {} with model {}", id, model_name);
                 Ok(id)
             }
@@ -239,10 +244,12 @@ impl LlamaManager {
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        let mut proc_guard = self.process.lock().unwrap();
+        let mut proc_guard = self.process.lock();
         if let Some(mut child) = proc_guard.take() {
-            let _ = child.kill();
-            *self.active_model.lock().unwrap() = None;
+            if let Err(e) = child.kill() {
+                error!("Failed to kill child process: {}", e);
+            }
+            *self.active_model.lock() = None;
             info!("Stopped llama-server process");
         }
 
@@ -256,8 +263,9 @@ impl LlamaManager {
         }
 
         let _ = fs::remove_file(self.base_dir.join("config").join("active_model.txt"));
-        *self.active_model.lock().unwrap() = None;
+        *self.active_model.lock() = None;
         Ok(())
     }
 }
+
 

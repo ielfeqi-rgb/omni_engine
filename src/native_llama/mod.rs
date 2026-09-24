@@ -1,0 +1,344 @@
+//! Native Llama.cpp C FFI Engine and In-Memory KV-Cache Controller.
+//!
+//! Provides direct, in-process C-level access to transformer model weights,
+//! tokenization, batched decoding, greedy/stochastic sampling, and physical
+//! KV-cache tensor manipulation (surgical rollback, sequence branching,
+//! defragmentation, and full epistemic apoptosis).
+
+use std::ffi::CString;
+use std::os::raw::{c_char, c_void};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tracing::{debug, info};
+
+static BACKEND_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+#[link(name = "omni_llama_bridge", kind = "static")]
+#[link(name = "llama")]
+#[link(name = "ggml")]
+#[link(name = "ggml-base")]
+#[link(name = "ggml-cpu")]
+extern "C" {
+    fn omni_llama_backend_init();
+    fn omni_llama_backend_free();
+    fn omni_llama_load_model(path: *const c_char, n_gpu_layers: i32) -> *mut c_void;
+    fn omni_llama_free_model(model: *mut c_void);
+    fn omni_llama_new_context(
+        model: *mut c_void,
+        n_ctx: i32,
+        n_batch: i32,
+        n_threads: i32,
+    ) -> *mut c_void;
+    fn omni_llama_free_context(ctx: *mut c_void);
+    fn omni_llama_tokenize(
+        model: *mut c_void,
+        text: *const c_char,
+        text_len: i32,
+        out_tokens: *mut i32,
+        max_tokens: i32,
+        add_bos: bool,
+    ) -> i32;
+    fn omni_llama_token_to_piece(
+        model: *mut c_void,
+        token: i32,
+        buf: *mut c_char,
+        buf_size: i32,
+    ) -> i32;
+    fn omni_llama_eval_tokens(
+        ctx: *mut c_void,
+        tokens: *const i32,
+        n_tokens: i32,
+        seq_id: i32,
+        start_pos: i32,
+    ) -> i32;
+    fn omni_llama_sample_greedy(ctx: *mut c_void, model: *mut c_void) -> i32;
+    fn omni_llama_kv_cache_used_cells(ctx: *mut c_void) -> i32;
+    fn omni_llama_kv_cache_token_count(ctx: *mut c_void) -> i32;
+    fn omni_llama_kv_cache_clear(ctx: *mut c_void);
+    fn omni_llama_kv_cache_seq_rm(ctx: *mut c_void, seq_id: i32, p0: i32, p1: i32) -> bool;
+    fn omni_llama_kv_cache_seq_cp(ctx: *mut c_void, seq_src: i32, seq_dst: i32, p0: i32, p1: i32);
+    fn omni_llama_kv_cache_seq_shift(ctx: *mut c_void, seq_id: i32, p0: i32, p1: i32, delta: i32);
+    fn omni_llama_kv_cache_seq_pos_max(ctx: *mut c_void, seq_id: i32) -> i32;
+}
+
+/// Initialize the llama.cpp backend once per process lifecycle.
+pub fn ensure_backend_initialized() {
+    if !BACKEND_INITIALIZED.swap(true, Ordering::SeqCst) {
+        unsafe {
+            omni_llama_backend_init();
+        }
+        info!("Native llama.cpp backend initialized successfully.");
+    }
+}
+
+/// Represents a loaded GGUF transformer model in host / GPU memory.
+pub struct NativeLlamaModel {
+    raw_model: *mut c_void,
+    model_path: String,
+}
+
+unsafe impl Send for NativeLlamaModel {}
+unsafe impl Sync for NativeLlamaModel {}
+
+impl NativeLlamaModel {
+    /// Load a GGUF model directly into RAM/VRAM.
+    pub fn load<P: AsRef<Path>>(path: P, n_gpu_layers: i32) -> Result<Arc<Self>, String> {
+        ensure_backend_initialized();
+
+        let path_ref = path.as_ref();
+        let path_str = path_ref.to_string_lossy().to_string();
+
+        if !path_ref.exists() {
+            return Err(format!("Model file not found: {}", path_str));
+        }
+
+        let c_path = CString::new(path_str.as_bytes())
+            .map_err(|e| format!("Invalid model path string: {}", e))?;
+
+        let raw = unsafe { omni_llama_load_model(c_path.as_ptr(), n_gpu_layers) };
+        if raw.is_null() {
+            return Err(format!("llama_model_load_from_file returned null for: {}", path_str));
+        }
+
+        info!("Successfully loaded native model weights: {}", path_str);
+
+        Ok(Arc::new(Self {
+            raw_model: raw,
+            model_path: path_str,
+        }))
+    }
+
+    /// Tokenize raw text into integer token IDs using the model's native vocabulary.
+    pub fn tokenize(&self, text: &str, add_bos: bool) -> Result<Vec<i32>, String> {
+        let c_text = CString::new(text.as_bytes())
+            .map_err(|e| format!("Invalid text string: {}", e))?;
+
+        let mut buffer: Vec<i32> = vec![0; text.len() + 16];
+        let count = unsafe {
+            omni_llama_tokenize(
+                self.raw_model,
+                c_text.as_ptr(),
+                text.len() as i32,
+                buffer.as_mut_ptr(),
+                buffer.len() as i32,
+                add_bos,
+            )
+        };
+
+        if count < 0 {
+            return Err(format!("Tokenization failed for text (len={})", text.len()));
+        }
+
+        buffer.truncate(count as usize);
+        Ok(buffer)
+    }
+
+    /// Convert a token ID back into its UTF-8 text piece.
+    pub fn token_to_piece(&self, token: i32) -> Result<String, String> {
+        let mut buf = vec![0u8; 256];
+        let len = unsafe {
+            omni_llama_token_to_piece(
+                self.raw_model,
+                token,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len() as i32,
+            )
+        };
+
+        if len < 0 {
+            return Err(format!("Failed to decode token {}", token));
+        }
+
+        buf.truncate(len as usize);
+        Ok(String::from_utf8_lossy(&buf).to_string())
+    }
+
+    /// Spawn an active execution context with dedicated KV-cache memory.
+    pub fn create_context(
+        self: &Arc<Self>,
+        n_ctx: usize,
+        n_batch: usize,
+        n_threads: usize,
+    ) -> Result<NativeLlamaContext, String> {
+        let raw_ctx = unsafe {
+            omni_llama_new_context(
+                self.raw_model,
+                n_ctx as i32,
+                n_batch as i32,
+                n_threads as i32,
+            )
+        };
+
+        if raw_ctx.is_null() {
+            return Err("Failed to allocate native llama context".to_string());
+        }
+
+        Ok(NativeLlamaContext {
+            raw_ctx,
+            model: self.clone(),
+            current_cursor: 0,
+            n_ctx,
+        })
+    }
+
+    pub fn path(&self) -> &str {
+        &self.model_path
+    }
+}
+
+impl Drop for NativeLlamaModel {
+    fn drop(&mut self) {
+        if !self.raw_model.is_null() {
+            unsafe {
+                omni_llama_free_model(self.raw_model);
+            }
+            debug!("Freed native model: {}", self.model_path);
+        }
+    }
+}
+
+/// An active inference execution context with direct C-level KV-cache manipulation.
+pub struct NativeLlamaContext {
+    raw_ctx: *mut c_void,
+    model: Arc<NativeLlamaModel>,
+    current_cursor: usize,
+    n_ctx: usize,
+}
+
+unsafe impl Send for NativeLlamaContext {}
+
+impl NativeLlamaContext {
+    /// Evaluate token sequence through transformer layers, updating active KV-cache.
+    pub fn eval_tokens(&mut self, tokens: &[i32], seq_id: i32) -> Result<(), String> {
+        if tokens.is_empty() {
+            return Ok(());
+        }
+
+        let res = unsafe {
+            omni_llama_eval_tokens(
+                self.raw_ctx,
+                tokens.as_ptr(),
+                tokens.len() as i32,
+                seq_id,
+                self.current_cursor as i32,
+            )
+        };
+
+        if res != 0 {
+            return Err(format!("llama_decode failed with error code: {}", res));
+        }
+
+        self.current_cursor += tokens.len();
+        Ok(())
+    }
+
+    /// Sample next token using greedy argmax selection over logits.
+    pub fn sample_greedy(&self) -> Result<i32, String> {
+        let token = unsafe { omni_llama_sample_greedy(self.raw_ctx, self.model.raw_model) };
+        if token < 0 {
+            return Err("Failed to sample token from logits".to_string());
+        }
+        Ok(token)
+    }
+
+    /// Autoregressively generate up to `max_tokens` from a prompt.
+    pub fn generate(&mut self, prompt: &str, max_tokens: usize) -> Result<String, String> {
+        let prompt_tokens = self.model.tokenize(prompt, true)?;
+        self.eval_tokens(&prompt_tokens, 0)?;
+
+        let mut generated = String::new();
+        for _ in 0..max_tokens {
+            let next_tok = self.sample_greedy()?;
+            let piece = self.model.token_to_piece(next_tok)?;
+
+            // Check EOS tokens (<|im_end|>, <|endoftext|>, etc.)
+            if piece.contains("<|im_end|>") || piece.contains("<|endoftext|>") {
+                break;
+            }
+
+            generated.push_str(&piece);
+            self.eval_tokens(&[next_tok], 0)?;
+        }
+
+        Ok(generated)
+    }
+
+    // -----------------------------------------------------------------------
+    // REAL KV-CACHE OPERATIONS
+    // -----------------------------------------------------------------------
+
+    /// Number of active cells currently occupied in the physical KV-cache.
+    pub fn kv_cache_used_cells(&self) -> usize {
+        let cells = unsafe { omni_llama_kv_cache_used_cells(self.raw_ctx) };
+        cells.max(0) as usize
+    }
+
+    /// Total token count tracked inside KV-cache memory.
+    pub fn kv_cache_token_count(&self) -> usize {
+        let count = unsafe { omni_llama_kv_cache_token_count(self.raw_ctx) };
+        count.max(0) as usize
+    }
+
+    /// SURGICAL CAUSAL KV ROLLBACK:
+    /// Physically excises cached key/value tensors for tokens in range `[p0, p1)`.
+    /// Reduces attention dilution and eliminates token lock-in attractors in-place.
+    pub fn kv_cache_seq_rm(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
+        let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
+        if ok {
+            let removed_count = if p1 > p0 { (p1 - p0) as usize } else { 0 };
+            self.current_cursor = self.current_cursor.saturating_sub(removed_count);
+            info!(
+                "Physical KV Rollback executed: seq={}, [{}..{}), new_cursor={}",
+                seq_id, p0, p1, self.current_cursor
+            );
+        }
+        Ok(ok)
+    }
+
+    /// SWARM BRANCHING:
+    /// Forks the KV-cache of `seq_src` into `seq_dst` without recomputing tensors.
+    pub fn kv_cache_seq_cp(&mut self, seq_src: i32, seq_dst: i32, p0: i32, p1: i32) {
+        unsafe {
+            omni_llama_kv_cache_seq_cp(self.raw_ctx, seq_src, seq_dst, p0, p1);
+        }
+        info!("Forked KV branch: src_seq={} -> dst_seq={}", seq_src, seq_dst);
+    }
+
+    /// CONTEXT SLIDING / POSITION SHIFT:
+    /// Shifts token position indices by `delta` in the KV cache.
+    pub fn kv_cache_seq_shift(&mut self, seq_id: i32, p0: i32, p1: i32, delta: i32) {
+        unsafe {
+            omni_llama_kv_cache_seq_shift(self.raw_ctx, seq_id, p0, p1, delta);
+        }
+    }
+
+    /// EPISTEMIC APOPTOSIS:
+    /// Completely zeroes out all physical KV-cache tensors and resets cell allocation.
+    pub fn kv_cache_clear(&mut self) {
+        unsafe {
+            omni_llama_kv_cache_clear(self.raw_ctx);
+        }
+        self.current_cursor = 0;
+        info!("Epistemic Apoptosis executed: entire KV-cache zeroed.");
+    }
+
+    pub fn current_cursor(&self) -> usize {
+        self.current_cursor
+    }
+
+    pub fn n_ctx(&self) -> usize {
+        self.n_ctx
+    }
+}
+
+impl Drop for NativeLlamaContext {
+    fn drop(&mut self) {
+        if !self.raw_ctx.is_null() {
+            unsafe {
+                omni_llama_free_context(self.raw_ctx);
+            }
+            debug!("Freed native context.");
+        }
+    }
+}

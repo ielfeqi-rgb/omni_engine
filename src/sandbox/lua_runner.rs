@@ -30,26 +30,25 @@ impl LuaSandboxRunner {
     /// Execute Lua code with native Rust-bridged tools (vfs, browser, sys, terminal)
     pub fn run_script(&self, lua_code: &str) -> LuaRunResult {
         let lua = Lua::new();
-        // [GUIDANCE] DANGER: If this set_hook fails silently, the infinite-loop protection is GONE.
-        // A hostile Lua script can hang the process forever. This should panic!, not `let _ = ...`.
-        // Replace with: lua.set_hook(...).expect("FATAL: Lua CPU safety hook failed to install");
-        let _ = lua.set_hook(
+        lua.set_hook(
             mlua::HookTriggers::default().every_nth_instruction(10_000),
             |_lua, _debug| Err(mlua::Error::RuntimeError("CPU instruction quota exceeded (infinite loop prevented)".to_string())),
         );
+
         let _ = lua.globals().set("os", mlua::Value::Nil);
         let _ = lua.globals().set("io", mlua::Value::Nil);
         let _ = lua.globals().set("package", mlua::Value::Nil);
         let _ = lua.globals().set("require", mlua::Value::Nil);
 
-        let logs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let logs = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
         // 1. Bridge print function to capture logs
         let logs_clone = logs.clone();
         let print_fn = lua.create_function(move |_, msg: String| {
-            logs_clone.lock().unwrap().push(msg);
+            logs_clone.lock().push(msg);
             Ok(())
         });
+
 
         if let Ok(print_fn) = print_fn {
             let _ = lua.globals().set("print", print_fn);
@@ -244,7 +243,7 @@ impl LuaSandboxRunner {
         // 5. Execute the Lua script
         match lua.load(lua_code).exec() {
             Ok(_) => {
-                let captured = logs.lock().unwrap().join("\n");
+                let captured = logs.lock().join("\n");
                 LuaRunResult {
                     success: true,
                     output_log: captured,
@@ -252,7 +251,7 @@ impl LuaSandboxRunner {
                 }
             }
             Err(e) => {
-                let captured = logs.lock().unwrap().join("\n");
+                let captured = logs.lock().join("\n");
                 LuaRunResult {
                     success: false,
                     output_log: captured,
@@ -262,6 +261,7 @@ impl LuaSandboxRunner {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

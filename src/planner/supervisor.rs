@@ -1,9 +1,6 @@
-// [GUIDANCE] This is a branch-tracking state machine, not an AI supervisor.
-// "Epistemic apoptosis" = branches.clear() + lessons.clear(). Not neural state deletion.
-// This module is USEFUL as infrastructure for managing hypotheses, but the naming oversells it.
-// Rename: HypothesisTracker or BranchManager would be more honest.
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,13 +65,13 @@ impl InternalSupervisorProbe {
     }
 
     pub fn set_goal(&self, goal: &str) {
-        let mut g = self.active_goal.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.active_goal.lock();
         *g = Some(goal.to_string());
         self.record_telemetry(&format!("GOAL_INITIALIZED: '{}'", goal));
     }
 
     pub fn register_branch(&self, branch_id: &str, strategy_name: &str, file_targets: Vec<String>) {
-        let mut b = self.branches.lock().unwrap();
+        let mut b = self.branches.lock();
         b.push(BranchExecutionPlan {
             branch_id: branch_id.to_string(),
             strategy_name: strategy_name.to_string(),
@@ -86,7 +83,7 @@ impl InternalSupervisorProbe {
     }
 
     pub fn set_branch_active(&self, branch_id: &str) {
-        let mut b = self.branches.lock().unwrap();
+        let mut b = self.branches.lock();
         for branch in b.iter_mut() {
             if branch.branch_id == branch_id {
                 branch.status = BranchStatus::ActiveEvaluating;
@@ -96,7 +93,7 @@ impl InternalSupervisorProbe {
     }
 
     pub fn mark_branch_validated(&self, branch_id: &str) {
-        let mut b = self.branches.lock().unwrap();
+        let mut b = self.branches.lock();
         for branch in b.iter_mut() {
             if branch.branch_id == branch_id {
                 branch.status = BranchStatus::ValidatedAndMerged;
@@ -114,7 +111,7 @@ impl InternalSupervisorProbe {
         distillation_rule: &str,
         tokens_purged: usize,
     ) -> DistilledCausalLesson {
-        let mut lessons = self.lessons.lock().unwrap();
+        let mut lessons = self.lessons.lock();
         let lesson_id = lessons.len() + 1;
 
         let lesson = DistilledCausalLesson {
@@ -129,7 +126,7 @@ impl InternalSupervisorProbe {
         lessons.push(lesson.clone());
 
         // Update branch status
-        let mut b = self.branches.lock().unwrap();
+        let mut b = self.branches.lock();
         for branch in b.iter_mut() {
             if branch.branch_id == branch_id {
                 branch.status = BranchStatus::TrappedAndPruned;
@@ -144,6 +141,7 @@ impl InternalSupervisorProbe {
         lesson
     }
 
+
     /// Spawn isolated sub-experiment in scratch space (Experiment-inside-Experiment)
     pub fn trigger_sub_experiment(
         &self,
@@ -153,7 +151,7 @@ impl InternalSupervisorProbe {
         success: bool,
         outcome: Option<String>,
     ) -> SubExperiment {
-        let mut counter = self.sub_experiments_counter.lock().unwrap();
+        let mut counter = self.sub_experiments_counter.lock();
         *counter += 1;
         let exp_id = *counter;
 
@@ -166,7 +164,7 @@ impl InternalSupervisorProbe {
             discovery_outcome: outcome.clone(),
         };
 
-        let mut b = self.branches.lock().unwrap();
+        let mut b = self.branches.lock();
         for branch in b.iter_mut() {
             if branch.branch_id == parent_branch {
                 branch.sub_experiments.push(sub_exp.clone());
@@ -183,7 +181,7 @@ impl InternalSupervisorProbe {
 
     /// Synthesize compact prompt advice for the next active branch (Zero Context Bloat)
     pub fn format_causal_guidance_prompt(&self) -> String {
-        let lessons = self.lessons.lock().unwrap();
+        let lessons = self.lessons.lock();
         if lessons.is_empty() {
             return String::new();
         }
@@ -198,9 +196,9 @@ impl InternalSupervisorProbe {
 
     pub fn dump_supervisor_dense_telemetry(&self) -> String {
         let elapsed_ms = self.session_start.elapsed().as_millis();
-        let logs = self.probe_telemetry_stream.lock().unwrap();
-        let branches = self.branches.lock().unwrap();
-        let lessons = self.lessons.lock().unwrap();
+        let logs = self.probe_telemetry_stream.lock();
+        let branches = self.branches.lock();
+        let lessons = self.lessons.lock();
 
         format!(
             "PROBE_METRICS: elapsed_ms={} branches_total={} active_lessons={} logs_count={}",
@@ -212,9 +210,9 @@ impl InternalSupervisorProbe {
     }
 
     pub fn trigger_epistemic_apoptosis(&self, raw_dying_stream: &str) -> AncestralTestament {
-        let mut b = self.branches.lock().unwrap();
+        let mut b = self.branches.lock();
         b.clear();
-        let mut l = self.lessons.lock().unwrap();
+        let mut l = self.lessons.lock();
         l.clear();
 
         let clean_testament = raw_dying_stream
@@ -239,10 +237,11 @@ impl InternalSupervisorProbe {
     }
 
     fn record_telemetry(&self, entry: &str) {
-        let mut stream = self.probe_telemetry_stream.lock().unwrap();
+        let mut stream = self.probe_telemetry_stream.lock();
         let ts = self.session_start.elapsed().as_millis();
         stream.push(format!("[{:#06}ms] {}", ts, entry));
     }
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

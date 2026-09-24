@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OmniMail - Inbox</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+        body { display: flex; height: 100vh; background: #f6f8fc; overflow: hidden; }
+        
+        /* Header */
+        header { position: fixed; top: 0; left: 0; right: 0; height: 64px; background: white; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; padding: 0 20px; z-index: 10; }
+        .logo { font-size: 22px; font-weight: bold; color: #ea4335; margin-right: 40px; }
+        .search-container { flex: 1; max-width: 720px; }
+        .search-input { width: 100%; padding: 12px 20px; background: #eaf1fb; border: none; border-radius: 24px; font-size: 15px; outline: none; }
+        
+        /* Layout */
+        .main-container { display: flex; width: 100%; margin-top: 64px; height: calc(100vh - 64px); }
+        
+        /* Sidebar */
+        aside { width: 240px; padding: 15px; background: white; border-right: 1px solid #e0e0e0; }
+        .compose-btn { background: #c2e7ff; color: #001d35; padding: 14px 24px; border-radius: 16px; border: none; font-weight: 600; cursor: pointer; margin-bottom: 20px; width: 100%; text-align: left; }
+        .nav-item { padding: 10px 16px; border-radius: 20px; cursor: pointer; margin-bottom: 5px; font-size: 14px; font-weight: 500; color: #444746; }
+        .nav-item.active { background: #d3e3fd; color: #041e49; font-weight: bold; }
+        
+        /* Mail List */
+        main { flex: 1; padding: 15px; overflow-y: auto; background: white; margin: 10px; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .mail-row { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid #f2f2f2; cursor: pointer; transition: background 0.15s; }
+        .mail-row:hover { background: #f5f5f5; }
+        .mail-row.unread { font-weight: bold; background: #f9fbfe; }
+        .sender { width: 220px; color: #1f1f1f; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .subject-snippet { flex: 1; font-size: 14px; color: #444746; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .subject { color: #1f1f1f; }
+        .date { width: 80px; text-align: right; font-size: 12px; color: #444746; }
+
+        /* Mail Reading Pane */
+        #mail-reader { display: none; padding: 20px; }
+        .reader-header { border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; }
+        .back-btn { background: #eee; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; margin-bottom: 15px; font-weight: bold; }
+        .reader-title { font-size: 20px; margin-bottom: 10px; color: #202124; }
+        .reader-meta { font-size: 13px; color: #5f6368; }
+        .reader-body { font-size: 15px; line-height: 1.6; color: #202124; margin-top: 20px; background: #fafafa; padding: 20px; border-radius: 8px; border: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">OmniMail</div>
+        <div class="search-container">
+            <input type="text" id="mail-search" class="search-input" placeholder="Search in mail">
+        </div>
+    </header>
+
+    <div class="main-container">
+        <aside>
+            <button class="compose-btn">+ Compose</button>
+            <div class="nav-item active">Inbox (1 unread)</div>
+            <div class="nav-item">Starred</div>
+            <div class="nav-item">Sent</div>
+            <div class="nav-item">Drafts</div>
+        </aside>
+
+        <main id="inbox-view">
+            <div class="mail-row" onclick="openMail(1)">
+                <div class="sender">Amazon.com</div>
+                <div class="subject-snippet"><span class="subject">Your Order #114-88392 has shipped!</span> - Track your delivery progress...</div>
+                <div class="date">Sep 20</div>
+            </div>
+
+            <div class="mail-row unread" id="airport-mail-row" onclick="openMail(2)">
+                <div class="sender">Cairo Airport Authority</div>
+                <div class="subject-snippet"><span class="subject">Flight Confirmation & Departure Time: MS777</span> - Important travel advisory...</div>
+                <div class="date">10:15 AM</div>
+            </div>
+
+            <div class="mail-row" onclick="openMail(3)">
+                <div class="sender">GitHub Notifications</div>
+                <div class="subject-snippet"><span class="subject">[omni_engine] Pull request #14 opened</span> - New autonomous features proposed...</div>
+                <div class="date">Sep 19</div>
+            </div>
+
+            <div class="mail-row" onclick="openMail(4)">
+                <div class="sender">LinkedIn Alerts</div>
+                <div class="subject-snippet"><span class="subject">You have 5 new connections waiting</span> - Expand your professional network...</div>
+                <div class="date">Sep 18</div>
+            </div>
+
+            <div class="mail-row" onclick="openMail(5)">
+                <div class="sender">Uber Receipts</div>
+                <div class="subject-snippet"><span class="subject">Your trip on Sunday afternoon</span> - Total: 65.50 EGP...</div>
+                <div class="date">Sep 17</div>
+            </div>
+        </main>
+
+        <main id="mail-reader">
+            <button class="back-btn" onclick="backToInbox()">&larr; Back to Inbox</button>
+            <div class="reader-header">
+                <h1 class="reader-title" id="read-subject">Subject</h1>
+                <div class="reader-meta" id="read-meta">From: ...</div>
+            </div>
+            <div class="reader-body" id="read-body">
+                Email Content Goes Here
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const emails = {
+            1: {
+                subject: "Your Order #114-88392 has shipped!",
+                from: "Amazon Customer Care <orders@amazon.com>",
+                body: "Hello,\n\nYour recent order containing high-speed USB-C cables has left our warehouse and is expected to arrive tomorrow by 4:00 PM."
+            },
+            2: {
+                subject: "Flight Confirmation & Departure Time: MS777",
+                from: "Cairo Airport Authority & EgyptAir <flights@cairo-airport.com>",
+                body: "DEAR PASSENGER,\n\nThis is the official departure confirmation for your upcoming journey.\n\nFlight Number: MS777\nRoute: Cairo International (CAI) -> London Heathrow (LHR)\nDeparture Time: 19:30 (7:30 PM Cairo Local Time)\nBoarding Gate: Terminal 3, Gate G12\nBoarding Begins: 18:45 (6:45 PM)\n\nPlease ensure you arrive at Terminal 3 at least 3 hours prior to departure for international security check-in."
+            },
+            3: {
+                subject: "[omni_engine] Pull request #14 opened",
+                from: "GitHub Notifications <notifications@github.com>",
+                body: "A new pull request was opened on repository omni_engine: 'Feature: Omni Terminal Translator v2'."
+            },
+            4: {
+                subject: "You have 5 new connections waiting",
+                from: "LinkedIn <invitations@linkedin.com>",
+                body: "Check out your pending invites from senior AI engineers and developers."
+            },
+            5: {
+                subject: "Your trip on Sunday afternoon",
+                from: "Uber Receipts <receipts@uber.com>",
+                body: "Thanks for riding with Uber. Total fare: 65.50 EGP. We hope you had a pleasant trip."
+            }
+        };
+
+        function openMail(id) {
+            const data = emails[id];
+            document.getElementById("inbox-view").style.display = "none";
+            document.getElementById("mail-reader").style.display = "block";
+            document.getElementById("read-subject").innerText = data.subject;
+            document.getElementById("read-meta").innerText = "From: " + data.from;
+            document.getElementById("read-body").innerText = data.body;
+        }
+
+        function backToInbox() {
+            document.getElementById("mail-reader").style.display = "none";
+            document.getElementById("inbox-view").style.display = "block";
+        }
+    </script>
+</body>
+</html>

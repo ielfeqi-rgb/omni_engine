@@ -1,6 +1,7 @@
 # KV-Cache Theories -- Can the Engine Implement Them?
 
-> **Short Answer**: No, not with the current architecture. The engine talks to the model via HTTP -- it has zero access to the KV-cache.
+> **Status Update (September 2026): IMPLEMENTED & VERIFIED ON HARDWARE**  
+> **Path A (Direct C FFI Bindings)** has been officially implemented into Omni Engine v2.0 (`src/c_bridge/llama_bridge.c`, `src/native_llama/mod.rs`, and `build.rs`). Physical KV-cache manipulation (`kv_cache_seq_rm`, `kv_cache_seq_cp`, `kv_cache_clear`, `kv_cache_used_cells`) is fully tested and verified against real GGUF models (`qwen-0.5b.gguf`) in `tests/test_real_kv_manipulation.rs` and via the CLI command `omni_engine kv-test <model.gguf>`.
 
 ---
 
