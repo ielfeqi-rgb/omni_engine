@@ -280,24 +280,72 @@ impl NativeLlamaContext {
         count.max(0) as usize
     }
 
-    /// SURGICAL CAUSAL KV ROLLBACK:
+    /// SURGICAL CAUSAL KV ROLLBACK (Suffix Excision):
     /// Physically excises cached key/value tensors for tokens in range `[p0, p1)`.
-    /// Reduces attention dilution and eliminates token lock-in attractors in-place.
+    /// When applied to sequence suffix (`p1 < 0` or `p1 >= current_cursor`), rewinds `current_cursor` to `p0`.
+    ///
+    /// CAUTION: For middle excision (`p1 < current_cursor`), llama.cpp retains subsequent token positions
+    /// without shifting unless `kv_cache_seq_rm_and_shift` is used.
     pub fn kv_cache_seq_rm(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
         let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
         if ok {
-            if p1 < 0 {
+            if p1 < 0 || (p1 as usize) >= self.current_cursor {
                 self.current_cursor = p0.max(0) as usize;
             } else {
-                let removed_count = if p1 > p0 { (p1 - p0) as usize } else { 0 };
-                self.current_cursor = self.current_cursor.saturating_sub(removed_count);
+                // Middle excision without shift: tokens after p1 retain their original positional
+                // indices, so current_cursor (the append position) cannot be decremented without collision.
+                info!(
+                    "Middle KV cells excised [{}..{}) for seq {}: trailing tokens remain at unshifted positions",
+                    p0, p1, seq_id
+                );
             }
             info!(
-                "Physical KV Rollback executed: seq={}, [{}..{}), new_cursor={}",
+                "Physical KV Rollback executed: seq={}, [{}..{}), current_cursor={}",
                 seq_id, p0, p1, self.current_cursor
             );
         }
         Ok(ok)
+    }
+
+    /// SURGICAL MIDDLE EXCISION WITH AUTOMATIC POSITION SHIFT:
+    /// Excises `[p0, p1)` and physically shifts trailing tokens in `[p1, current_cursor)` left
+    /// by `-(p1 - p0)` to maintain continuous positional alignment and safely decrement `current_cursor`.
+    pub fn kv_cache_seq_rm_and_shift(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
+        if p0 < 0 || p1 <= p0 {
+            return Err(format!("Invalid token range: [{}, {})", p0, p1));
+        }
+        let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
+        if !ok {
+            return Ok(false);
+        }
+
+        if (p1 as usize) >= self.current_cursor {
+            self.current_cursor = p0 as usize;
+        } else {
+            let delta = -(p1 - p0);
+            let trail_start = p1;
+            let trail_end = self.current_cursor as i32;
+            unsafe {
+                omni_llama_kv_cache_seq_shift(self.raw_ctx, seq_id, trail_start, trail_end, delta);
+            }
+            self.current_cursor = (self.current_cursor as i32 + delta).max(0) as usize;
+        }
+
+        info!(
+            "Physical KV Excised & Shifted: seq={}, [{}..{}), new_cursor={}",
+            seq_id, p0, p1, self.current_cursor
+        );
+        Ok(true)
+    }
+
+    /// Synchronizes cursor with external tracker (e.g. CausalGraph)
+    pub fn sync_cursor(&mut self, cursor: usize) {
+        self.current_cursor = cursor;
+    }
+
+    /// Sets cursor from physically occupied cells in KV cache
+    pub fn sync_cursor_from_physical_used_cells(&mut self) {
+        self.current_cursor = self.kv_cache_used_cells();
     }
 
     /// SWARM BRANCHING:
