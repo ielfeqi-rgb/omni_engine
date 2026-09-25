@@ -70,6 +70,10 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
             }).await;
             Ok(true)
         }
+        "console" | "tui" | "interactive" | "shell" => {
+            run_interactive_console(base_dir).await?;
+            Ok(true)
+        }
 
         "serve" => {
 
@@ -866,16 +870,7 @@ EXAMPLES:
     }
 }
 
-fn resolve_swarm_models(
-    base_dir: &Path,
-    models_dir: &Path,
-    mut orch_path: Option<PathBuf>,
-    mut worker_path: Option<PathBuf>,
-) -> Option<(PathBuf, PathBuf)> {
-    if let (Some(o), Some(w)) = (orch_path.as_ref(), worker_path.as_ref()) {
-        return Some((o.clone(), w.clone()));
-    }
-
+fn discover_models(models_dir: &Path, base_dir: &Path) -> Vec<(String, PathBuf, String)> {
     let mut candidates = vec![models_dir.to_path_buf()];
     if models_dir != base_dir.join("models") {
         candidates.push(base_dir.join("models"));
@@ -918,13 +913,25 @@ fn resolve_swarm_models(
         }
     }
 
+    found.sort_by_key(|(_, path, _)| fs::metadata(path).map(|m| m.len()).unwrap_or(0));
+    found.reverse();
+    found
+}
+
+fn resolve_swarm_models(
+    base_dir: &Path,
+    models_dir: &Path,
+    mut orch_path: Option<PathBuf>,
+    mut worker_path: Option<PathBuf>,
+) -> Option<(PathBuf, PathBuf)> {
+    if let (Some(o), Some(w)) = (orch_path.as_ref(), worker_path.as_ref()) {
+        return Some((o.clone(), w.clone()));
+    }
+
+    let found = discover_models(models_dir, base_dir);
     if found.is_empty() {
         return None;
     }
-
-    // Sort by file size descending
-    found.sort_by_key(|(_, path, _)| fs::metadata(path).map(|m| m.len()).unwrap_or(0));
-    found.reverse();
 
     use colored::*;
     println!("\n{}", "================================================================================".bright_cyan());
@@ -1011,5 +1018,305 @@ fn prompt_user_for_model(
         }
     }
 }
+
+#[derive(Clone)]
+struct InteractiveSession {
+    orchestrator_path: Option<PathBuf>,
+    worker_path: Option<PathBuf>,
+    max_subgoals: usize,
+    max_steps_per_worker: usize,
+    output_dir: PathBuf,
+}
+
+fn print_session_header(session: &InteractiveSession) {
+    use colored::*;
+    println!("\n{}", "╔══════════════════════════════════════════════════════════════════════════════════════════╗".bright_cyan());
+    println!("║                           {}                             ║", "⚡ OMNI ENGINE SOVEREIGN CONSOLE ⚡".bright_yellow().bold());
+    println!("║             Native C-FFI • Dual-Model Swarm • Zero-Cheat Causal KV Rollback              ║");
+    println!("{}\n", "╚══════════════════════════════════════════════════════════════════════════════════════════╝".bright_cyan());
+
+    let orch_display = session.orchestrator_path.as_ref()
+        .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+        .unwrap_or_else(|| "None (Type 'models' to select)".to_string());
+
+    let worker_display = session.worker_path.as_ref()
+        .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+        .unwrap_or_else(|| "None (Type 'models' to select)".to_string());
+
+    println!("  🧠 {:<33} : {}", "System 2 Thinker (Orchestrator)".bright_white().bold(), orch_display.bright_green());
+    println!("  ⚡ {:<33} : {}", "System 1 Swarm Worker".bright_white().bold(), worker_display.bright_cyan());
+    println!("  🎯 {:<33} : {} subgoals", "Planning Depth".bright_white(), session.max_subgoals.to_string().bright_yellow());
+    println!("  👣 {:<33} : {} steps/worker", "Execution Budget".bright_white(), session.max_steps_per_worker.to_string().bright_yellow());
+    println!("  📁 {:<33} : {}", "Output Directory".bright_white(), session.output_dir.display().to_string().bright_magenta());
+    println!();
+    println!("  {} {} | {} | {} | {} | {} | {} | {}",
+        "Quick Commands:".bright_yellow().bold(),
+        "run <goal>".bright_white().bold(),
+        "models".bright_white(),
+        "config".bright_white(),
+        "status".bright_white(),
+        "kv-test".bright_white(),
+        "help".bright_white(),
+        "exit".bright_white()
+    );
+    println!("{}\n", "─".repeat(90).dimmed());
+}
+
+fn print_console_help() {
+    use colored::*;
+    println!("\n{}", "📖 OMNI ENGINE CONSOLE COMMAND REFERENCE".bright_yellow().bold());
+    println!("  {}", "─".repeat(70));
+    println!("  {:<26} {}", "run <goal>".bright_cyan().bold(), "Execute autonomous dual-model swarm for a goal or game");
+    println!("  {:<26} {}", "models".bright_white().bold(), "Interactively choose or switch Thinker & Worker models");
+    println!("  {:<26} {}", "config".bright_white().bold(), "Adjust subgoals limit, worker steps, and output directory");
+    println!("  {:<26} {}", "status".bright_white().bold(), "Inspect system RAM, CPU cores, and engine status");
+    println!("  {:<26} {}", "kv-test".bright_white().bold(), "Run live physical KV-cache manipulation test on hardware");
+    println!("  {:<26} {}", "clear".bright_white().bold(), "Clear the terminal screen");
+    println!("  {:<26} {}", "help".bright_white().bold(), "Display this command guide");
+    println!("  {:<26} {}\n", "exit / quit".bright_white().bold(), "Exit the interactive console back to bash");
+}
+
+fn handle_interactive_models(session: &mut InteractiveSession, base_dir: &Path) {
+    use colored::*;
+    let models = discover_models(&base_dir.join("models"), base_dir);
+    if models.is_empty() {
+        println!("❌ No GGUF models found in models/ directory.");
+        return;
+    }
+
+    println!("\n{}", "================================================================================".bright_cyan());
+    println!("  📦 {}", "SELECT MODELS FOR SOVEREIGN SWARM DUAL-ARCHITECTURE".bright_yellow().bold());
+    println!("{}", "================================================================================".bright_cyan());
+    println!("  Available GGUF Models:\n");
+    println!("  {:<4} {:<45} {:<12}", "#", "Model Filename", "File Size");
+    println!("  {}", "-".repeat(65));
+    for (idx, (name, _, size_str)) in models.iter().enumerate() {
+        println!("  [{}]  {:<45} {:<12}", idx + 1, name, size_str);
+    }
+    println!("{}\n", "================================================================================".bright_cyan());
+
+    let orch_idx = session.orchestrator_path.as_ref()
+        .and_then(|p| models.iter().position(|(_, path, _)| path == p))
+        .unwrap_or(0);
+    session.orchestrator_path = Some(prompt_user_for_model(
+        "System 2 Thinker (Orchestrator / High-Level Planner)",
+        &models,
+        orch_idx,
+    ));
+
+    let worker_idx = session.worker_path.as_ref()
+        .and_then(|p| models.iter().position(|(_, path, _)| path == p))
+        .unwrap_or_else(|| if models.len() > 1 { models.len() - 1 } else { 0 });
+    session.worker_path = Some(prompt_user_for_model(
+        "System 1 Swarm Worker (Fast Execution Agent)",
+        &models,
+        worker_idx,
+    ));
+
+    let o_name = session.orchestrator_path.as_ref().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
+    let w_name = session.worker_path.as_ref().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
+
+    println!("\n  🎯 {}", "Updated Active Swarm Architecture:".bright_green().bold());
+    println!("     🧠 System 2 Thinker (Orchestrator): {}", o_name.bright_white().bold());
+    println!("     ⚡ System 1 Swarm Worker:           {}\n", w_name.bright_white().bold());
+}
+
+fn handle_interactive_config(session: &mut InteractiveSession) {
+    use colored::*;
+    use std::io::{self, Write};
+
+    println!("\n{}", "⚙️  CONFIGURE SWARM EXECUTION PARAMETERS".bright_yellow().bold());
+    println!("  (Press Enter without typing to keep current value)\n");
+
+    print!("👉 Max Subgoals [current: {}]: ", session.max_subgoals);
+    let _ = io::stdout().flush();
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_ok() {
+        let trimmed = input.trim();
+        if !trimmed.is_empty() {
+            if let Ok(v) = trimmed.parse::<usize>() {
+                if v > 0 {
+                    session.max_subgoals = v;
+                }
+            }
+        }
+    }
+
+    print!("👉 Max Steps per Worker [current: {}]: ", session.max_steps_per_worker);
+    let _ = io::stdout().flush();
+    input.clear();
+    if io::stdin().read_line(&mut input).is_ok() {
+        let trimmed = input.trim();
+        if !trimmed.is_empty() {
+            if let Ok(v) = trimmed.parse::<usize>() {
+                if v > 0 {
+                    session.max_steps_per_worker = v;
+                }
+            }
+        }
+    }
+
+    print!("👉 Output Directory [current: {}]: ", session.output_dir.display());
+    let _ = io::stdout().flush();
+    input.clear();
+    if io::stdin().read_line(&mut input).is_ok() {
+        let trimmed = input.trim();
+        if !trimmed.is_empty() {
+            session.output_dir = PathBuf::from(trimmed);
+        }
+    }
+
+    println!("\n  ✅ Settings updated:");
+    println!("     Subgoals: {}", session.max_subgoals.to_string().bright_yellow());
+    println!("     Steps:    {}", session.max_steps_per_worker.to_string().bright_yellow());
+    println!("     Output:   {}\n", session.output_dir.display().to_string().bright_magenta());
+}
+
+fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
+    use colored::*;
+
+    let (orch, worker) = match (&session.orchestrator_path, &session.worker_path) {
+        (Some(o), Some(w)) => (o.clone(), w.clone()),
+        _ => {
+            eprintln!("❌ Missing Orchestrator or Worker model. Type 'models' to configure.");
+            return;
+        }
+    };
+
+    let config = crate::planner::SwarmConfig {
+        orchestrator_model_path: orch,
+        worker_model_path: worker,
+        max_subgoals: session.max_subgoals,
+        max_steps_per_worker: session.max_steps_per_worker,
+        output_dir: Some(session.output_dir.clone()),
+        verbose: true,
+    };
+
+    println!("\n⚡ Initializing Sovereign Swarm Coordinator for: {}", goal.bright_yellow().bold());
+    let coordinator = match crate::planner::SwarmCoordinator::new(config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Failed to initialize SwarmCoordinator: {}", e);
+            return;
+        }
+    };
+
+    match coordinator.execute_goal(goal) {
+        Ok(res) => {
+            println!("\n{}", "================================================================================".bright_cyan());
+            println!("  📋 {}", "SYNTHESIZED GROUND TRUTH REPORT:".bright_yellow().bold());
+            println!("{}\n", "================================================================================".bright_cyan());
+            println!("{}\n", res.final_report.trim().bright_white());
+            println!("✅ Mission completed. Project files written to '{}'\n", session.output_dir.display().to_string().bright_magenta());
+        }
+        Err(e) => {
+            eprintln!("❌ Swarm execution failed: {}\n", e);
+        }
+    }
+}
+
+pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    use colored::*;
+    use std::io::{self, Write};
+
+    let models = discover_models(&base_dir.join("models"), base_dir);
+    let mut session = InteractiveSession {
+        orchestrator_path: if !models.is_empty() { Some(models[0].1.clone()) } else { None },
+        worker_path: if !models.is_empty() { Some(models.last().unwrap().1.clone()) } else { None },
+        max_subgoals: 3,
+        max_steps_per_worker: 5,
+        output_dir: PathBuf::from("./platformer_game"),
+    };
+
+    print_session_header(&session);
+
+    loop {
+        print!("{} ", "omni❯".bright_cyan().bold());
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            break;
+        }
+
+        let line = input.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let cmd = parts[0].to_lowercase();
+
+        match cmd.as_str() {
+            "exit" | "quit" | "q" => {
+                println!("{}", "👋 Exiting Omni Engine console. Goodbye!".bright_yellow());
+                break;
+            }
+            "help" | "h" | "?" => {
+                print_console_help();
+            }
+            "clear" | "cls" => {
+                print!("\x1B[2J\x1B[1;1H");
+                print_session_header(&session);
+            }
+            "models" | "model" | "m" => {
+                handle_interactive_models(&mut session, base_dir);
+            }
+            "config" | "cfg" | "c" => {
+                handle_interactive_config(&mut session);
+            }
+            "status" | "info" => {
+                print_status(base_dir);
+            }
+            "kv-test" => {
+                let test_dir = base_dir.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    handle_kv_test(&[], &test_dir);
+                }).await;
+            }
+            "run" | "swarm" | "go" => {
+                let goal = if parts.len() > 1 {
+                    line[parts[0].len()..].trim().to_string()
+                } else {
+                    print!("👉 Enter your research goal / project prompt: ");
+                    let _ = io::stdout().flush();
+                    let mut g = String::new();
+                    let _ = io::stdin().read_line(&mut g);
+                    g.trim().to_string()
+                };
+
+                if goal.is_empty() {
+                    println!("⚠️ Goal cannot be empty.");
+                    continue;
+                }
+
+                let session_clone = session.clone();
+                let goal_clone = goal.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    execute_interactive_swarm(&session_clone, &goal_clone);
+                }).await;
+            }
+            _ => {
+                // If user entered natural text directly
+                print!("🤔 Execute swarm with goal: \"{}\"? [Y/n]: ", line);
+                let _ = io::stdout().flush();
+                let mut confirm = String::new();
+                if io::stdin().read_line(&mut confirm).is_ok() {
+                    let c = confirm.trim().to_lowercase();
+                    if c.is_empty() || c == "y" || c == "yes" {
+                        let session_clone = session.clone();
+                        let goal_clone = line.to_string();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            execute_interactive_swarm(&session_clone, &goal_clone);
+                        }).await;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 
 
