@@ -338,15 +338,47 @@ impl SwarmCoordinator {
         Ok(output.trim().to_string())
     }
 
+    /// Dynamic Thinker Error Diagnostics & Recovery Steering:
+    /// When a worker encounters an error (Lua execution trap or unparsed action), the error and
+    /// failed code are routed directly to the System 2 Thinker (1.5B).
+    /// The Thinker evaluates the failure and autonomously formulates a targeted directive,
+    /// which may include dynamic examples, syntax corrections, or architectural adjustments.
+    fn thinker_diagnose_and_steer(
+        &self,
+        subgoal: &SubGoal,
+        failed_attempt: &str,
+        error_msg: &str,
+    ) -> Result<String, String> {
+        let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
+        let system_msg = "You are the lead architect and thinker guiding a small autonomous worker.\n\
+The worker's execution attempt trapped with a runtime error.\n\
+Analyze the root cause and provide a clear, concrete corrective directive or example snippet steering the worker on how to succeed.";
+
+        let snippet = if failed_attempt.len() > 600 {
+            &failed_attempt[..600]
+        } else {
+            failed_attempt
+        };
+
+        let user_msg = format!(
+            "Objective: {}\nWorker's Failed Code/Action:\n{}\nRuntime Error:\n{}\n\nProvide the corrective directive for the worker:",
+            subgoal.description, snippet, error_msg
+        );
+        let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
+        let guidance = ctx.generate(&prompt, 256)?;
+        Ok(guidance.trim().to_string())
+    }
+
     /// System 2: Decomposes goal into discrete sub-goals
     fn orchestrate_plan(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
         let is_build = goal.to_lowercase().contains("create")
             || goal.to_lowercase().contains("build")
             || goal.to_lowercase().contains("game")
             || goal.to_lowercase().contains("html")
-            || goal.to_lowercase().contains("candy")
             || goal.to_lowercase().contains("write")
             || goal.to_lowercase().contains("code")
+            || goal.to_lowercase().contains("implement")
+            || goal.to_lowercase().contains("develop")
             || goal.to_lowercase().contains("make");
 
         let mut ctx = self.orchestrator_model.create_context(4096, 512, 4)?;
@@ -386,8 +418,10 @@ impl SwarmCoordinator {
                 let desc = parts[0].trim().to_string();
                 let entity = if parts.len() > 1 {
                     parts[1].trim().to_string()
+                } else if is_build {
+                    "index.html".to_string()
                 } else {
-                    if is_build { "candy_crush.html".to_string() } else { goal.split_whitespace().next().unwrap_or("general").to_string() }
+                    goal.split_whitespace().next().unwrap_or("general").to_string()
                 };
 
                 if !desc.is_empty() {
@@ -410,8 +444,8 @@ impl SwarmCoordinator {
             if is_build {
                 subgoals.push(SubGoal {
                     id: 1,
-                    description: format!("Create and write complete standalone game in one HTML file using Lua: {}", goal),
-                    target_entity: "candy_crush.html".to_string(),
+                    description: format!("Create and write complete standalone implementation in one file using Lua: {}", goal),
+                    target_entity: "index.html".to_string(),
                     guidance: None,
                 });
             } else {
@@ -433,9 +467,10 @@ impl SwarmCoordinator {
             || subgoal.description.to_lowercase().contains("game")
             || subgoal.description.to_lowercase().contains("create")
             || subgoal.description.to_lowercase().contains("build")
-            || subgoal.description.to_lowercase().contains("candy")
             || subgoal.description.to_lowercase().contains("write")
-            || subgoal.description.to_lowercase().contains("code");
+            || subgoal.description.to_lowercase().contains("code")
+            || subgoal.description.to_lowercase().contains("implement")
+            || subgoal.description.to_lowercase().contains("develop");
 
         let mut ctx = self.worker_model.create_context(4096, 512, 4)?;
 
@@ -448,92 +483,10 @@ impl SwarmCoordinator {
                 - vfs.read(\"filename\"): Read file content from virtual filesystem\n\
                 - print(\"message\"): Log execution output\n\
                 - DONE: Signal that the objective is complete\n\n\
-                Rule: Write the complete, working implementation inside the HTML file (CSS grid, candy items, click/swap, match-3 score, DOM updates). Do not use empty placeholders.\n\
-                After writing the file, output DONE.\n\n\
-                Example:\n\
-                ```lua\n\
-                local html = [[<!DOCTYPE html>\n\
-                <html>\n\
-                <head>\n\
-                <meta charset=\"utf-8\"><title>Candy Crush</title>\n\
-                <style>\n\
-                body {{ background: #1a1a2e; color: #fff; font-family: sans-serif; text-align: center; }}\n\
-                #board {{ display: grid; grid-template-columns: repeat(8, 48px); gap: 4px; margin: 20px auto; width: max-content; background: #0f3460; padding: 10px; border-radius: 12px; }}\n\
-                .tile {{ width: 48px; height: 48px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 26px; user-select: none; background: #16213e; }}\n\
-                .tile.selected {{ outline: 3px solid #e94560; }}\n\
-                #score-box {{ font-size: 24px; font-weight: bold; margin: 15px; color: #ffeb3b; }}\n\
-                </style>\n\
-                </head>\n\
-                <body>\n\
-                <h1>Candy Crush</h1>\n\
-                <div id=\"score-box\">Score: <span id=\"score\">0</span></div>\n\
-                <div id=\"board\"></div>\n\
-                <script>\n\
-                const CANDIES = ['🍬', '🍭', '🍫', '🍩', '🍪', '🧁'];\n\
-                const W = 8;\n\
-                let board = [];\n\
-                let selected = null;\n\
-                let score = 0;\n\
-                function initBoard() {{\n\
-                  const el = document.getElementById('board');\n\
-                  el.innerHTML = '';\n\
-                  board = [];\n\
-                  for (let i = 0; i < W * W; i++) {{\n\
-                    const c = CANDIES[Math.floor(Math.random() * CANDIES.length)];\n\
-                    board.push(c);\n\
-                    const t = document.createElement('div');\n\
-                    t.className = 'tile';\n\
-                    t.textContent = c;\n\
-                    t.onclick = () => onTileClick(i, t);\n\
-                    el.appendChild(t);\n\
-                  }}\n\
-                }}\n\
-                function onTileClick(i, t) {{\n\
-                  if (selected === null) {{\n\
-                    selected = {{ idx: i, el: t }};\n\
-                    t.classList.add('selected');\n\
-                  }} else {{\n\
-                    const prev = selected.idx;\n\
-                    const isAdjacent = Math.abs(prev - i) === 1 || Math.abs(prev - i) === W;\n\
-                    if (isAdjacent) {{\n\
-                      let tmp = board[prev]; board[prev] = board[i]; board[i] = tmp;\n\
-                      render(); checkMatches();\n\
-                    }}\n\
-                    selected.el.classList.remove('selected');\n\
-                    selected = null;\n\
-                  }}\n\
-                }}\n\
-                function render() {{\n\
-                  const tiles = document.querySelectorAll('.tile');\n\
-                  tiles.forEach((t, i) => t.textContent = board[i]);\n\
-                }}\n\
-                function checkMatches() {{\n\
-                  let matched = false;\n\
-                  for (let r = 0; r < W; r++) {{\n\
-                    for (let c = 0; c < W - 2; c++) {{\n\
-                      let idx = r * W + c;\n\
-                      if (board[idx] && board[idx] === board[idx+1] && board[idx] === board[idx+2]) {{\n\
-                        score += 30; matched = true;\n\
-                        board[idx] = CANDIES[Math.floor(Math.random() * CANDIES.length)];\n\
-                        board[idx+1] = CANDIES[Math.floor(Math.random() * CANDIES.length)];\n\
-                        board[idx+2] = CANDIES[Math.floor(Math.random() * CANDIES.length)];\n\
-                      }}\n\
-                    }}\n\
-                  }}\n\
-                  if (matched) {{\n\
-                    document.getElementById('score').textContent = score;\n\
-                    render();\n\
-                  }}\n\
-                }}\n\
-                window.onload = initBoard;\n\
-                </script>\n\
-                </body>\n\
-                </html>]]\n\
-                vfs.write(\"candy_crush.html\", html)\n\
-                print(\"Playable Candy Crush game written to candy_crush.html successfully\")\n\
-                ```\n\
-                User: OBSERVATION: Playable Candy Crush game written to candy_crush.html successfully\n\
-                Assistant: DONE",
+                Rules:\n\
+                1. Write the complete, working implementation directly. Never use empty placeholders or dummy logic.\n\
+                2. Escape multi-line strings properly in Lua using [[ ... ]] or [=[ ... ]=].\n\
+                3. After writing the file, output DONE.",
                 subgoal.description
             )
         } else {
@@ -545,14 +498,8 @@ impl SwarmCoordinator {
                 - REPORT: <concise verified facts discovered>\n\
                 - DONE\n\n\
                 Rule: Output exactly ONE command per step.\n\
-                When you see the factual answer in search results, output REPORT: <the factual answer>.\n\n\
-                Example flow:\n\
-                User: Objective: When was Voyager 1 launched?\n\
-                Assistant: SEARCH: Voyager 1 launch date\n\
-                User: OBSERVATION: Found 1 source: 1. [Voyager 1 - NASA] Launched September 5, 1977 from Cape Canaveral.\n\
-                Assistant: REPORT: Voyager 1 was launched on September 5, 1977 from Cape Canaveral.\n\
-                User: OBSERVATION: Recorded.\n\
-                Assistant: DONE",
+                When you see the factual answer in search results, output REPORT: <the factual answer>.\n\
+                When objective is fulfilled, output DONE.",
                 subgoal.description
             )
         };
@@ -703,13 +650,25 @@ impl SwarmCoordinator {
                             tokens_after
                         );
 
-                        // Inject clean guidance after rollback and sync graph
-                        let retry_instruction = format!("Lua script failed with error: {}. Fix the syntax or multi-line string escaping and output the corrected script.", err_msg);
-                        let retry_turn = Self::format_observation_turn(&self.worker_model, &format!("Lua Error: {}", err_msg), &retry_instruction);
+                        // Send error to System 2 Thinker: Thinker evaluates error and formulates dynamic recovery directive
+                        println!("     🧠 {}", "[THINKER DIAGNOSIS] Sending runtime error to System 2 Thinker...".bright_magenta().bold());
+                        let thinker_advice = match self.thinker_diagnose_and_steer(subgoal, &script, &err_msg) {
+                            Ok(adv) if !adv.is_empty() => {
+                                println!("     🧠 {} \"{}\"", "[THINKER RECOVERY DIRECTIVE]".bright_magenta().bold(), adv.bright_white());
+                                adv
+                            }
+                            _ => format!("Fix the Lua syntax or runtime error: {}. Write the corrected script in ```lua ... ```.", err_msg),
+                        };
+
+                        let retry_turn = Self::format_observation_turn(
+                            &self.worker_model,
+                            &format!("Lua Error: {}", err_msg),
+                            &format!("Thinker Recovery Guidance:\n{}", thinker_advice)
+                        );
                         let retry_tokens = self.worker_model.tokenize(&retry_turn, false)?;
                         if ctx.current_cursor() + retry_tokens.len() < ctx.n_ctx() - 128 {
                             ctx.eval_tokens(&retry_tokens, 0)?;
-                            graph.record_step_with_context(step_id + 7000, "Lua retry guidance", &[entity_name], &[entity_name], &ctx);
+                            graph.record_step_with_context(step_id + 7000, "Thinker error recovery guidance", &[entity_name], &[entity_name], &ctx);
                         }
                         step_id += 1;
                     }
@@ -858,11 +817,55 @@ impl SwarmCoordinator {
                     break;
                 }
                 SwarmAction::None => {
-                    // If model output could not be parsed as a command, check if it wrote content
-                    let cleaned = generated_text.trim();
-                    if !cleaned.is_empty() {
-                        collected_finding.push_str(cleaned);
-                        collected_finding.push('\n');
+                    println!(
+                        "     ⚠️  {} Model output could not be parsed into a recognized tool action.",
+                        "ACTION UNPARSED:".bright_yellow().bold()
+                    );
+                    println!(
+                        "     🔄 {} Excising unparsed step #{} from physical KV-cache...",
+                        "CAUSAL KV ROLLBACK:".bright_yellow().bold(),
+                        step_id
+                    );
+
+                    let tokens_before = ctx.kv_cache_used_cells();
+                    let _ = graph.rollback_step_kv(step_id, &mut ctx);
+                    let tokens_after = ctx.kv_cache_used_cells();
+                    let diff = tokens_before.saturating_sub(tokens_after);
+
+                    rollbacks_count += 1;
+                    tokens_saved += diff;
+
+                    println!(
+                        "     ✅ KV Rollback Complete: excised {} tokens (Cursor: {} -> {})",
+                        diff.to_string().bright_green(),
+                        tokens_before,
+                        tokens_after
+                    );
+
+                    // Route to System 2 Thinker: Thinker evaluates unparsed action and formulates directive
+                    println!("     🧠 {}", "[THINKER DIAGNOSIS] Consulting System 2 Thinker on unparsed action...".bright_magenta().bold());
+                    let unparsed_err = "Worker output was unparseable or failed to output an executable Lua code block.";
+                    let thinker_advice = match self.thinker_diagnose_and_steer(subgoal, &generated_text, unparsed_err) {
+                        Ok(adv) if !adv.is_empty() => {
+                            println!("     🧠 {} \"{}\"", "[THINKER DIRECTIVE]".bright_magenta().bold(), adv.bright_white());
+                            adv
+                        }
+                        _ => if is_build {
+                            "You must write an executable Lua script inside a ```lua ... ``` code block using vfs.write(\"filename\", [[content]]) to write files, or output DONE.".to_string()
+                        } else {
+                            "Output exactly ONE command: SEARCH: <query>, FETCH: <url/index>, REPORT: <facts>, or DONE.".to_string()
+                        },
+                    };
+
+                    let retry_turn = Self::format_observation_turn(
+                        &self.worker_model,
+                        "Command syntax invalid / unparsed.",
+                        &format!("Thinker Corrective Guidance:\n{}", thinker_advice)
+                    );
+                    let retry_tokens = self.worker_model.tokenize(&retry_turn, false)?;
+                    if ctx.current_cursor() + retry_tokens.len() < ctx.n_ctx() - 128 {
+                        ctx.eval_tokens(&retry_tokens, 0)?;
+                        graph.record_step_with_context(step_id + 8000, "Thinker unparsed retry guidance", &[entity_name], &[entity_name], &ctx);
                     }
                     step_id += 1;
                 }
@@ -939,14 +942,7 @@ impl SwarmCoordinator {
                 after
             }.trim();
 
-            if block.starts_with("html") {
-                let html = block.trim_start_matches("html").trim();
-                let script = format!(
-                    "vfs.write(\"candy_crush.html\", [=====[{}]=====])\nprint(\"Written candy_crush.html successfully via Lua hands\")",
-                    html
-                );
-                return SwarmAction::RunLua { script };
-            } else if block.contains("vfs.write") || block.contains("print(") {
+            if block.contains("vfs.write") || block.contains("print(") {
                 return SwarmAction::RunLua { script: block.to_string() };
             }
         }
@@ -1045,18 +1041,12 @@ mod tests {
             other => panic!("Expected RunLua, got {:?}", other),
         }
 
-        // Test HTML block auto-channeling to Lua
-        let txt6 = "```html\n<!DOCTYPE html><html><body><h1>Candy Crush</h1></body></html>\n```";
-        match SwarmCoordinator::parse_action(txt6) {
-            SwarmAction::RunLua { script } => {
-                assert!(script.contains("vfs.write"));
-                assert!(script.contains("candy_crush.html"));
-            }
-            other => panic!("Expected RunLua for HTML block, got {:?}", other),
-        }
+        // Test that unformatted raw HTML produces None (triggering Causal KV Rollback)
+        let txt6 = "```html\n<!DOCTYPE html><html><body><h1>Platformer Game</h1></body></html>\n```";
+        assert_eq!(SwarmCoordinator::parse_action(txt6), SwarmAction::None);
 
         // Test raw vfs.write call outside fences
-        let txt7 = "vfs.write(\"candy.html\", \"data\")";
+        let txt7 = "vfs.write(\"game.html\", \"data\")";
         match SwarmCoordinator::parse_action(txt7) {
             SwarmAction::RunLua { script } => {
                 assert!(script.contains("vfs.write"));
