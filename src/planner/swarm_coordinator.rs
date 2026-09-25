@@ -350,9 +350,18 @@ impl SwarmCoordinator {
         error_msg: &str,
     ) -> Result<String, String> {
         let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
-        let system_msg = "You are the lead architect and thinker guiding a small autonomous worker.\n\
-The worker's execution attempt trapped with a runtime error.\n\
-Analyze the root cause and provide a clear, concrete corrective directive or example snippet steering the worker on how to succeed.";
+        let system_msg = "You are the System 2 Sovereign Architect directing an autonomous worker.\n\
+Environment Contract:\n\
+- The worker executes inside an in-memory Virtual Filesystem (VFS) sandbox.\n\
+- The ONLY way to create or edit files is by executing Lua: vfs.write(\"filename\", [[content]]).\n\
+- Desktop GUI libraries (gui.*, window.*) DO NOT EXIST.\n\
+- The worker signals completion with DONE.\n\n\
+Your Task:\n\
+Analyze the worker's failure and give a concise, concrete corrective directive.\n\
+Direct the worker to use vfs.write(\"filename\", [[content]]) with valid Lua syntax.\n\n\
+Minimal Example:\n\
+\"The worker trapped due to an unclosed string or invalid library.\n\
+Corrective action: write the complete code into the target file using vfs.write('index.html', [[ ... ]]) and output DONE.\"";
 
         let snippet = if failed_attempt.len() > 600 {
             &failed_attempt[..600]
@@ -361,8 +370,8 @@ Analyze the root cause and provide a clear, concrete corrective directive or exa
         };
 
         let user_msg = format!(
-            "Objective: {}\nWorker's Failed Code/Action:\n{}\nRuntime Error:\n{}\n\nProvide the corrective directive for the worker:",
-            subgoal.description, snippet, error_msg
+            "Target Objective: {}\nTarget Entity: {}\nWorker's Failed Code/Action:\n{}\nRuntime Error:\n{}\n\nProvide the concise corrective directive for the worker:",
+            subgoal.description, subgoal.target_entity, snippet, error_msg
         );
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
         let guidance = ctx.generate(&prompt, 256)?;
@@ -385,20 +394,24 @@ Analyze the root cause and provide a clear, concrete corrective directive or exa
 
         let system_msg = if is_build {
             format!(
-                "You are a senior software architect orchestrating an implementation swarm.\n\
+                "You are the System 2 Sovereign Architect.\n\
+                Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
+                Workers write standalone project files via Lua: vfs.write(\"filename\", [[content]]).\n\
                 Decompose the user's objective into 1 to {} concrete implementation sub-goals.\n\
-                Workers execute via Lua universal hands (vfs.write) to create and verify the project files.\n\
-                Output each sub-goal on a new line formatted strictly as:\n\
-                SUBGOAL: <concrete implementation task> | ENTITY: <target filename>\n\
-                Do not add introductory or conversational text.",
+                Output each sub-goal on a new line strictly formatted as:\n\
+                SUBGOAL: <concrete implementation task> | ENTITY: <target filename>\n\n\
+                Minimal Example:\n\
+                SUBGOAL: Write complete standalone HTML, CSS, and JS logic | ENTITY: index.html",
                 self.config.max_subgoals
             )
         } else {
             format!(
-                "You are a senior research orchestrator. Decompose the user's research goal into 1 to {} distinct search sub-goals.\n\
-                Output each sub-goal on a new line formatted strictly as:\n\
-                SUBGOAL: <precise search objective> | ENTITY: <primary keyword>\n\
-                Do not add introductory or conversational text.",
+                "You are the System 2 Sovereign Architect.\n\
+                Decompose the user's research goal into 1 to {} distinct search sub-goals.\n\
+                Output each sub-goal on a new line strictly formatted as:\n\
+                SUBGOAL: <precise search objective> | ENTITY: <primary keyword>\n\n\
+                Minimal Example:\n\
+                SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors",
                 self.config.max_subgoals
             )
         };
@@ -476,31 +489,52 @@ Analyze the root cause and provide a clear, concrete corrective directive or exa
 
         let system_msg = if is_build {
             format!(
-                "You are an autonomous worker agent equipped with Lua universal hands. Your objective is: {}\n\
-                You write and manipulate files by outputting a Lua script in a ```lua ... ``` code block.\n\
-                Available Lua functions:\n\
-                - vfs.write(\"filename\", [[content]]): Write complete file content to virtual filesystem\n\
-                - vfs.read(\"filename\"): Read file content from virtual filesystem\n\
+                "You are a System 1 Swarm Execution Worker equipped with Lua universal hands.\n\
+                Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
+                Objective: {}\n\n\
+                Available Tools:\n\
+                - vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
+                - vfs.read(\"filename\"): Read file from VFS\n\
                 - print(\"message\"): Log execution output\n\
                 - DONE: Signal that the objective is complete\n\n\
                 Rules:\n\
-                1. Write the complete, working implementation directly. Never use empty placeholders or dummy logic.\n\
-                2. Escape multi-line strings properly in Lua using [[ ... ]] or [=[ ... ]=].\n\
-                3. After writing the file, output DONE.",
-                subgoal.description
+                1. Output your Lua code inside a ```lua ... ``` block.\n\
+                2. Put complete, functional code inside [[ ... ]] multi-line string.\n\
+                3. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Write standard code to files via vfs.write.\n\
+                4. Always output DONE after vfs.write.\n\n\
+                Minimal Example:\n\
+                ```lua\n\
+                vfs.write(\"{}\", [[\n\
+                <!DOCTYPE html>\n\
+                <html>\n\
+                <body>\n\
+                  <!-- implementation -->\n\
+                </body>\n\
+                </html>\n\
+                ]])\n\
+                ```\n\
+                DONE",
+                subgoal.description,
+                subgoal.target_entity
             )
         } else {
             format!(
-                "You are an autonomous research scout in a search swarm. Your objective is: {}\n\
-                Available commands:\n\
-                - SEARCH: <search query>\n\
-                - FETCH: <result number 1, 2 or URL>\n\
-                - REPORT: <concise verified facts discovered>\n\
+                "You are a System 1 Swarm Execution Worker.\n\
+                Objective: {}\n\n\
+                Available Commands:\n\
+                - SEARCH: <query>\n\
+                - FETCH: <result index or URL>\n\
+                - REPORT: <discovered facts>\n\
                 - DONE\n\n\
                 Rule: Output exactly ONE command per step.\n\
-                When you see the factual answer in search results, output REPORT: <the factual answer>.\n\
-                When objective is fulfilled, output DONE.",
-                subgoal.description
+                When facts are found, output REPORT: <facts>.\n\
+                When objective is fulfilled, output DONE.\n\n\
+                Minimal Example:\n\
+                SEARCH: {}\n\
+                REPORT: Discovered verified findings.\n\
+                DONE",
+                subgoal.description,
+                subgoal.target_entity
             )
         };
 
