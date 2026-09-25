@@ -326,7 +326,7 @@ impl NativeLlamaContext {
                 let used_cells = self.kv_cache_used_cells();
 
                 // Live dynamic CLI indicator (animating on the same line)
-                let gauge_width = 10;
+                let gauge_width: usize = 10;
                 let ratio = (used_cells as f64 / self.n_ctx as f64).clamp(0.0, 1.0);
                 let filled = (ratio * gauge_width as f64).round() as usize;
                 let bar: String = "█".repeat(filled) + &"░".repeat(gauge_width.saturating_sub(filled));

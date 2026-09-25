@@ -1378,7 +1378,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                 }
                 _ => {
                     // Plain text: Direct Chat with model!
-                    ("direct_chat", trimmed_line)
+                    ("direct_chat".to_string(), trimmed_line)
                 }
             }
         };
@@ -1464,7 +1464,6 @@ fn clean_goal_string(raw: &str) -> String {
 }
 
 fn execute_direct_chat_turn(session: &InteractiveSession, prompt: &str) {
-    use colored::*;
     use std::io::{self, Write};
 
     let model_path = match &session.orchestrator_path {
@@ -1542,6 +1541,4 @@ fn execute_direct_chat_turn(session: &InteractiveSession, prompt: &str) {
         generated_count += 1;
     }
     println!("\n");
-
-
-
+}
