@@ -1358,10 +1358,32 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             continue;
         }
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        let cmd = parts[0].to_lowercase();
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() {
+            continue;
+        }
 
-        match cmd.as_str() {
+        // Support both /cmd and cmd
+        let is_slash = trimmed_line.starts_with('/');
+        let (command_name, rest_args) = if is_slash {
+            let without_slash = &trimmed_line[1..];
+            let mut parts = without_slash.splitn(2, ' ');
+            (parts.next().unwrap_or("").to_lowercase(), parts.next().unwrap_or("").trim())
+        } else {
+            let mut parts = trimmed_line.splitn(2, ' ');
+            let first = parts.next().unwrap_or("").to_lowercase();
+            match first.as_str() {
+                "run" | "goal" | "swarm" | "config" | "models" | "model" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "exit" | "quit" | "q" | "chat" => {
+                    (first, parts.next().unwrap_or("").trim())
+                }
+                _ => {
+                    // Plain text: Direct Chat with model!
+                    ("direct_chat", trimmed_line)
+                }
+            }
+        };
+
+        match command_name.as_str() {
             "exit" | "quit" | "q" => {
                 println!("{}", "👋 Exiting Omni Engine console. Goodbye!".bright_yellow());
                 break;
@@ -1394,17 +1416,18 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                     handle_kv_test(&[], &test_dir);
                 }).await;
             }
-            "run" | "swarm" | "go" => {
-                let goal = if parts.len() > 1 {
-                    line[parts[0].len()..].trim().to_string()
+            "run" | "goal" | "swarm" => {
+                let raw_goal = if !rest_args.is_empty() {
+                    rest_args.to_string()
                 } else {
-                    print!("👉 Enter your research goal / project prompt: ");
+                    print!("👉 Enter goal / mission: ");
                     let _ = io::stdout().flush();
                     let mut g = String::new();
                     let _ = io::stdin().read_line(&mut g);
                     g.trim().to_string()
                 };
 
+                let goal = clean_goal_string(&raw_goal);
                 if goal.is_empty() {
                     println!("⚠️ Goal cannot be empty.");
                     continue;
@@ -1416,27 +1439,109 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                     execute_interactive_swarm(&session_clone, &goal_clone);
                 }).await;
             }
-            _ => {
-                // If user entered natural text directly
-                print!("🤔 Execute swarm with goal: \"{}\"? [Y/n]: ", line);
-                let _ = io::stdout().flush();
-                let mut confirm = String::new();
-                if io::stdin().read_line(&mut confirm).is_ok() {
-                    let c = confirm.trim().to_lowercase();
-                    if c.is_empty() || c == "y" || c == "yes" {
-                        let session_clone = session.clone();
-                        let goal_clone = line.to_string();
-                        let _ = tokio::task::spawn_blocking(move || {
-                            execute_interactive_swarm(&session_clone, &goal_clone);
-                        }).await;
-                    }
-                }
+            "direct_chat" => {
+                let session_clone = session.clone();
+                let prompt_clone = rest_args.to_string();
+                let _ = tokio::task::spawn_blocking(move || {
+                    execute_direct_chat_turn(&session_clone, &prompt_clone);
+                }).await;
+            }
+            unknown => {
+                println!("⚠️ Unknown command '/{}'. Type '/help' for command reference, or '/run <goal>' to start a mission.", unknown);
             }
         }
     }
 
     Ok(())
 }
+
+fn clean_goal_string(raw: &str) -> String {
+    let mut s = raw.trim();
+    if s.starts_with('<') && s.ends_with('>') && s.len() >= 2 {
+        s = &s[1..s.len() - 1];
+    }
+    s.trim_matches('"').trim_matches('\'').trim().to_string()
+}
+
+fn execute_direct_chat_turn(session: &InteractiveSession, prompt: &str) {
+    use colored::*;
+    use std::io::{self, Write};
+
+    let model_path = match &session.orchestrator_path {
+        Some(p) => p.clone(),
+        None => match &session.worker_path {
+            Some(p) => p.clone(),
+            None => {
+                println!("❌ No active model configured. Type '/models' first.");
+                return;
+            }
+        },
+    };
+
+    let model = match crate::native_llama::NativeLlamaModel::load(&model_path, 0) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("❌ Failed to load model: {}", e);
+            return;
+        }
+    };
+
+    let mut ctx = match model.create_context(2048, 512, 4) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Failed to create context: {}", e);
+            return;
+        }
+    };
+
+    let formatted_prompt = format!("<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n", prompt);
+    print!("🤖 ");
+    let _ = io::stdout().flush();
+
+    let prompt_tokens = match model.tokenize(&formatted_prompt, true) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("❌ Tokenization error: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = ctx.eval_tokens(&prompt_tokens, 0) {
+        eprintln!("❌ Evaluation error: {}", e);
+        return;
+    }
+
+    let mut generated_count = 0;
+    let max_gen_tokens = 512;
+    while generated_count < max_gen_tokens {
+        let next_tok = match ctx.sample_greedy() {
+            Ok(t) => t,
+            Err(_) => break,
+        };
+
+        let piece = match model.token_to_piece(next_tok) {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+
+        if piece.is_empty()
+            || piece.contains("<|im_end|>")
+            || piece.contains("<|endoftext|>")
+            || piece.contains("<|eot_id|>")
+            || piece.contains("</s>")
+        {
+            break;
+        }
+
+        print!("{}", piece);
+        let _ = io::stdout().flush();
+
+        if let Err(_) = ctx.eval_tokens(&[next_tok], 0) {
+            break;
+        }
+        generated_count += 1;
+    }
+    println!("\n");
 
 
 
