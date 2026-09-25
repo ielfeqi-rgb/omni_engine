@@ -378,17 +378,39 @@ Corrective action: write the complete code into the target file using vfs.write(
         Ok(guidance.trim().to_string())
     }
 
+fn is_build_task(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("create")
+        || lower.contains("build")
+        || lower.contains("game")
+        || lower.contains("html")
+        || lower.contains("css")
+        || lower.contains("js")
+        || lower.contains("write")
+        || lower.contains("code")
+        || lower.contains("implement")
+        || lower.contains("develop")
+        || lower.contains("make")
+        || lower.contains("web")
+        || lower.contains("اكتب")
+        || lower.contains("انشئ")
+        || lower.contains("أنشئ")
+        || lower.contains("اصنع")
+        || lower.contains("اعمل")
+        || lower.contains("صفحة")
+        || lower.contains("صفحه")
+        || lower.contains("كود")
+        || lower.contains("برمج")
+        || lower.contains("لعبة")
+        || lower.contains("لعبه")
+        || lower.contains("موقع")
+        || lower.contains("تطبيق")
+        || lower.contains("زر")
+}
+
     /// System 2: Decomposes goal into discrete sub-goals
     fn orchestrate_plan(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
-        let is_build = goal.to_lowercase().contains("create")
-            || goal.to_lowercase().contains("build")
-            || goal.to_lowercase().contains("game")
-            || goal.to_lowercase().contains("html")
-            || goal.to_lowercase().contains("write")
-            || goal.to_lowercase().contains("code")
-            || goal.to_lowercase().contains("implement")
-            || goal.to_lowercase().contains("develop")
-            || goal.to_lowercase().contains("make");
+        let is_build = Self::is_build_task(goal);
 
         let mut ctx = self.orchestrator_model.create_context(4096, 512, 4)?;
 
@@ -476,14 +498,7 @@ Corrective action: write the complete code into the target file using vfs.write(
 
     /// System 1: Autonomous Worker Loop with Real In-Process Token Generation, Lua Universal Hands, and Causal KV Rollback
     fn run_worker_loop(&self, subgoal: &SubGoal) -> Result<WorkerFinding, String> {
-        let is_build = subgoal.description.to_lowercase().contains("html")
-            || subgoal.description.to_lowercase().contains("game")
-            || subgoal.description.to_lowercase().contains("create")
-            || subgoal.description.to_lowercase().contains("build")
-            || subgoal.description.to_lowercase().contains("write")
-            || subgoal.description.to_lowercase().contains("code")
-            || subgoal.description.to_lowercase().contains("implement")
-            || subgoal.description.to_lowercase().contains("develop");
+        let is_build = Self::is_build_task(&subgoal.description);
 
         let mut ctx = self.worker_model.create_context(4096, 512, 4)?;
 
@@ -922,10 +937,7 @@ Corrective action: write the complete code into the target file using vfs.write(
 
     /// System 2: Synthesizes all gathered worker findings into a final report
     fn synthesize_findings(&self, original_goal: &str, findings: &[WorkerFinding]) -> Result<String, String> {
-        let is_build = original_goal.to_lowercase().contains("create")
-            || original_goal.to_lowercase().contains("build")
-            || original_goal.to_lowercase().contains("game")
-            || original_goal.to_lowercase().contains("html");
+        let is_build = Self::is_build_task(original_goal);
 
         let mut ctx = self.orchestrator_model.create_context(4096, 512, 4)?;
 
