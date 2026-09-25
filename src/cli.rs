@@ -753,10 +753,11 @@ OPTIONS:
     --subgoals <N>            Maximum sub-goals to decompose (default: 3)
     --steps <N>               Maximum steps per worker (default: 5)
     --models-dir <DIR>        Directory containing GGUF models
+    --output-dir <DIR>        Directory to write generated project/game files (default: ./platformer_game)
 
 EXAMPLES:
     omni_engine swarm "latest developments in room temperature superconductors"
-    omni_engine swarm "Rust vs Go memory layout" --model models/qwen-0.5b.gguf
+    omni_engine swarm "create a 2D platformer game with 50 levels" --output-dir ./my_game
 ================================================================================
 "#);
         return;
@@ -769,6 +770,7 @@ EXAMPLES:
     let mut max_subgoals = 3;
     let mut max_steps = 5;
     let mut models_dir = base_dir.join("models");
+    let mut output_dir: Option<PathBuf> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -797,6 +799,10 @@ EXAMPLES:
                 models_dir = PathBuf::from(&args[i + 1]);
                 i += 2;
             }
+            "--output-dir" if i + 1 < args.len() => {
+                output_dir = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
             arg if !arg.starts_with("--") && user_goal.is_empty() => {
                 user_goal = arg.to_string();
                 i += 1;
@@ -819,6 +825,7 @@ EXAMPLES:
             worker_model_path: m,
             max_subgoals,
             max_steps_per_worker: max_steps,
+            output_dir,
             verbose: true,
         }
     } else if let (Some(o), Some(w)) = (orch_path, worker_path) {
@@ -827,6 +834,7 @@ EXAMPLES:
             worker_model_path: w,
             max_subgoals,
             max_steps_per_worker: max_steps,
+            output_dir,
             verbose: true,
         }
     } else if let Some(cfg) = crate::planner::SwarmConfig::auto_detect(&base_dir) {
@@ -835,6 +843,7 @@ EXAMPLES:
             worker_model_path: cfg.worker_model_path,
             max_subgoals,
             max_steps_per_worker: max_steps,
+            output_dir,
             verbose: true,
         }
     } else {
