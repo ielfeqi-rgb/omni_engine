@@ -5,8 +5,8 @@ use crate::native_llama::NativeLlamaModel;
 use crate::openai_api::{ChatCompletionRequest, ChatMessage};
 use crate::system_info::get_system_specs;
 use std::fs;
-use std::io::{self, Write};
-use std::path::PathBuf;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
@@ -828,19 +828,10 @@ EXAMPLES:
             output_dir,
             verbose: true,
         }
-    } else if let (Some(o), Some(w)) = (orch_path, worker_path) {
+    } else if let Some((o, w)) = resolve_swarm_models(base_dir, &models_dir, orch_path, worker_path) {
         crate::planner::SwarmConfig {
             orchestrator_model_path: o,
             worker_model_path: w,
-            max_subgoals,
-            max_steps_per_worker: max_steps,
-            output_dir,
-            verbose: true,
-        }
-    } else if let Some(cfg) = crate::planner::SwarmConfig::auto_detect(&base_dir) {
-        crate::planner::SwarmConfig {
-            orchestrator_model_path: cfg.orchestrator_model_path,
-            worker_model_path: cfg.worker_model_path,
             max_subgoals,
             max_steps_per_worker: max_steps,
             output_dir,
@@ -874,4 +865,151 @@ EXAMPLES:
         }
     }
 }
+
+fn resolve_swarm_models(
+    base_dir: &Path,
+    models_dir: &Path,
+    mut orch_path: Option<PathBuf>,
+    mut worker_path: Option<PathBuf>,
+) -> Option<(PathBuf, PathBuf)> {
+    if let (Some(o), Some(w)) = (orch_path.as_ref(), worker_path.as_ref()) {
+        return Some((o.clone(), w.clone()));
+    }
+
+    let mut candidates = vec![models_dir.to_path_buf()];
+    if models_dir != base_dir.join("models") {
+        candidates.push(base_dir.join("models"));
+    }
+    candidates.push(base_dir.join("../models"));
+    candidates.push(base_dir.to_path_buf());
+
+    let mut found = Vec::new();
+    let mut seen_names = std::collections::HashSet::new();
+
+    for dir in &candidates {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        if ext == "gguf" {
+                            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            if !seen_names.contains(&filename) {
+                                seen_names.insert(filename.clone());
+                                let size_str = if let Ok(meta) = fs::metadata(&path) {
+                                    let mb = meta.len() as f64 / (1024.0 * 1024.0);
+                                    if mb >= 1024.0 {
+                                        format!("{:.2} GB", mb / 1024.0)
+                                    } else {
+                                        format!("{:.1} MB", mb)
+                                    }
+                                } else {
+                                    "Unknown".to_string()
+                                };
+                                found.push((filename, path, size_str));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !found.is_empty() {
+            break;
+        }
+    }
+
+    if found.is_empty() {
+        return None;
+    }
+
+    // Sort by file size descending
+    found.sort_by_key(|(_, path, _)| fs::metadata(path).map(|m| m.len()).unwrap_or(0));
+    found.reverse();
+
+    use colored::*;
+    println!("\n{}", "================================================================================".bright_cyan());
+    println!("  📦 {}", "SELECT MODELS FOR SOVEREIGN SWARM DUAL-ARCHITECTURE".bright_yellow().bold());
+    println!("{}", "================================================================================".bright_cyan());
+    println!("  Discovered available GGUF models:\n");
+    println!("  {:<4} {:<45} {:<12}", "#", "Model Filename", "File Size");
+    println!("  {}", "-".repeat(65));
+    for (idx, (name, _, size_str)) in found.iter().enumerate() {
+        println!("  [{}]  {:<45} {:<12}", idx + 1, name, size_str);
+    }
+    println!("{}\n", "================================================================================".bright_cyan());
+
+    // Prompt for orchestrator if not provided
+    if orch_path.is_none() {
+        let default_orch_idx = 0;
+        orch_path = Some(prompt_user_for_model(
+            "System 2 Thinker (Orchestrator / High-Level Planner)",
+            &found,
+            default_orch_idx,
+        ));
+    }
+
+    // Prompt for worker if not provided
+    if worker_path.is_none() {
+        let default_worker_idx = if found.len() > 1 { found.len() - 1 } else { 0 };
+        worker_path = Some(prompt_user_for_model(
+            "System 1 Swarm Worker (Fast Execution Agent)",
+            &found,
+            default_worker_idx,
+        ));
+    }
+
+    let o = orch_path?;
+    let w = worker_path?;
+
+    let o_name = o.file_name().unwrap_or_default().to_string_lossy();
+    let w_name = w.file_name().unwrap_or_default().to_string_lossy();
+
+    println!("\n  🎯 {}", "Configured Sovereign Architecture:".bright_green().bold());
+    println!("     🧠 System 2 Thinker (Orchestrator): {}", o_name.bright_white().bold());
+    println!("     ⚡ System 1 Swarm Worker:           {}\n", w_name.bright_white().bold());
+
+    Some((o, w))
+}
+
+fn prompt_user_for_model(
+    role_description: &str,
+    models: &[(String, PathBuf, String)],
+    default_idx: usize,
+) -> PathBuf {
+    let default_name = &models[default_idx].0;
+
+    if !io::stdin().is_terminal() {
+        println!("🤖 Non-interactive terminal. Selected default for {}: {}", role_description, default_name);
+        return models[default_idx].1.clone();
+    }
+
+    loop {
+        print!("👉 Select {} [1-{}, default: {} ({})]: ", role_description, models.len(), default_idx + 1, default_name);
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(0) => {
+                // EOF
+                println!();
+                return models[default_idx].1.clone();
+            }
+            Ok(_) => {
+                let trimmed = input.trim();
+                if trimmed.is_empty() {
+                    return models[default_idx].1.clone();
+                }
+                if let Ok(choice) = trimmed.parse::<usize>() {
+                    if choice >= 1 && choice <= models.len() {
+                        return models[choice - 1].1.clone();
+                    }
+                }
+                println!("   ⚠️  Invalid selection '{}'. Please enter a number between 1 and {}.", trimmed, models.len());
+            }
+            Err(_) => {
+                return models[default_idx].1.clone();
+            }
+        }
+    }
+}
+
 
