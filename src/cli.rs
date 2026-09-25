@@ -757,11 +757,11 @@ OPTIONS:
     --subgoals <N>            Maximum sub-goals to decompose (default: 3)
     --steps <N>               Maximum steps per worker (default: 5)
     --models-dir <DIR>        Directory containing GGUF models
-    --output-dir <DIR>        Directory to write generated project/game files (default: ./platformer_game)
+    --output-dir <DIR>        Directory to write generated output files (default: ./workspace)
 
 EXAMPLES:
     omni_engine swarm "latest developments in room temperature superconductors"
-    omni_engine swarm "create a 2D platformer game with 50 levels" --output-dir ./my_game
+    omni_engine swarm "build a distributed key-value store in Rust" --output-dir ./my_project
 ================================================================================
 "#);
         return;
@@ -1049,9 +1049,10 @@ fn print_session_header(session: &InteractiveSession) {
     println!("  👣 {:<33} : {} steps/worker", "Execution Budget".bright_white(), session.max_steps_per_worker.to_string().bright_yellow());
     println!("  📁 {:<33} : {}", "Output Directory".bright_white(), session.output_dir.display().to_string().bright_magenta());
     println!();
-    println!("  {} {} | {} | {} | {} | {} | {} | {}",
+    println!("  {} {} | {} | {} | {} | {} | {} | {} | {}",
         "Quick Commands:".bright_yellow().bold(),
         "run <goal>".bright_white().bold(),
+        "chat".bright_white(),
         "models".bright_white(),
         "config".bright_white(),
         "status".bright_white(),
@@ -1066,7 +1067,8 @@ fn print_console_help() {
     use colored::*;
     println!("\n{}", "📖 OMNI ENGINE CONSOLE COMMAND REFERENCE".bright_yellow().bold());
     println!("  {}", "─".repeat(70));
-    println!("  {:<26} {}", "run <goal>".bright_cyan().bold(), "Execute autonomous dual-model swarm for a goal or game");
+    println!("  {:<26} {}", "run <goal>".bright_cyan().bold(), "Execute autonomous dual-model swarm for any mission or task");
+    println!("  {:<26} {}", "chat".bright_white().bold(), "Direct native C-FFI conversational dialogue with active model");
     println!("  {:<26} {}", "models".bright_white().bold(), "Interactively choose or switch Thinker & Worker models");
     println!("  {:<26} {}", "config".bright_white().bold(), "Adjust subgoals limit, worker steps, and output directory");
     println!("  {:<26} {}", "status".bright_white().bold(), "Inspect system RAM, CPU cores, and engine status");
@@ -1215,6 +1217,118 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
     }
 }
 
+fn handle_interactive_chat(session: &InteractiveSession) {
+    use colored::*;
+    use std::io::{self, Write};
+
+    let model_path = match &session.orchestrator_path {
+        Some(p) => p.clone(),
+        None => match &session.worker_path {
+            Some(p) => p.clone(),
+            None => {
+                println!("❌ No active model configured. Type 'models' first.");
+                return;
+            }
+        },
+    };
+
+    let model_name = model_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    println!("\n{}", "───────────────────────────────────────────────────────────────────────────────".dimmed());
+    println!("  💬 {}", format!("NATIVE C-FFI CHAT SESSION with {}", model_name).bright_yellow().bold());
+    println!("  Type {} or {} to return to the main console.", "/exit".bright_cyan(), "/quit".bright_cyan());
+    println!("{}\n", "───────────────────────────────────────────────────────────────────────────────".dimmed());
+
+    println!("⏳ Loading model weights into RAM...");
+    let model = match crate::native_llama::NativeLlamaModel::load(&model_path, 0) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("❌ Failed to load model: {}", e);
+            return;
+        }
+    };
+
+    let mut ctx = match model.create_context(2048, 512, 4) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("❌ Failed to create context: {}", e);
+            return;
+        }
+    };
+    println!("✅ Ready for direct dialogue!\n");
+
+    loop {
+        print!("{} ", "chat❯".bright_magenta().bold());
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            break;
+        }
+
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed == "/exit" || trimmed == "/quit" || trimmed == "exit" || trimmed == "quit" {
+            println!("{}", "Exiting chat mode...".dimmed());
+            break;
+        }
+
+        let formatted_prompt = format!("<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n", trimmed);
+        print!("🤖 ");
+        let _ = io::stdout().flush();
+
+        let prompt_tokens = match model.tokenize(&formatted_prompt, true) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("❌ Tokenization error: {}", e);
+                continue;
+            }
+        };
+
+        if let Err(e) = ctx.eval_tokens(&prompt_tokens, 0) {
+            eprintln!("❌ Evaluation error: {}", e);
+            continue;
+        }
+
+        let mut generated_count = 0;
+        let max_gen_tokens = 512;
+        while generated_count < max_gen_tokens {
+            let next_tok = match ctx.sample_greedy() {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("❌ Sampling error: {}", e);
+                    break;
+                }
+            };
+
+            let piece = match model.token_to_piece(next_tok) {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+
+            if piece.is_empty()
+                || piece.contains("<|im_end|>")
+                || piece.contains("<|endoftext|>")
+                || piece.contains("<|eot_id|>")
+                || piece.contains("</s>")
+            {
+                break;
+            }
+
+            print!("{}", piece);
+            let _ = io::stdout().flush();
+
+            if let Err(_) = ctx.eval_tokens(&[next_tok], 0) {
+                break;
+            }
+            generated_count += 1;
+        }
+        println!("\n");
+    }
+}
+
 pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     use colored::*;
     use std::io::{self, Write};
@@ -1225,7 +1339,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
         worker_path: if !models.is_empty() { Some(models.last().unwrap().1.clone()) } else { None },
         max_subgoals: 3,
         max_steps_per_worker: 5,
-        output_dir: PathBuf::from("./platformer_game"),
+        output_dir: PathBuf::from("./workspace"),
     };
 
     print_session_header(&session);
@@ -1258,6 +1372,12 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             "clear" | "cls" => {
                 print!("\x1B[2J\x1B[1;1H");
                 print_session_header(&session);
+            }
+            "chat" => {
+                let session_clone = session.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    handle_interactive_chat(&session_clone);
+                }).await;
             }
             "models" | "model" | "m" => {
                 handle_interactive_models(&mut session, base_dir);
