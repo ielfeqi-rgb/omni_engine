@@ -5,7 +5,9 @@
 //! KV-cache tensor manipulation (surgical rollback, sequence branching,
 //! defragmentation, and full epistemic apoptosis).
 
+use colored::*;
 use std::ffi::CString;
+use std::io::{self, IsTerminal, Write};
 use std::os::raw::{c_char, c_void};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -283,13 +285,23 @@ impl NativeLlamaContext {
         Ok(logits)
     }
 
-    /// Autoregressively generate up to `max_tokens` from a prompt.
+    /// Autoregressively generate up to `max_tokens` from a prompt with live visual CLI telemetry.
     pub fn generate(&mut self, prompt: &str, max_tokens: usize) -> Result<String, String> {
+        let is_term = io::stdout().is_terminal();
         let prompt_tokens = self.model.tokenize(prompt, true)?;
+
+        let start_time = std::time::Instant::now();
+        if is_term {
+            print!("     ⏳ Evaluating context ({} tokens)...", prompt_tokens.len());
+            let _ = io::stdout().flush();
+        }
+
         self.eval_tokens(&prompt_tokens, 0)?;
 
+        let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let mut generated = String::new();
-        for _ in 0..max_tokens {
+
+        for i in 0..max_tokens {
             let next_tok = self.sample_greedy()?;
             let piece = self.model.token_to_piece(next_tok)?;
 
@@ -307,6 +319,32 @@ impl NativeLlamaContext {
             generated.push_str(&piece);
             self.eval_tokens(&[next_tok], 0)?;
 
+            if is_term {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.1 { (i + 1) as f64 / elapsed } else { 0.0 };
+                let frame = spinner_frames[i % spinner_frames.len()];
+                let used_cells = self.kv_cache_used_cells();
+
+                // Live dynamic CLI indicator (animating on the same line)
+                let gauge_width = 10;
+                let ratio = (used_cells as f64 / self.n_ctx as f64).clamp(0.0, 1.0);
+                let filled = (ratio * gauge_width as f64).round() as usize;
+                let bar: String = "█".repeat(filled) + &"░".repeat(gauge_width.saturating_sub(filled));
+
+                print!(
+                    "\r     {} {} Active: Token #{} ({:.1} t/s) │ KV: [{}] {}/{} │ {:.0}s   ",
+                    frame.to_string().bright_cyan().bold(),
+                    "●".bright_green(),
+                    (i + 1).to_string().bright_yellow().bold(),
+                    speed,
+                    bar.bright_magenta(),
+                    used_cells,
+                    self.n_ctx,
+                    elapsed
+                );
+                let _ = io::stdout().flush();
+            }
+
             // Guard against autoregressive loop repetition
             let tail_len = 32;
             if generated.len() >= tail_len * 2 {
@@ -317,6 +355,20 @@ impl NativeLlamaContext {
                     break;
                 }
             }
+        }
+
+        if is_term {
+            let total_time = start_time.elapsed().as_secs_f64();
+            let final_speed = if total_time > 0.1 { (generated.len()) as f64 / total_time } else { 0.0 };
+            print!("\r                                                                                         \r");
+            println!(
+                "     ⚡ {} ({:.1}s, {:.1} chars/s, {} KV cells)",
+                "Generation pass complete".bright_green().bold(),
+                total_time,
+                final_speed,
+                self.kv_cache_used_cells()
+            );
+            let _ = io::stdout().flush();
         }
 
         Ok(generated)
