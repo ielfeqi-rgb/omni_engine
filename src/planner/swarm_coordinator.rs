@@ -246,18 +246,17 @@ impl SwarmCoordinator {
         let mut findings: Vec<WorkerFinding> = Vec::new();
 
         for mut sg in subgoals {
-            // DYNAMIC THINKER STEERING LOOP: Active communication between Thinker and Swarm
-            if !findings.is_empty() {
-                if let Ok(directive) = self.thinker_steer_worker(&sg, &findings) {
-                    if !directive.is_empty() {
-                        println!(
-                            "  🧠 {} \"{}\"",
-                            "[THINKER DIRECTIVE]".bright_magenta().bold(),
-                            directive.bright_white()
-                        );
-                        sg.guidance = Some(directive);
-                    }
+            // THINKER EXECUTIVE DIRECTIVE: System 2 issues the explicit, actionable directive for every worker
+            match self.thinker_dispatch_directive(user_goal, &sg, &findings) {
+                Ok(directive) if !directive.is_empty() => {
+                    println!(
+                        "  🧠 {} \"{}\"",
+                        "[THINKER EXECUTIVE DIRECTIVE]".bright_magenta().bold(),
+                        directive.bright_white()
+                    );
+                    sg.guidance = Some(directive);
                 }
+                _ => {}
             }
 
             println!(
@@ -267,7 +266,7 @@ impl SwarmCoordinator {
                 sg.description.bright_white()
             );
 
-            let finding = self.run_worker_loop(&sg)?;
+            let finding = self.run_worker_loop(user_goal, &sg)?;
             findings.push(finding);
             println!();
         }
@@ -330,16 +329,70 @@ impl SwarmCoordinator {
         })
     }
 
-    /// Dynamic Thinker Steering: Evaluates previous worker progress and issues concise guidance for the next worker
-    fn thinker_steer_worker(&self, next_subgoal: &SubGoal, previous_findings: &[WorkerFinding]) -> Result<String, String> {
-        let last_finding = previous_findings.last().map(|f| f.finding.as_str()).unwrap_or("");
-        if last_finding.is_empty() {
-            return Ok(String::new());
-        }
-
+    /// Dynamic Thinker Dispatch: System 2 issues the explicit, actionable directive for every worker
+    fn thinker_dispatch_directive(
+        &self,
+        user_goal: &str,
+        subgoal: &SubGoal,
+        previous_findings: &[WorkerFinding],
+    ) -> Result<String, String> {
         let mut ctx = self.orchestrator_model.create_context(2048, 256, 4)?;
-        let system_msg = "You are the swarm thinker. Provide one concise directive (max 25 words) steering the worker on the next sub-goal based on previous progress. Be direct and concrete.";
-        let user_msg = format!("Previous progress:\n{}\nNext sub-goal: {}\nDirective:", last_finding, next_subgoal.description);
+        let system_msg = "You are the System 2 Sovereign Thinker commanding an execution worker.\n\
+The user communicates ONLY with you. Workers are your executive hands.\n\
+Your worker is equipped with:\n\
+- vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
+- vfs.read(\"filename\"): Read file from VFS\n\
+- terminal.run(\"command\"): Execute shell command on host\n\
+- consult(\"question\"): Proactively consult Thinker for advice\n\
+- DONE: Finish task\n\n\
+Your Task:\n\
+Take the user's goal and issue a single, concrete, explicit operational directive commanding the worker what exact tool to call and what file/content to implement.\n\
+Be direct, imperative, and specific (max 35 words).";
+
+        let prev_summary = if previous_findings.is_empty() {
+            "Initial task dispatch. No previous findings.".to_string()
+        } else {
+            let last = previous_findings.last().map(|f| f.finding.as_str()).unwrap_or("");
+            format!("Previous worker findings: {}", last)
+        };
+
+        let user_msg = format!(
+            "User Goal: {}\nSub-goal: {}\nTarget Entity: {}\nContext: {}\n\nDirective for Worker:",
+            user_goal, subgoal.description, subgoal.target_entity, prev_summary
+        );
+        let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
+        let output = ctx.generate(&prompt, 64)?;
+        Ok(output.trim().to_string())
+    }
+
+    /// Dynamic Thinker Live Step Supervision: System 2 monitors worker progress and provides live guidance
+    fn thinker_supervise_step(
+        &self,
+        user_goal: &str,
+        subgoal: &SubGoal,
+        executed_script: &str,
+        script_output: &str,
+        vfs_target_exists: bool,
+        vfs_target_size: usize,
+    ) -> Result<String, String> {
+        let mut ctx = self.orchestrator_model.create_context(2048, 256, 4)?;
+        let system_msg = "You are the System 2 Sovereign Supervisor monitoring worker progress.\n\
+Inspect the worker's action, output, and VFS status.\n\
+Your Task:\n\
+- If the target file exists in VFS and is complete, instruct the worker to output: DONE\n\
+- If the worker ran an unrelated command or hasn't written the target file yet, command it to write the file using vfs.write\n\
+- Provide a concise instruction (max 30 words).";
+
+        let snippet = if executed_script.len() > 300 {
+            &executed_script[..300]
+        } else {
+            executed_script
+        };
+
+        let user_msg = format!(
+            "User Goal: {}\nSub-goal: {}\nTarget File: {}\nTarget Exists in VFS: {} ({} bytes)\nExecuted Script: {}\nOutput: {}\n\nSupervision Directive:",
+            user_goal, subgoal.description, subgoal.target_entity, vfs_target_exists, vfs_target_size, snippet, script_output
+        );
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
         let output = ctx.generate(&prompt, 64)?;
         Ok(output.trim().to_string())
@@ -538,41 +591,37 @@ fn is_build_task(text: &str) -> bool {
     }
 
     /// System 1: Autonomous Worker Loop with Real In-Process Token Generation, Lua Universal Hands, and Causal KV Rollback
-    fn run_worker_loop(&self, subgoal: &SubGoal) -> Result<WorkerFinding, String> {
+    fn run_worker_loop(&self, user_goal: &str, subgoal: &SubGoal) -> Result<WorkerFinding, String> {
         let is_build = Self::is_build_task(&subgoal.description);
 
         let mut ctx = self.worker_model.create_context(4096, 512, 4)?;
 
         let system_msg = if is_build {
             format!(
-                "You are a System 1 Swarm Execution Worker equipped with Lua universal hands.\n\
+                "You are an Executive Hands Worker in an autonomous dual-model swarm.\n\
+                You are directed exclusively by the System 2 Sovereign Thinker.\n\
                 Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
                 Objective: {}\n\n\
                 Available Tools:\n\
                 - vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
                 - vfs.read(\"filename\"): Read file from VFS\n\
-                - terminal.run(\"command\"): Execute shell command on host (e.g. \"uname -a\", \"free -h\", \"ls\")\n\
+                - terminal.run(\"command\"): Execute shell command on host\n\
                 - consult(\"question\"): Proactively consult System 2 Thinker for guidance, clarifications, or plan adjustments\n\
                 - print(\"message\"): Log execution output\n\
                 - DONE: Signal that the objective is complete\n\n\
                 Rules:\n\
-                1. Output your Lua code inside a ```lua ... ``` block.\n\
-                2. Put complete, functional code or data inside [[ ... ]]. NEVER output placeholder comments like <!-- TODO -->.\n\
-                3. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Implement web applications, scripts, or system tasks directly via vfs.write.\n\
-                4. If you face ambiguity, blockers, or need guidance, call consult(\"your question\") to receive an advisory from the Thinker.\n\
-                5. Always output DONE after fulfilling the objective.\n\n\
-                Minimal System Example:\n\
-                ```lua\n\
-                local info = terminal.run(\"uname -a\")\n\
-                print(\"Host kernel: \" .. info)\n\
-                vfs.write(\"system_info.txt\", info)\n\
-                ```\n\
-                DONE",
+                1. You execute the Thinker's direct instructions using your tools.\n\
+                2. Output your Lua code inside a ```lua ... ``` block.\n\
+                3. Put complete, functional code or data inside [[ ... ]]. NEVER output placeholder comments like <!-- TODO --> or <!-- implementation -->.\n\
+                4. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Implement web applications, scripts, or system tasks directly via vfs.write.\n\
+                5. If you face ambiguity, blockers, or need guidance, call consult(\"your question\") to receive an advisory from the Thinker.\n\
+                6. Always output DONE after fulfilling the objective.",
                 subgoal.description
             )
         } else {
             format!(
-                "You are a System 1 Swarm Execution Worker.\n\
+                "You are an Executive Hands Worker in an autonomous dual-model swarm.\n\
+                You are directed exclusively by the System 2 Sovereign Thinker.\n\
                 Objective: {}\n\n\
                 Available Commands:\n\
                 - SEARCH: <query>\n\
@@ -581,20 +630,21 @@ fn is_build_task(text: &str) -> bool {
                 - DONE\n\n\
                 Rule: Output exactly ONE command per step.\n\
                 When facts are found, output REPORT: <facts>.\n\
-                When objective is fulfilled, output DONE.\n\n\
-                Minimal Example:\n\
-                SEARCH: {}\n\
-                REPORT: Discovered verified findings.\n\
-                DONE",
-                subgoal.description,
-                subgoal.target_entity
+                When objective is fulfilled, output DONE.",
+                subgoal.description
             )
         };
 
         let user_msg = if let Some(ref guide) = subgoal.guidance {
-            format!("Directive: {}\nImplement the complete, functional file '{}' for: {}\nWrite valid Lua code and output DONE.", guide, subgoal.target_entity, subgoal.description)
+            format!(
+                "Thinker Executive Directive: {}\nTarget File: {}\nGoal: {}\n\nExecute this directive now by calling the appropriate tool inside a ```lua ... ``` block. Output DONE when complete.",
+                guide, subgoal.target_entity, subgoal.description
+            )
         } else {
-            format!("Implement the complete, functional file '{}' for: {}\nWrite valid Lua code and output DONE.", subgoal.target_entity, subgoal.description)
+            format!(
+                "Target File: {}\nGoal: {}\n\nExecute now by calling the appropriate tool inside a ```lua ... ``` block. Output DONE when complete.",
+                subgoal.target_entity, subgoal.description
+            )
         };
 
         let initial_prompt = Self::format_prompt(&self.worker_model, &system_msg, &user_msg);
@@ -742,10 +792,34 @@ fn is_build_task(text: &str) -> bool {
                         collected_finding.push_str(&finding);
                         collected_finding.push('\n');
 
+                        let target_path = std::path::PathBuf::from(&subgoal.target_entity);
+                        let vfs_target_exists = self.vfs.exists(&target_path);
+                        let vfs_target_size = self.vfs.read_file(&target_path).map(|c| c.len()).unwrap_or(0);
+
+                        let supervision = match self.thinker_supervise_step(
+                            user_goal,
+                            subgoal,
+                            &script,
+                            &out_log,
+                            vfs_target_exists,
+                            vfs_target_size,
+                        ) {
+                            Ok(sup) => sup,
+                            Err(_) => "Check VFS and complete the implementation, then output DONE.".to_string(),
+                        };
+
+                        println!("     🧠 {} \"{}\"", "THINKER SUPERVISION:".bright_magenta().bold(), supervision.bright_cyan());
+
+                        // If Thinker confirms task is complete and VFS has the target file:
+                        if (supervision.to_uppercase().contains("DONE") || supervision.to_uppercase().contains("COMPLETE")) && vfs_target_exists && vfs_target_size > 30 {
+                            println!("     🎯 {}", "THINKER CONFIRMED SUBGOAL FULFILLED.".bright_green().bold());
+                            break;
+                        }
+
                         let obs = Self::format_observation_turn(
                             &self.worker_model,
-                            &format!("Script output: {}\nFiles in VFS created/updated.", out_log),
-                            "If the file is complete and objective fulfilled, output: DONE. Otherwise continue:"
+                            &format!("Thinker Supervision: {}\nExecution Output: {}", supervision, out_log),
+                            "Follow the Thinker's supervision directive directly:"
                         );
                         let obs_tokens = self.worker_model.tokenize(&obs, false)?;
                         if ctx.current_cursor() + obs_tokens.len() < ctx.n_ctx() - 128 {
