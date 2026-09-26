@@ -14,6 +14,7 @@ pub enum SwarmAction {
     Search { query: String },
     Fetch { url: String },
     RunLua { script: String },
+    Consult { question: String },
     Report { finding: String },
     Done,
     None,
@@ -383,6 +384,35 @@ Explain what syntax error occurred and instruct the worker to supply the full, w
         Ok(guidance.trim().to_string())
     }
 
+    /// System 2: Proactively evaluates a worker's consultation or mid-flight escalation.
+    /// Determines whether to:
+    /// 1. Provide a decisive direct instruction.
+    /// 2. Adapt or simplify the plan without needing a rollback.
+    /// 3. Confirm completion or next steps.
+    fn thinker_evaluate_consultation(
+        &self,
+        subgoal: &SubGoal,
+        worker_inquiry: &str,
+        current_progress: &str,
+    ) -> Result<String, String> {
+        let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
+        let system_msg = "You are the System 2 Sovereign Architect orchestrating an autonomous swarm.\n\
+The worker is consulting you mid-flight with a question, blocker, or progress update (NOT a failure).\n\
+Your Task:\n\
+- Evaluate the worker's inquiry.\n\
+- If it is a simple decision, provide a direct, concise instruction (max 30 words).\n\
+- If the current task is too complex, simplify the requirement or adapt the approach.\n\
+- Be decisive and concrete so the worker can proceed immediately without rolling back.";
+
+        let user_msg = format!(
+            "Current Sub-goal: {}\nTarget Entity: {}\nProgress So Far:\n{}\nWorker Inquiry: {}\n\nProvide decisive guidance for the worker:",
+            subgoal.description, subgoal.target_entity, current_progress, worker_inquiry
+        );
+        let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
+        let guidance = ctx.generate(&prompt, 128)?;
+        Ok(guidance.trim().to_string())
+    }
+
 fn is_build_task(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("create")
@@ -522,13 +552,15 @@ fn is_build_task(text: &str) -> bool {
                 - vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
                 - vfs.read(\"filename\"): Read file from VFS\n\
                 - terminal.run(\"command\"): Execute shell command on host (e.g. \"uname -a\", \"free -h\", \"ls\")\n\
+                - consult(\"question\"): Proactively consult System 2 Thinker for guidance, clarifications, or plan adjustments\n\
                 - print(\"message\"): Log execution output\n\
                 - DONE: Signal that the objective is complete\n\n\
                 Rules:\n\
                 1. Output your Lua code inside a ```lua ... ``` block.\n\
                 2. Put complete, functional code or data inside [[ ... ]]. NEVER output placeholder comments like <!-- TODO -->.\n\
                 3. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Implement web applications, scripts, or system tasks directly via vfs.write.\n\
-                4. Always output DONE after fulfilling the objective.\n\n\
+                4. If you face ambiguity, blockers, or need guidance, call consult(\"your question\") to receive an advisory from the Thinker.\n\
+                5. Always output DONE after fulfilling the objective.\n\n\
                 Minimal System Example:\n\
                 ```lua\n\
                 local info = terminal.run(\"uname -a\")\n\
@@ -680,6 +712,25 @@ fn is_build_task(text: &str) -> bool {
                     let res = runner.run_script(&script);
 
                     if res.success {
+                        if let Some(ref question) = res.consultation {
+                            println!("     🤝 {} \"{}\"", "WORKER CONSULTED THINKER:".bright_yellow().bold(), question.bright_white());
+                            let advice = self.thinker_evaluate_consultation(subgoal, question, &collected_finding)?;
+                            println!("     🧠 {} \"{}\"", "THINKER STRATEGIC DIRECTIVE:".bright_magenta().bold(), advice.bright_cyan());
+
+                            let obs = Self::format_observation_turn(
+                                &self.worker_model,
+                                &format!("Thinker Strategic Directive: {}", advice),
+                                "Apply this directive directly to fulfill your objective:"
+                            );
+                            let obs_tokens = self.worker_model.tokenize(&obs, false)?;
+                            if ctx.current_cursor() + obs_tokens.len() < ctx.n_ctx() - 128 {
+                                ctx.eval_tokens(&obs_tokens, 0)?;
+                                graph.record_step_with_context(step_id + 5000, "Thinker Consultation", &[entity_name], &[entity_name], &ctx);
+                            }
+                            step_id += 1;
+                            continue;
+                        }
+
                         let out_log = if res.output_log.trim().is_empty() {
                             "Executed successfully with no errors.".to_string()
                         } else {
@@ -876,6 +927,23 @@ fn is_build_task(text: &str) -> bool {
                         }
                     }
                 }
+                SwarmAction::Consult { question } => {
+                    println!("     🤝 {} \"{}\"", "WORKER CONSULTED THINKER:".bright_yellow().bold(), question.bright_white());
+                    let advice = self.thinker_evaluate_consultation(subgoal, &question, &collected_finding)?;
+                    println!("     🧠 {} \"{}\"", "THINKER STRATEGIC DIRECTIVE:".bright_magenta().bold(), advice.bright_cyan());
+
+                    let obs = Self::format_observation_turn(
+                        &self.worker_model,
+                        &format!("Thinker Strategic Directive: {}", advice),
+                        "Apply this directive directly to fulfill your objective:"
+                    );
+                    let obs_tokens = self.worker_model.tokenize(&obs, false)?;
+                    if ctx.current_cursor() + obs_tokens.len() < ctx.n_ctx() - 128 {
+                        ctx.eval_tokens(&obs_tokens, 0)?;
+                        graph.record_step_with_context(step_id + 5000, "Thinker Consultation", &[entity_name], &[entity_name], &ctx);
+                    }
+                    step_id += 1;
+                }
                 SwarmAction::Report { finding } => {
                     println!("     📝 {} {}", "WORKER DISCOVERY:".bright_green().bold(), finding.bright_white());
                     collected_finding.push_str(&finding);
@@ -1066,6 +1134,10 @@ fn is_build_task(text: &str) -> bool {
             if upper.starts_with("REPORT:") {
                 let f = l[7..].trim();
                 return SwarmAction::Report { finding: f.to_string() };
+            }
+            if upper.starts_with("CONSULT:") || upper.starts_with("ASK:") || upper.starts_with("NEED:") {
+                let q = l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
+                return SwarmAction::Consult { question: q.to_string() };
             }
             if upper == "DONE" || upper.starts_with("DONE:") || upper.starts_with("DONE ") {
                 return SwarmAction::Done;

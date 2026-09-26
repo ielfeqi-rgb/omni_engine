@@ -8,6 +8,7 @@ pub struct LuaRunResult {
     pub success: bool,
     pub output_log: String,
     pub error: Option<String>,
+    pub consultation: Option<String>,
 }
 
 /// Embedded Lua Execution Environment.
@@ -54,6 +55,17 @@ impl LuaSandboxRunner {
             let _ = lua.globals().set("print", print_fn);
         }
 
+        // 1.5 Bridge consult function for proactive Thinker escalation
+        let consultation = Arc::new(parking_lot::Mutex::new(None));
+        let consult_clone = consultation.clone();
+        let consult_fn = lua.create_function(move |_, query: String| {
+            *consult_clone.lock() = Some(query);
+            Ok(())
+        });
+        if let Ok(consult_fn) = consult_fn {
+            let _ = lua.globals().set("consult", consult_fn);
+        }
+
         // 2. Bridge VFS operations: vfs.write(path, content), vfs.read(path)
         let vfs_table = match lua.create_table() {
             Ok(t) => t,
@@ -61,6 +73,7 @@ impl LuaSandboxRunner {
                 success: false,
                 output_log: String::new(),
                 error: Some(format!("Failed to create VFS table: {}", e)),
+                consultation: None,
             },
         };
 
@@ -106,6 +119,7 @@ impl LuaSandboxRunner {
                 success: false,
                 output_log: String::new(),
                 error: Some(format!("Failed to create Web table: {}", e)),
+                consultation: None,
             },
         };
 
@@ -191,6 +205,7 @@ impl LuaSandboxRunner {
                 success: false,
                 output_log: String::new(),
                 error: Some(format!("Failed to create Browser table: {}", e)),
+                consultation: None,
             },
         };
 
@@ -253,10 +268,12 @@ impl LuaSandboxRunner {
         match lua.load(lua_code).exec() {
             Ok(_) => {
                 let captured = logs.lock().join("\n");
+                let consult_req = consultation.lock().clone();
                 LuaRunResult {
                     success: true,
                     output_log: captured,
                     error: None,
+                    consultation: consult_req,
                 }
             }
             Err(e) => {
@@ -265,6 +282,7 @@ impl LuaSandboxRunner {
                     success: false,
                     output_log: captured,
                     error: Some(format!("Lua Runtime Trap: {}", e)),
+                    consultation: None,
                 }
             }
         }
