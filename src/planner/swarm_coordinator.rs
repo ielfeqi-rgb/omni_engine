@@ -466,6 +466,27 @@ Your Task:\n\
         Ok(guidance.trim().to_string())
     }
 
+fn infer_target_entity(goal: &str) -> String {
+    let lower = goal.to_lowercase();
+    if lower.contains(".py") || lower.contains("python") || lower.contains("بايثون") {
+        "main.py".to_string()
+    } else if lower.contains(".pdf") || lower.contains("pdf") {
+        "document.pdf".to_string()
+    } else if lower.contains(".sh") || lower.contains("bash") || lower.contains("shell") || lower.contains("باش") {
+        "script.sh".to_string()
+    } else if lower.contains(".json") || lower.contains("json") {
+        "data.json".to_string()
+    } else if lower.contains(".csv") || lower.contains("csv") || lower.contains("جدول") {
+        "data.csv".to_string()
+    } else if lower.contains(".md") || lower.contains("markdown") || lower.contains("تقرير") || lower.contains("report") {
+        "report.md".to_string()
+    } else if lower.contains(".html") || lower.contains("html") || lower.contains("صفحة") || lower.contains("صفحه") || lower.contains("موقع") || lower.contains("web") {
+        "index.html".to_string()
+    } else {
+        "output.txt".to_string()
+    }
+}
+
 fn is_build_task(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("create")
@@ -480,6 +501,14 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("develop")
         || lower.contains("make")
         || lower.contains("web")
+        || lower.contains("python")
+        || lower.contains("py")
+        || lower.contains("pdf")
+        || lower.contains("script")
+        || lower.contains("bash")
+        || lower.contains("shell")
+        || lower.contains("json")
+        || lower.contains("csv")
         || lower.contains("اكتب")
         || lower.contains("انشئ")
         || lower.contains("أنشئ")
@@ -489,6 +518,11 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("صفحه")
         || lower.contains("كود")
         || lower.contains("برمج")
+        || lower.contains("سكربت")
+        || lower.contains("سكريبت")
+        || lower.contains("بايثون")
+        || lower.contains("تقرير")
+        || lower.contains("ملف")
         || lower.contains("لعبة")
         || lower.contains("لعبه")
         || lower.contains("موقع")
@@ -509,13 +543,16 @@ fn is_build_task(text: &str) -> bool {
                 Workers write standalone project files via Lua: vfs.write(\"filename\", [[content]]).\n\n\
                 Decision Authority on Workers:\n\
                 - You decide how many workers to deploy (from 1 up to {} max budget).\n\
-                - For single-file projects, scripts, or standalone pages: Deploy exactly 1 worker to generate the complete file in one pass.\n\
+                - For single-file deliverables (e.g. Python scripts, PDF generators, shell utilities, or standalone apps): Deploy exactly 1 worker to generate the complete file in one pass.\n\
                 - Only decompose into multiple sub-goals if the objective genuinely requires separate, independent modules or files.\n\
                 - Provide each worker with an explicit, self-contained implementation directive.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
                 SUBGOAL: <explicit implementation directive> | ENTITY: <target filename>\n\n\
-                Example:\n\
-                SUBGOAL: Write the complete standalone file with all markup, styles, and logic | ENTITY: index.html",
+                Examples:\n\
+                SUBGOAL: Write the complete Python automation script | ENTITY: main.py\n\
+                SUBGOAL: Write the PDF generation pipeline or document source | ENTITY: document.pdf\n\
+                SUBGOAL: Write the standalone web application | ENTITY: index.html\n\
+                SUBGOAL: Write the shell maintenance utility | ENTITY: script.sh",
                 self.config.max_subgoals
             )
         } else {
@@ -526,8 +563,9 @@ fn is_build_task(text: &str) -> bool {
                 - For straightforward topics, 1 worker is sufficient.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
                 SUBGOAL: <precise search objective> | ENTITY: <primary keyword>\n\n\
-                Example:\n\
-                SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors",
+                Examples:\n\
+                SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors\n\
+                SUBGOAL: Search for recent astrophysics discoveries | ENTITY: astrophysics",
                 self.config.max_subgoals
             )
         };
@@ -545,10 +583,10 @@ fn is_build_task(text: &str) -> bool {
                 let rest = l.trim_start_matches("SUBGOAL:").trim();
                 let parts: Vec<&str> = rest.split("| ENTITY:").collect();
                 let desc = parts[0].trim().to_string();
-                let entity = if parts.len() > 1 {
+                let entity = if parts.len() > 1 && !parts[1].trim().is_empty() {
                     parts[1].trim().to_string()
                 } else if is_build {
-                    "index.html".to_string()
+                    Self::infer_target_entity(goal)
                 } else {
                     goal.split_whitespace().next().unwrap_or("general").to_string()
                 };
@@ -571,10 +609,11 @@ fn is_build_task(text: &str) -> bool {
         // Fallback if model output did not match format exactly
         if subgoals.is_empty() {
             if is_build {
+                let inferred = Self::infer_target_entity(goal);
                 subgoals.push(SubGoal {
                     id: 1,
-                    description: format!("Create and write complete standalone implementation in one file using Lua: {}", goal),
-                    target_entity: "index.html".to_string(),
+                    description: format!("Create and write complete standalone implementation for: {}", goal),
+                    target_entity: inferred,
                     guidance: None,
                 });
             } else {
@@ -1111,8 +1150,6 @@ fn is_build_task(text: &str) -> bool {
 
     /// System 2: Synthesizes all gathered worker findings into a final report
     fn synthesize_findings(&self, original_goal: &str, findings: &[WorkerFinding]) -> Result<String, String> {
-        let is_build = Self::is_build_task(original_goal);
-
         let mut ctx = self.orchestrator_model.create_context(4096, 512, 4)?;
 
         let mut findings_block = String::new();
@@ -1123,11 +1160,7 @@ fn is_build_task(text: &str) -> bool {
             ));
         }
 
-        let system_msg = if is_build {
-            "You are a lead software architect. Summarize the software artifact and game mechanics generated by the swarm workers. Confirm the files created, key mechanics implemented, and instructions to play."
-        } else {
-            "You are a research synthesis assistant. Ground your response strictly on the factual discoveries made by the swarm workers. Provide a concise, clear, and factual summary directly answering the objective."
-        };
+        let system_msg = "You are the System 2 Sovereign Architect reporting back to the user. Speak directly to the user in a professional, clear manner. Summarize exactly what was accomplished (1, 2, 3), which files or outputs were created and verified, and how the user's objective was fulfilled.";
         let user_msg = format!("Goal: {}\n\nWorker Deliveries:\n{}\nProvide the final response directly:", original_goal, findings_block);
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
 
