@@ -199,51 +199,16 @@ impl LuaSandboxRunner {
         if let Ok(f) = fetch_fn { let _ = browser_table.set("fetch", f); }
         let _ = lua.globals().set("browser", browser_table);
 
-        // 3.8 Bridge Sys Table: sys.ram(), sys.ping(host), sys.info()
-        let sys_table = match lua.create_table() {
-            Ok(t) => t,
-            Err(e) => return LuaRunResult {
-                success: false,
-                output_log: String::new(),
-                error: Some(format!("Failed to create Sys table: {}", e)),
-            },
-        };
-
-        let ram_fn = lua.create_function(|_, ()| {
-            let specs = crate::system_info::get_system_specs();
-            Ok(format!("{:.1} GB available / {:.1} GB total", specs.free_ram_gb, specs.total_ram_gb))
-        });
-
-        let ping_fn = lua.create_function(|_, host: Option<String>| {
-            let target = host.unwrap_or_else(|| "1.1.1.1".to_string());
-            let addr = if target.contains(':') {
-                target
-            } else {
-                format!("{}:80", target)
-            };
-            let start = std::time::Instant::now();
-            let res = std::net::TcpStream::connect_timeout(
-                &addr.parse().unwrap_or_else(|_| "1.1.1.1:80".parse().unwrap()),
-                std::time::Duration::from_millis(1500),
-            );
-            match res {
-                Ok(_) => Ok(format!("{}ms (online)", start.elapsed().as_millis())),
-                Err(e) => Ok(format!("offline ({})", e)),
-            }
-        });
-
-        let info_fn = lua.create_function(|_, ()| {
-            let specs = crate::system_info::get_system_specs();
-            Ok(format!("{} CPU cores, {:.1} GB total RAM", specs.cpu_cores, specs.total_ram_gb))
-        });
-
-        if let Ok(r) = ram_fn { let _ = sys_table.set("ram", r); }
-        if let Ok(p) = ping_fn { let _ = sys_table.set("ping", p); }
-        if let Ok(i) = info_fn { let _ = sys_table.set("info", i); }
-        let _ = lua.globals().set("sys", sys_table);
-
-        // 4. Bridge Terminal Session if available
+        // 4. Bridge Terminal Session if available (termhost)
         if let Some(term) = &self.terminal {
+            let term_run = term.clone();
+            let run_fn = lua.create_function(move |_, cmd: String| {
+                match term_run.run_sync(&cmd, 10) {
+                    Ok(out) => Ok(out),
+                    Err(e) => Ok(format!("Error: {}", e)),
+                }
+            });
+
             let term_exec = term.clone();
             let exec_fn = lua.create_function(move |_, cmd: String| {
                 let (job_id, status) = term_exec.execute(&cmd);
@@ -276,6 +241,7 @@ impl LuaSandboxRunner {
             });
 
             if let Ok(term_table) = lua.create_table() {
+                if let Ok(r) = run_fn { let _ = term_table.set("run", r); }
                 if let Ok(e) = exec_fn { let _ = term_table.set("exec", e); }
                 if let Ok(l) = logs_fn { let _ = term_table.set("logs", l); }
                 if let Ok(s) = status_fn { let _ = term_table.set("status", s); }

@@ -278,6 +278,29 @@ impl TerminalSessionBridge {
         }
     }
 
+    /// Execute a command synchronously with a safety timeout and return the trimmed output string.
+    pub fn run_sync(&self, command: &str, timeout_secs: u64) -> Result<String, String> {
+        let (job_id, status) = self.execute(command);
+        if let JobStatus::Blocked { reason } = status {
+            return Err(reason);
+        }
+        let report = self.wait_and_inspect(job_id, std::time::Duration::from_secs(timeout_secs))?;
+        if report.is_success {
+            Ok(report.stdout_lines.join("\n").trim().to_string())
+        } else {
+            let err = if !report.compiler_errors.is_empty() {
+                report.compiler_errors.join("\n")
+            } else if !report.stderr_lines.is_empty() {
+                report.stderr_lines.join("\n")
+            } else if !report.stdout_lines.is_empty() {
+                report.stdout_lines.join("\n")
+            } else {
+                format!("Command failed with status: {:?}", report.status)
+            };
+            Err(err.trim().to_string())
+        }
+    }
+
     fn append_log(&self, line: String) {
         let mut buf = self.log_buffer.lock();
         buf.push_back(line);

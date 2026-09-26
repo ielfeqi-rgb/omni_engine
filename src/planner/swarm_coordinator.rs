@@ -120,6 +120,7 @@ pub struct SwarmCoordinator {
     worker_model: Arc<NativeLlamaModel>,
     web_lens: Arc<WebLens>,
     vfs: Arc<MemoryVfs>,
+    terminal: Arc<crate::sandbox::TerminalSessionBridge>,
 }
 
 impl SwarmCoordinator {
@@ -134,12 +135,16 @@ impl SwarmCoordinator {
             NativeLlamaModel::load(&config.worker_model_path, 0)?
         };
 
+        let terminal = Arc::new(crate::sandbox::TerminalSessionBridge::new(1000));
+        terminal.arm_and_warmup();
+
         Ok(Self {
             config,
             orchestrator_model,
             worker_model,
             web_lens: Arc::new(WebLens::new()),
             vfs: Arc::new(MemoryVfs::new()),
+            terminal,
         })
     }
 
@@ -516,9 +521,7 @@ fn is_build_task(text: &str) -> bool {
                 Available Tools:\n\
                 - vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
                 - vfs.read(\"filename\"): Read file from VFS\n\
-                - sys.ram(): Get host RAM usage and availability\n\
-                - sys.ping(\"host\"): Check network latency (e.g. \"1.1.1.1\")\n\
-                - sys.info(): Get system hardware specs\n\
+                - terminal.run(\"command\"): Execute shell command on host (e.g. \"uname -a\", \"free -h\", \"ls\")\n\
                 - print(\"message\"): Log execution output\n\
                 - DONE: Signal that the objective is complete\n\n\
                 Rules:\n\
@@ -528,9 +531,9 @@ fn is_build_task(text: &str) -> bool {
                 4. Always output DONE after fulfilling the objective.\n\n\
                 Minimal System Example:\n\
                 ```lua\n\
-                local ram = sys.ram()\n\
-                print(\"System status check: \" .. ram)\n\
-                vfs.write(\"diagnostics.log\", [[System RAM: ]] .. ram)\n\
+                local info = terminal.run(\"uname -a\")\n\
+                print(\"Host kernel: \" .. info)\n\
+                vfs.write(\"system_info.txt\", info)\n\
                 ```\n\
                 DONE",
                 subgoal.description
@@ -673,7 +676,7 @@ fn is_build_task(text: &str) -> bool {
             match action {
                 SwarmAction::RunLua { script } => {
                     println!("     📜 {} ({} chars)", "EXECUTING LUA SCRIPT:".bright_cyan().bold(), script.len());
-                    let runner = crate::sandbox::LuaSandboxRunner::new(self.vfs.clone());
+                    let runner = crate::sandbox::LuaSandboxRunner::with_terminal(self.vfs.clone(), self.terminal.clone());
                     let res = runner.run_script(&script);
 
                     if res.success {
