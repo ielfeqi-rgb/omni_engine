@@ -77,7 +77,7 @@ int omni_llama_tokenize(
     if (!vocab) return -1;
 
     int len = (text_len >= 0) ? text_len : (int)strlen(text);
-    return llama_tokenize(vocab, text, len, out_tokens, max_tokens, add_bos, false);
+    return llama_tokenize(vocab, text, len, out_tokens, max_tokens, add_bos, true);
 }
 
 int omni_llama_token_to_piece(
@@ -90,7 +90,7 @@ int omni_llama_token_to_piece(
     const struct llama_vocab * vocab = llama_model_get_vocab(model);
     if (!vocab) return -1;
 
-    int written = llama_token_to_piece(vocab, token, buf, buf_size, 0, false);
+    int written = llama_token_to_piece(vocab, token, buf, buf_size, 0, true);
     if (written >= 0 && written < buf_size) {
         buf[written] = '\0';
     }

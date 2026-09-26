@@ -305,13 +305,16 @@ impl NativeLlamaContext {
             let next_tok = self.sample_greedy()?;
             let piece = self.model.token_to_piece(next_tok)?;
 
-            // Check EOS tokens across model architectures (<|im_end|>, <|endoftext|>, <|eot_id|>, </s>, etc.)
+            // Check EOS tokens across model architectures (<|im_end|>, <|im_start|>, <|endoftext|>, <|eot_id|>, </s>, etc.)
             if piece.is_empty()
                 || piece.contains("<|im_end|>")
+                || piece.contains("<|im_start|>")
                 || piece.contains("<|endoftext|>")
                 || piece.contains("<|eot_id|>")
                 || piece.contains("</s>")
                 || piece.contains("<end_of_turn>")
+                || piece.contains("### User")
+                || piece.contains("### System")
             {
                 break;
             }
@@ -415,6 +418,12 @@ impl NativeLlamaContext {
             );
         }
         Ok(ok)
+    }
+
+    /// Checkpoint Rollback (Tail Truncation):
+    /// Excises all KV cells from `checkpoint` to the current cursor, resetting cursor to `checkpoint`.
+    pub fn rollback_to(&mut self, checkpoint: usize) -> Result<bool, String> {
+        self.kv_cache_seq_rm(0, checkpoint as i32, -1)
     }
 
     /// SURGICAL MIDDLE EXCISION WITH AUTOMATIC POSITION SHIFT:
