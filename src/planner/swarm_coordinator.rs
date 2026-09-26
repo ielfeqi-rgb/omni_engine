@@ -516,24 +516,21 @@ fn is_build_task(text: &str) -> bool {
                 Available Tools:\n\
                 - vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
                 - vfs.read(\"filename\"): Read file from VFS\n\
+                - sys.ram(): Get host RAM usage and availability\n\
+                - sys.ping(\"host\"): Check network latency (e.g. \"1.1.1.1\")\n\
+                - sys.info(): Get system hardware specs\n\
                 - print(\"message\"): Log execution output\n\
                 - DONE: Signal that the objective is complete\n\n\
                 Rules:\n\
                 1. Output your Lua code inside a ```lua ... ``` block.\n\
-                2. Put complete, functional code inside [[ ... ]]. NEVER output placeholder comments like <!-- implementation --> or TODO.\n\
-                3. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Write standard code to files via vfs.write.\n\
-                4. Always output DONE after vfs.write.\n\n\
-                Minimal Example:\n\
+                2. Put complete, functional code or data inside [[ ... ]]. NEVER output placeholder comments like <!-- TODO -->.\n\
+                3. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Implement web applications, scripts, or system tasks directly via vfs.write.\n\
+                4. Always output DONE after fulfilling the objective.\n\n\
+                Minimal System Example:\n\
                 ```lua\n\
-                vfs.write(\"demo.html\", [[\n\
-                <!DOCTYPE html>\n\
-                <html>\n\
-                <body>\n\
-                  <h1>Demo</h1>\n\
-                  <button onclick=\"alert('ok')\">Click</button>\n\
-                </body>\n\
-                </html>\n\
-                ]])\n\
+                local ram = sys.ram()\n\
+                print(\"System status check: \" .. ram)\n\
+                vfs.write(\"diagnostics.log\", [[System RAM: ]] .. ram)\n\
                 ```\n\
                 DONE",
                 subgoal.description
