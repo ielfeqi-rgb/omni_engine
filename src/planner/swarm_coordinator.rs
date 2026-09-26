@@ -1,3 +1,4 @@
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -357,11 +358,10 @@ Environment Contract:\n\
 - Desktop GUI libraries (gui.*, window.*) DO NOT EXIST.\n\
 - The worker signals completion with DONE.\n\n\
 Your Task:\n\
-Analyze the worker's failure and give a concise, concrete corrective directive.\n\
-Direct the worker to use vfs.write(\"filename\", [[content]]) with valid Lua syntax.\n\n\
-Minimal Example:\n\
-\"The worker trapped due to an unclosed string or invalid library.\n\
-Corrective action: write the complete code into the target file using vfs.write('index.html', [[ ... ]]) and output DONE.\"";
+Analyze the worker's failure and give a concise, concrete corrective directive in plain words.\n\
+Direct the worker to write the complete implementation directly inside vfs.write with valid Lua syntax, avoiding any placeholder comments.\n\n\
+Guidance:\n\
+Explain what syntax error occurred and instruct the worker to supply the full, working implementation code.";
 
         let snippet = if failed_attempt.len() > 600 {
             &failed_attempt[..600]
@@ -418,21 +418,27 @@ fn is_build_task(text: &str) -> bool {
             format!(
                 "You are the System 2 Sovereign Architect.\n\
                 Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
-                Workers write standalone project files via Lua: vfs.write(\"filename\", [[content]]).\n\
-                Decompose the user's objective into 1 to {} concrete implementation sub-goals.\n\
+                Workers write standalone project files via Lua: vfs.write(\"filename\", [[content]]).\n\n\
+                Decision Authority on Workers:\n\
+                - You decide how many workers to deploy (from 1 up to {} max budget).\n\
+                - For single-file projects, scripts, or standalone pages: Deploy exactly 1 worker to generate the complete file in one pass.\n\
+                - Only decompose into multiple sub-goals if the objective genuinely requires separate, independent modules or files.\n\
+                - Provide each worker with an explicit, self-contained implementation directive.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
-                SUBGOAL: <concrete implementation task> | ENTITY: <target filename>\n\n\
-                Minimal Example:\n\
-                SUBGOAL: Write complete standalone HTML, CSS, and JS logic | ENTITY: index.html",
+                SUBGOAL: <explicit implementation directive> | ENTITY: <target filename>\n\n\
+                Example:\n\
+                SUBGOAL: Write the complete standalone file with all markup, styles, and logic | ENTITY: index.html",
                 self.config.max_subgoals
             )
         } else {
             format!(
                 "You are the System 2 Sovereign Architect.\n\
-                Decompose the user's research goal into 1 to {} distinct search sub-goals.\n\
+                Decision Authority on Workers:\n\
+                - You decide how many workers to deploy (from 1 up to {} max budget).\n\
+                - For straightforward topics, 1 worker is sufficient.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
                 SUBGOAL: <precise search objective> | ENTITY: <primary keyword>\n\n\
-                Minimal Example:\n\
+                Example:\n\
                 SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors",
                 self.config.max_subgoals
             )
@@ -514,23 +520,23 @@ fn is_build_task(text: &str) -> bool {
                 - DONE: Signal that the objective is complete\n\n\
                 Rules:\n\
                 1. Output your Lua code inside a ```lua ... ``` block.\n\
-                2. Put complete, functional code inside [[ ... ]] multi-line string.\n\
+                2. Put complete, functional code inside [[ ... ]]. NEVER output placeholder comments like <!-- implementation --> or TODO.\n\
                 3. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Write standard code to files via vfs.write.\n\
                 4. Always output DONE after vfs.write.\n\n\
                 Minimal Example:\n\
                 ```lua\n\
-                vfs.write(\"{}\", [[\n\
+                vfs.write(\"demo.html\", [[\n\
                 <!DOCTYPE html>\n\
                 <html>\n\
                 <body>\n\
-                  <!-- implementation -->\n\
+                  <h1>Demo</h1>\n\
+                  <button onclick=\"alert('ok')\">Click</button>\n\
                 </body>\n\
                 </html>\n\
                 ]])\n\
                 ```\n\
                 DONE",
-                subgoal.description,
-                subgoal.target_entity
+                subgoal.description
             )
         } else {
             format!(
@@ -554,9 +560,9 @@ fn is_build_task(text: &str) -> bool {
         };
 
         let user_msg = if let Some(ref guide) = subgoal.guidance {
-            format!("Execute step 1 for objective: {}\nThinker Directive: {}", subgoal.description, guide)
+            format!("Directive: {}\nImplement the complete, functional file '{}' for: {}\nWrite valid Lua code and output DONE.", guide, subgoal.target_entity, subgoal.description)
         } else {
-            format!("Execute step 1 for objective: {}", subgoal.description)
+            format!("Implement the complete, functional file '{}' for: {}\nWrite valid Lua code and output DONE.", subgoal.target_entity, subgoal.description)
         };
 
         let initial_prompt = Self::format_prompt(&self.worker_model, &system_msg, &user_msg);
@@ -571,13 +577,16 @@ fn is_build_task(text: &str) -> bool {
         let mut last_search_results: Vec<SearchResult> = Vec::new();
 
         while step_id <= self.config.max_steps_per_worker {
+            let step_start = std::time::Instant::now();
+            let is_term = std::io::stdout().is_terminal();
+
             // Autoregressively sample tokens until closing code fence, newline, or EOS
             let mut generated_text = String::new();
             let mut generated_tokens = Vec::new();
             let mut in_code_block = false;
             let max_gen_tokens = if is_build { 1536 } else { 128 };
 
-            for _ in 0..max_gen_tokens {
+            for tok_idx in 0..max_gen_tokens {
                 let tok = ctx.sample_greedy()?;
                 let piece = self.worker_model.token_to_piece(tok)?;
 
@@ -594,6 +603,24 @@ fn is_build_task(text: &str) -> bool {
                 generated_tokens.push(tok);
                 generated_text.push_str(&piece);
                 ctx.eval_tokens(&[tok], 0)?;
+
+                if is_term {
+                    let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+                    let frame = spinner_frames[tok_idx % spinner_frames.len()];
+                    let elapsed = step_start.elapsed().as_secs_f64();
+                    let speed = if elapsed > 0.1 { (tok_idx + 1) as f64 / elapsed } else { 0.0 };
+                    print!(
+                        "\r     {} {} Worker Step #{}: Token #{}/{} ({:.1} t/s) │ {:.0}s   ",
+                        frame.to_string().bright_cyan().bold(),
+                        "●".bright_green(),
+                        step_id,
+                        tok_idx + 1,
+                        max_gen_tokens,
+                        speed,
+                        elapsed
+                    );
+                    let _ = std::io::stdout().flush();
+                }
 
                 if generated_text.contains("```") {
                     in_code_block = true;
@@ -612,6 +639,11 @@ fn is_build_task(text: &str) -> bool {
                         break;
                     }
                 }
+            }
+
+            if is_term {
+                print!("\r\x1B[2K");
+                let _ = std::io::stdout().flush();
             }
 
             let action = Self::parse_action(&generated_text);
