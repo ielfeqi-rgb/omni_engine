@@ -89,11 +89,68 @@ impl LuaSandboxRunner {
             Ok(content)
         });
 
+        let vfs_delete = self.vfs.clone();
+        let delete_fn = lua.create_function(move |_, path: String| {
+            let removed = vfs_delete.delete_file(PathBuf::from(path));
+            Ok(removed)
+        });
+
+        let vfs_exists = self.vfs.clone();
+        let exists_fn = lua.create_function(move |_, path: String| {
+            let ex = vfs_exists.exists(PathBuf::from(path));
+            Ok(ex)
+        });
+
+        let vfs_size = self.vfs.clone();
+        let size_fn = lua.create_function(move |_, path: String| {
+            let sz = vfs_size.file_size(PathBuf::from(path));
+            Ok(sz)
+        });
+
+        let vfs_list = self.vfs.clone();
+        let list_fn = lua.create_function(move |_, _dir: Option<String>| {
+            let files = vfs_list.list_files();
+            let file_strs: Vec<String> = files.iter().map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string()).collect();
+            Ok(file_strs)
+        });
+
+        let vfs_patch = self.vfs.clone();
+        let patch_fn = lua.create_function(move |_, (path, target, replacement): (String, String, String)| {
+            match vfs_patch.patch_file(PathBuf::from(path), &target, &replacement) {
+                Ok(_) => Ok((true, "Patch applied successfully".to_string())),
+                Err(e) => Ok((false, e)),
+            }
+        });
+
+        let vfs_diff = self.vfs.clone();
+        let diff_fn = lua.create_function(move |_, path: String| {
+            let d = vfs_diff.diff_file(PathBuf::from(path)).unwrap_or_default();
+            Ok(d)
+        });
+
         if let Ok(w) = write_fn {
             let _ = vfs_table.set("write", w);
         }
         if let Ok(r) = read_fn {
             let _ = vfs_table.set("read", r);
+        }
+        if let Ok(d) = delete_fn {
+            let _ = vfs_table.set("delete", d);
+        }
+        if let Ok(e) = exists_fn {
+            let _ = vfs_table.set("exists", e);
+        }
+        if let Ok(s) = size_fn {
+            let _ = vfs_table.set("size", s);
+        }
+        if let Ok(l) = list_fn {
+            let _ = vfs_table.set("list", l);
+        }
+        if let Ok(p) = patch_fn {
+            let _ = vfs_table.set("patch", p);
+        }
+        if let Ok(df) = diff_fn {
+            let _ = vfs_table.set("diff", df);
         }
         let _ = lua.globals().set("vfs", vfs_table);
 
@@ -253,6 +310,32 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(150));
         let logs = terminal.get_logs(10);
         assert!(logs.iter().any(|l| l.contains("LUA_TERMINAL_OUTPUT")), "Terminal must capture output from Lua-initiated job");
+    }
+
+    #[test]
+    fn test_lua_vfs_full_operations() {
+        let vfs = Arc::new(MemoryVfs::new());
+        let runner = LuaSandboxRunner::new(vfs.clone());
+
+        let script = r#"
+            vfs.write("game.py", "x = 1\ny = 2\n")
+            local sz = vfs.size("game.py")
+            local ex = vfs.exists("game.py")
+            local ok, msg = vfs.patch("game.py", "x = 1", "x = 99")
+            local diff_out = vfs.diff("game.py")
+            local list_out = vfs.list()
+            local del_ok = vfs.delete("game.py")
+            local ex_after = vfs.exists("game.py")
+
+            print("EX:" .. tostring(ex) .. " SZ:" .. tostring(sz) .. " PATCH:" .. tostring(ok) .. " DEL:" .. tostring(del_ok) .. " AFTER:" .. tostring(ex_after))
+        "#;
+
+        let res = runner.run_script(script);
+        assert!(res.success, "Lua script must execute without errors: {:?}", res.error);
+        assert!(res.output_log.contains("EX:true"));
+        assert!(res.output_log.contains("PATCH:true"));
+        assert!(res.output_log.contains("DEL:true"));
+        assert!(res.output_log.contains("AFTER:false"));
     }
 }
 

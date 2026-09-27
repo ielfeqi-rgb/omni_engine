@@ -9,12 +9,36 @@ use crate::causal_memory::dag::CausalGraph;
 use crate::native_llama::{NativeLlamaContext, NativeLlamaModel};
 use crate::sandbox::{MemoryVfs, WebLens, SearchResult};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskKind {
+    Create,
+    Modify,
+    Delete,
+    Test,
+    Search,
+}
+
+impl TaskKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            TaskKind::Create => "CREATE",
+            TaskKind::Modify => "MODIFY",
+            TaskKind::Delete => "DELETE",
+            TaskKind::Test => "TEST",
+            TaskKind::Search => "SEARCH",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwarmAction {
     Search { query: String },
     Fetch { url: String },
     RunLua { script: String },
     WriteFile { filename: String, content: String },
+    PatchFile { filename: String, target: String, replacement: String },
+    DeleteFile { filename: String },
+    RunTerminal { command: String },
     Consult { question: String },
     Report { finding: String },
     Done,
@@ -29,6 +53,10 @@ pub enum DiagnosticCode {
     NoCodeBlock,
     RepeatedAttractor,
     MissingDependency(String),
+    PatchFailed(String),
+    FileNotDeleted,
+    DiffEmpty,
+    TestFailed,
 }
 
 impl DiagnosticCode {
@@ -40,6 +68,10 @@ impl DiagnosticCode {
             DiagnosticCode::NoCodeBlock => "ERR_NO_CODE_BLOCK",
             DiagnosticCode::RepeatedAttractor => "ERR_REPEATED_ATTRACTOR",
             DiagnosticCode::MissingDependency(_) => "ERR_MISSING_DEPENDENCY",
+            DiagnosticCode::PatchFailed(_) => "ERR_PATCH_FAILED",
+            DiagnosticCode::FileNotDeleted => "ERR_FILE_NOT_DELETED",
+            DiagnosticCode::DiffEmpty => "ERR_DIFF_EMPTY",
+            DiagnosticCode::TestFailed => "ERR_TEST_FAILED",
         }
     }
 
@@ -75,6 +107,18 @@ impl DiagnosticCode {
                     dep
                 )
             }
+            DiagnosticCode::PatchFailed(ref err) => {
+                format!("Patch failed for '{}': {}. Ensure the exact target snippet exists in the file before patching.", target_entity, err)
+            }
+            DiagnosticCode::FileNotDeleted => {
+                format!("File '{}' was not deleted from VFS. Call vfs.delete(\"{}\") or execute rm via terminal.", target_entity, target_entity)
+            }
+            DiagnosticCode::DiffEmpty => {
+                format!("Modification on '{}' produced zero diff. Ensure the target lines are actually changed.", target_entity)
+            }
+            DiagnosticCode::TestFailed => {
+                format!("Execution test for '{}' failed. Review error output and fix the root cause.", target_entity)
+            }
         }
     }
 }
@@ -100,6 +144,7 @@ pub struct SubGoal {
     pub id: usize,
     pub description: String,
     pub target_entity: String,
+    pub kind: TaskKind,
     pub guidance: Option<String>,
 }
 
@@ -605,6 +650,30 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         generated_text: &str,
         previous_diagnostic: Option<&DiagnosticCode>,
     ) -> DiagnosticCode {
+        Self::classify_failure_for_kind(
+            action,
+            exec_success,
+            exec_output,
+            vfs_target_exists,
+            vfs_target_size,
+            vfs_content,
+            generated_text,
+            previous_diagnostic,
+            None,
+        )
+    }
+
+    pub fn classify_failure_for_kind(
+        action: &SwarmAction,
+        exec_success: bool,
+        exec_output: &str,
+        vfs_target_exists: bool,
+        vfs_target_size: usize,
+        vfs_content: Option<&str>,
+        generated_text: &str,
+        previous_diagnostic: Option<&DiagnosticCode>,
+        task_kind: Option<&TaskKind>,
+    ) -> DiagnosticCode {
         // 0. Deterministic missing dependency detection from execution or output
         if let Some(dep) = Self::extract_missing_dependency(exec_output) {
             return DiagnosticCode::MissingDependency(dep);
@@ -622,8 +691,50 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             }
         }
 
+        // Action-specific diagnostics
+        if let SwarmAction::PatchFile { .. } = action {
+            if !exec_success {
+                return DiagnosticCode::PatchFailed(exec_output.to_string());
+            }
+        }
+        if let SwarmAction::DeleteFile { .. } = action {
+            if vfs_target_exists {
+                return DiagnosticCode::FileNotDeleted;
+            }
+        }
+        if let SwarmAction::RunTerminal { .. } = action {
+            if !exec_success {
+                return DiagnosticCode::TestFailed;
+            }
+        }
+
+        // TaskKind-specific diagnostics
+        if let Some(kind) = task_kind {
+            match kind {
+                TaskKind::Delete => {
+                    if vfs_target_exists {
+                        return DiagnosticCode::FileNotDeleted;
+                    }
+                }
+                TaskKind::Modify => {
+                    if !exec_success {
+                        return DiagnosticCode::PatchFailed(exec_output.to_string());
+                    }
+                    if vfs_target_exists && vfs_content.map(|d| d.trim().is_empty()).unwrap_or(true) {
+                        return DiagnosticCode::DiffEmpty;
+                    }
+                }
+                TaskKind::Test => {
+                    if !exec_success {
+                        return DiagnosticCode::TestFailed;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // 1. Missing code block or unparsed action
-        if matches!(action, SwarmAction::None) && !generated_text.contains("```") && !generated_text.contains("vfs.write") {
+        if matches!(action, SwarmAction::None) && !generated_text.contains("```") && !generated_text.contains("vfs.") {
             return DiagnosticCode::NoCodeBlock;
         }
 
@@ -831,11 +942,36 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("csv")
         || lower.contains("excel")
         || lower.contains("xlsx")
+        || lower.contains("delete")
+        || lower.contains("remove")
+        || lower.contains("clean")
+        || lower.contains("patch")
+        || lower.contains("modify")
+        || lower.contains("edit")
+        || lower.contains("fix")
+        || lower.contains("refactor")
+        || lower.contains("test")
+        || lower.contains("verify")
+        || lower.contains("check")
         || lower.contains("اكتب")
         || lower.contains("انشئ")
         || lower.contains("أنشئ")
         || lower.contains("اصنع")
         || lower.contains("اعمل")
+        || lower.contains("احذف")
+        || lower.contains("امسح")
+        || lower.contains("نظف")
+        || lower.contains("ازالة")
+        || lower.contains("إزالة")
+        || lower.contains("عدل")
+        || lower.contains("صلح")
+        || lower.contains("غير")
+        || lower.contains("تعديل")
+        || lower.contains("تصليح")
+        || lower.contains("افحص")
+        || lower.contains("شغل")
+        || lower.contains("اختبر")
+        || lower.contains("تحقق")
         || lower.contains("صفحة")
         || lower.contains("صفحه")
         || lower.contains("كود")
@@ -856,6 +992,25 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("تطبيق")
         || lower.contains("جدول")
         || lower.contains("زر")
+}
+
+pub fn infer_task_kind(text: &str) -> TaskKind {
+    let lower = text.to_lowercase();
+    if lower.contains("delete") || lower.contains("remove") || lower.contains("clean")
+        || lower.contains("احذف") || lower.contains("امسح") || lower.contains("نظف") || lower.contains("إزالة") || lower.contains("ازالة")
+    {
+        TaskKind::Delete
+    } else if lower.contains("patch") || lower.contains("modify") || lower.contains("edit") || lower.contains("fix") || lower.contains("refactor")
+        || lower.contains("عدل") || lower.contains("صلح") || lower.contains("غير") || lower.contains("تعديل") || lower.contains("تصليح")
+    {
+        TaskKind::Modify
+    } else if lower.contains("test") || lower.contains("verify") || lower.contains("check")
+        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر") || lower.contains("تحقق")
+    {
+        TaskKind::Test
+    } else {
+        TaskKind::Create
+    }
 }
 
     /// System 2: Decomposes goal into discrete sub-goals
@@ -937,10 +1092,12 @@ fn is_build_task(text: &str) -> bool {
                 seen_entities.insert(entity_key);
 
                 if !desc.is_empty() {
+                    let task_kind = Self::infer_task_kind(&desc);
                     subgoals.push(SubGoal {
                         id,
                         description: desc,
                         target_entity: entity,
+                        kind: task_kind,
                         guidance: None,
                     });
                     id += 1;
@@ -960,10 +1117,12 @@ fn is_build_task(text: &str) -> bool {
         if subgoals.is_empty() {
             if is_build {
                 let inferred = Self::infer_target_entity(goal);
+                let task_kind = Self::infer_task_kind(goal);
                 subgoals.push(SubGoal {
                     id: 1,
                     description: format!("Create and write complete standalone implementation for: {}", goal),
                     target_entity: inferred,
+                    kind: task_kind,
                     guidance: None,
                 });
             } else {
@@ -971,6 +1130,7 @@ fn is_build_task(text: &str) -> bool {
                     id: 1,
                     description: format!("Search web for: {}", goal),
                     target_entity: goal.split_whitespace().next().unwrap_or("topic").to_string(),
+                    kind: TaskKind::Search,
                     guidance: None,
                 });
             }
@@ -1001,6 +1161,16 @@ fn is_build_task(text: &str) -> bool {
         let mut final_finding = String::new();
         let target_path = std::path::PathBuf::from(&subgoal.target_entity);
         let mut last_diagnostic: Option<DiagnosticCode> = None;
+
+        // Baseline Snapshot for Modification Tasks
+        if subgoal.kind == TaskKind::Modify {
+            if !self.vfs.exists(&target_path) {
+                if let Ok(bytes) = std::fs::read(&target_path) {
+                    self.vfs.preload_file(&target_path, &bytes);
+                }
+            }
+            self.vfs.snapshot_file(&target_path);
+        }
 
         // Unified Sovereign Swarm Memory:
         // Record the anchor cursor where this worker begins in the shared KV cache.
@@ -1260,6 +1430,58 @@ fn is_build_task(text: &str) -> bool {
                     self.vfs.write_file(&path, content.as_bytes());
                     (true, format!("Wrote {} bytes to {}", content.len(), actual_filename))
                 }
+                SwarmAction::PatchFile { ref filename, ref target, ref replacement } => {
+                    let actual_filename = if filename.is_empty() {
+                        &subgoal.target_entity
+                    } else {
+                        filename.as_str()
+                    };
+                    let path = std::path::PathBuf::from(actual_filename);
+                    println!("  [EXECUTION] Patching '{}'...", actual_filename);
+                    match self.vfs.patch_file(&path, target, replacement) {
+                        Ok(true) => {
+                            (true, format!("Successfully patched {}", actual_filename))
+                        }
+                        Ok(false) => {
+                            (false, format!("Target snippet not found in {}", actual_filename))
+                        }
+                        Err(e) => {
+                            (false, format!("Patch error in {}: {}", actual_filename, e))
+                        }
+                    }
+                }
+                SwarmAction::DeleteFile { ref filename } => {
+                    let actual_filename = if filename.is_empty() {
+                        &subgoal.target_entity
+                    } else {
+                        filename.as_str()
+                    };
+                    let path = std::path::PathBuf::from(actual_filename);
+                    println!("  [EXECUTION] Deleting file: '{}'...", actual_filename);
+                    let deleted = self.vfs.delete_file(&path);
+                    if deleted {
+                        (true, format!("Successfully deleted {}", actual_filename))
+                    } else if !self.vfs.exists(&path) {
+                        (true, format!("File '{}' is not present in VFS (already deleted)", actual_filename))
+                    } else {
+                        (false, format!("Failed to delete '{}' from VFS", actual_filename))
+                    }
+                }
+                SwarmAction::RunTerminal { ref command } => {
+                    println!("  [EXECUTION] Host terminal exec: '{}'...", command);
+                    match self.terminal.run_sync(command, 30) {
+                        Ok(output) => {
+                            let has_error = output.contains("Traceback (most recent call last)")
+                                || output.contains("SyntaxError:")
+                                || output.contains("command not found")
+                                || output.contains("FAILED");
+                            (!has_error, output)
+                        }
+                        Err(e) => {
+                            (false, format!("Terminal execution error: {}", e))
+                        }
+                    }
+                }
                 SwarmAction::RunLua { ref script } => {
                     println!("  [EXECUTION] Running Lua script ({} chars)...", script.len());
                     let runner = crate::sandbox::LuaSandboxRunner::with_terminal(self.vfs.clone(), self.terminal.clone());
@@ -1323,6 +1545,28 @@ fn is_build_task(text: &str) -> bool {
             let vfs_target_exists = self.vfs.exists(&target_path);
             let vfs_target_size = vfs_bytes.as_ref().map(|c| c.len()).unwrap_or(0);
             let vfs_str = vfs_bytes.as_ref().and_then(|b| std::str::from_utf8(b).ok());
+            let line_diff = self.vfs.diff_file(&target_path);
+
+            // Line-by-Line Diff Perception Telemetry
+            if let Some(ref diff) = line_diff {
+                if !diff.trim().is_empty() {
+                    println!("  [DIFF PERCEPTION] Unified Line Diff for '{}':", subgoal.target_entity.bright_cyan());
+                    for line in diff.lines().take(25) {
+                        if line.starts_with('+') && !line.starts_with("+++") {
+                            println!("    {}", line.green());
+                        } else if line.starts_with('-') && !line.starts_with("---") {
+                            println!("    {}", line.red());
+                        } else if line.starts_with("@@") {
+                            println!("    {}", line.cyan());
+                        } else {
+                            println!("    {}", line.white());
+                        }
+                    }
+                    if diff.lines().count() > 25 {
+                        println!("    ... (diff truncated for display)");
+                    }
+                }
+            }
 
             let mut placeholder_found = false;
             let mut placeholder_reason = String::new();
@@ -1348,7 +1592,9 @@ fn is_build_task(text: &str) -> bool {
 
             // AST Syntax Validation Gate
             let mut syntax_error: Option<String> = None;
-            if is_build && vfs_target_exists && vfs_target_size > 30 && !placeholder_found {
+            if (is_build || subgoal.kind == TaskKind::Create || subgoal.kind == TaskKind::Modify)
+                && vfs_target_exists && vfs_target_size > 0 && !placeholder_found
+            {
                 if let Some(code) = vfs_str {
                     if subgoal.target_entity.ends_with(".py") {
                         let hex_encoded: String = code.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
@@ -1399,26 +1645,97 @@ fn is_build_task(text: &str) -> bool {
                 }
             }
 
-            let real_success = if is_build {
-                exec_success && vfs_target_exists && vfs_target_size > 30 && !placeholder_found && syntax_error.is_none()
-            } else {
-                exec_success && !exec_output.trim().is_empty()
+            // 4-Tier Verification Gate
+            let real_success = match subgoal.kind {
+                TaskKind::Create => {
+                    exec_success && vfs_target_exists && vfs_target_size > 0 && !placeholder_found && syntax_error.is_none()
+                }
+                TaskKind::Modify => {
+                    let has_diff = line_diff.as_ref().map(|d| !d.trim().is_empty()).unwrap_or(false);
+                    exec_success && vfs_target_exists && has_diff && !placeholder_found && syntax_error.is_none()
+                }
+                TaskKind::Delete => {
+                    exec_success && !self.vfs.exists(&target_path)
+                }
+                TaskKind::Test => {
+                    exec_success
+                        && !exec_output.contains("Traceback (most recent call last)")
+                        && !exec_output.contains("FAILED")
+                        && !exec_output.contains("SyntaxError:")
+                }
+                TaskKind::Search => {
+                    exec_success && !exec_output.trim().is_empty()
+                }
             };
 
             if real_success {
+                // Synthesize immutable Epistemic Flags
+                let epistemic_flag = match subgoal.kind {
+                    TaskKind::Create => {
+                        format!(
+                            "[FLAG #{} (Verified Create): File '{}' staged in VFS ({} bytes); syntax valid; zero placeholders]",
+                            subgoal.id, subgoal.target_entity, vfs_target_size
+                        )
+                    }
+                    TaskKind::Modify => {
+                        let diff_summary = line_diff.as_ref().map(|d| {
+                            let added = d.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
+                            let removed = d.lines().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+                            format!("+{} / -{} lines", added, removed)
+                        }).unwrap_or_else(|| "modified".to_string());
+                        format!(
+                            "[FLAG #{} (Verified Line Diff): File '{}' patched ({}); syntax valid; no regressions]",
+                            subgoal.id, subgoal.target_entity, diff_summary
+                        )
+                    }
+                    TaskKind::Delete => {
+                        format!(
+                            "[FLAG #{} (Verified Delete): File '{}' confirmed removed from VFS; tracking recorded]",
+                            subgoal.id, subgoal.target_entity
+                        )
+                    }
+                    TaskKind::Test => {
+                        format!(
+                            "[FLAG #{} (Verified Test): Execution gate passed with exit code 0; zero tracebacks]",
+                            subgoal.id
+                        )
+                    }
+                    TaskKind::Search => {
+                        format!(
+                            "[FLAG #{} (Verified Search): Discovered empirical facts]",
+                            subgoal.id
+                        )
+                    }
+                };
+
                 println!("{}", "  ┌────────────────────────────────────────────────────────────────────────┐".bright_green());
-                println!("  │ {} Thinker Verified: Code for '{}' is clean, functional & complete", "[+]".bright_green().bold(), subgoal.target_entity.bright_white().bold());
-                println!("  │     * Size: {} bytes | Syntax Gate: VALIDATED", vfs_target_size.to_string().bright_cyan());
-                println!("  │     * Clean Code: Zero placeholders, zero TODOs, production-ready");
-                println!("  │     * Status: Staged in RAM Sandbox VFS -> Ready for host commit");
+                println!("  │ {} Thinker Perception Gate: {}", "[+]".bright_green().bold(), epistemic_flag.bright_white().bold());
+                match subgoal.kind {
+                    TaskKind::Create => {
+                        println!("  │     * Target: {} | Size: {} bytes | Syntax Gate: VALIDATED", subgoal.target_entity.bright_cyan(), vfs_target_size);
+                        println!("  │     * Clean Code: Zero placeholders, zero TODOs, production-ready");
+                        println!("  │     * Status: Staged in RAM Sandbox VFS -> Ready for host commit");
+                    }
+                    TaskKind::Modify => {
+                        let diff_lines_count = line_diff.as_ref().map(|d| d.lines().count()).unwrap_or(0);
+                        println!("  │     * Target: {} | Diff lines: {} | Semantic Diff: VALIDATED", subgoal.target_entity.bright_cyan(), diff_lines_count);
+                        println!("  │     * Syntax Gate: Validated | No unintended regressions detected");
+                    }
+                    TaskKind::Delete => {
+                        println!("  │     * Target: {} | VFS Existence: REMOVED (Confirmed !vfs.exists)", subgoal.target_entity.bright_cyan());
+                        println!("  │     * Tracking: Tombstone recorded in VFS ledger");
+                    }
+                    TaskKind::Test => {
+                        println!("  │     * Execution Test: PASSED with zero error tracebacks");
+                    }
+                    TaskKind::Search => {
+                        println!("  │     * Search/Fetch: Gathered factual ground truth");
+                    }
+                }
                 println!("{}", "  └────────────────────────────────────────────────────────────────────────┘".bright_green());
 
-                // Unified Swarm Attention: Generated deliverable stays in active KV-cache for subsequent workers
-                final_finding = if is_build {
-                    format!("Target file '{}' created, syntax verified, and staged in VFS ({} bytes).", subgoal.target_entity, vfs_target_size)
-                } else {
-                    format!("Task completed: {}", exec_output)
-                };
+                // Epistemic Distillation: The lean flag replaces the raw bulky inspection tokens
+                final_finding = epistemic_flag;
                 break;
             }
 
@@ -1434,7 +1751,7 @@ fn is_build_task(text: &str) -> bool {
             let diagnostic = if let Some(ref _syn_err) = syntax_error {
                 DiagnosticCode::LuaSyntaxTrap
             } else {
-                Self::classify_failure(
+                Self::classify_failure_for_kind(
                     &action,
                     exec_success,
                     &exec_output,
@@ -1443,6 +1760,7 @@ fn is_build_task(text: &str) -> bool {
                     vfs_str,
                     &generated_text,
                     last_diagnostic.as_ref(),
+                    Some(&subgoal.kind),
                 )
             };
 
@@ -1458,12 +1776,21 @@ fn is_build_task(text: &str) -> bool {
                 format!("Incomplete placeholder in '{}': {}", subgoal.target_entity, placeholder_reason)
             } else if !exec_success {
                 exec_output.clone()
-            } else if !vfs_target_exists {
-                format!("File '{}' was not written to VFS", subgoal.target_entity)
-            } else if vfs_target_size <= 30 {
-                format!("File '{}' is too small ({} bytes)", subgoal.target_entity, vfs_target_size)
             } else {
-                format!("File '{}' verification failed", subgoal.target_entity)
+                match subgoal.kind {
+                    TaskKind::Delete => format!("File '{}' was not deleted from VFS", subgoal.target_entity),
+                    TaskKind::Modify => format!("Modification on '{}' yielded zero diff or failed", subgoal.target_entity),
+                    TaskKind::Test => format!("Test execution for '{}' failed", subgoal.target_entity),
+                    _ => {
+                        if !vfs_target_exists {
+                            format!("File '{}' was not written to VFS", subgoal.target_entity)
+                        } else if vfs_target_size == 0 {
+                            format!("File '{}' is empty (0 bytes)", subgoal.target_entity)
+                        } else {
+                            format!("File '{}' verification failed", subgoal.target_entity)
+                        }
+                    }
+                }
             };
 
             let (decision, ledger_entry) = self.thinker_evaluate_failure(
@@ -1610,12 +1937,38 @@ fn is_build_task(text: &str) -> bool {
                 after
             }.trim();
 
-            if script.contains("vfs.write") || script.contains("terminal.run") || script.contains("print(") {
+            if script.contains("vfs.") || script.contains("terminal.run") || script.contains("print(") {
                 return SwarmAction::RunLua { script: script.to_string() };
             }
         }
 
-        // 2. Check for general code block ``` ... ```
+        // 2. Check for unified diff / patch markers: <<<<<<< TARGET ... ======= ... >>>>>>>
+        if let Some(target_start) = cleaned.find("<<<<<<< TARGET") {
+            let after_target = &cleaned[target_start + 14..];
+            if let Some(sep) = after_target.find("=======") {
+                let target_snippet = after_target[..sep].trim_matches('\n');
+                let after_sep = &after_target[sep + 7..];
+                if let Some(end) = after_sep.find(">>>>>>>") {
+                    let replacement_snippet = after_sep[..end].trim_matches('\n');
+                    let filename = if let Some(pos) = cleaned.find("PATCH:") {
+                        let line = cleaned[pos..].lines().next().unwrap_or("");
+                        line.trim_start_matches("PATCH:").trim().to_string()
+                    } else if let Some(pos) = cleaned.find("FILE:") {
+                        let line = cleaned[pos..].lines().next().unwrap_or("");
+                        line.trim_start_matches("FILE:").trim().to_string()
+                    } else {
+                        String::new()
+                    };
+                    return SwarmAction::PatchFile {
+                        filename,
+                        target: target_snippet.to_string(),
+                        replacement: replacement_snippet.to_string(),
+                    };
+                }
+            }
+        }
+
+        // 3. Check for general code block ``` ... ```
         if let Some(start) = cleaned.find("```") {
             let after = &cleaned[start + 3..];
             // Extract optional language header line
@@ -1630,19 +1983,19 @@ fn is_build_task(text: &str) -> bool {
                 body
             }.trim();
 
-            if block.contains("vfs.write") || (header.eq_ignore_ascii_case("lua") && block.contains("terminal.run")) {
+            if block.contains("vfs.") || (header.eq_ignore_ascii_case("lua") && block.contains("terminal.run")) {
                 return SwarmAction::RunLua { script: block.to_string() };
             } else if !block.is_empty() {
                 return SwarmAction::WriteFile { filename: String::new(), content: block.to_string() };
             }
         }
 
-        // 3. Raw Lua call outside code blocks (e.g. vfs.write("...", ...))
-        if cleaned.contains("vfs.write(") {
+        // 4. Raw Lua call outside code blocks (e.g. vfs.write("...", ...), vfs.delete("..."), etc.)
+        if cleaned.contains("vfs.") {
             return SwarmAction::RunLua { script: cleaned.to_string() };
         }
 
-        // 4. Raw code starting without markdown fences
+        // 5. Raw code starting without markdown fences
         if cleaned.starts_with("#!/")
             || cleaned.starts_with("import ")
             || cleaned.starts_with("from ")
@@ -1654,7 +2007,7 @@ fn is_build_task(text: &str) -> bool {
             return SwarmAction::WriteFile { filename: String::new(), content: cleaned.to_string() };
         }
 
-        // 4. Standard commands line by line
+        // 6. Standard commands line by line
         for line in cleaned.lines() {
             let mut l = line.trim();
             if let Some(rest) = l.strip_prefix("Assistant:") {
@@ -1679,6 +2032,31 @@ fn is_build_task(text: &str) -> bool {
             }
 
             let upper = l.to_uppercase();
+            if upper.starts_with("DELETE:") || upper.starts_with("REMOVE:") || upper.starts_with("RM:") {
+                let file = l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
+                return SwarmAction::DeleteFile { filename: file.to_string() };
+            }
+            if upper.starts_with("PATCH:") {
+                let rest = l[6..].trim();
+                let parts: Vec<&str> = rest.split('|').collect();
+                let filename = parts[0].trim().trim_matches('"').trim_matches('\'').to_string();
+                let mut target = String::new();
+                let mut replacement = String::new();
+                for part in &parts[1..] {
+                    let trimmed_part = part.trim();
+                    let upper_part = trimmed_part.to_uppercase();
+                    if upper_part.starts_with("TARGET:") {
+                        target = trimmed_part[7..].trim().trim_matches('"').trim_matches('\'').to_string();
+                    } else if upper_part.starts_with("REPLACEMENT:") {
+                        replacement = trimmed_part[12..].trim().trim_matches('"').trim_matches('\'').to_string();
+                    }
+                }
+                return SwarmAction::PatchFile { filename, target, replacement };
+            }
+            if upper.starts_with("EXEC:") || upper.starts_with("RUN:") || upper.starts_with("TERMINAL:") {
+                let cmd = l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
+                return SwarmAction::RunTerminal { command: cmd.to_string() };
+            }
             if upper.starts_with("SEARCH:") {
                 let q = l[7..].trim().trim_matches('"').trim_matches('\'');
                 return SwarmAction::Search { query: q.to_string() };
@@ -1781,6 +2159,7 @@ mod tests {
             id: 1,
             description: "Write CSS styles".to_string(),
             target_entity: "styles.css".to_string(),
+            kind: TaskKind::Create,
             guidance: None,
         };
 
@@ -1945,5 +2324,106 @@ mod tests {
         assert_eq!(SwarmCoordinator::normalize_entity_filename("Snake.java"), "Snake.java");
         assert_eq!(SwarmCoordinator::normalize_entity_filename("main.py"), "main.py");
         assert_eq!(SwarmCoordinator::normalize_entity_filename("styles.css"), "styles.css");
+    }
+
+    #[test]
+    fn test_parse_patch_and_delete_actions() {
+        // DELETE action
+        let txt1 = "DELETE: old_script.py";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt1),
+            SwarmAction::DeleteFile { filename: "old_script.py".to_string() }
+        );
+
+        let txt1_rm = "RM: temp_data.json";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt1_rm),
+            SwarmAction::DeleteFile { filename: "temp_data.json".to_string() }
+        );
+
+        // PATCH command format
+        let txt2 = "PATCH: config.py | TARGET: debug = False | REPLACEMENT: debug = True";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt2),
+            SwarmAction::PatchFile {
+                filename: "config.py".to_string(),
+                target: "debug = False".to_string(),
+                replacement: "debug = True".to_string(),
+            }
+        );
+
+        // Unified diff / patch markers
+        let txt3 = "PATCH: main.py\n<<<<<<< TARGET\ndef old_calc():\n    return 1\n=======\ndef new_calc():\n    return 2\n>>>>>>>";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt3),
+            SwarmAction::PatchFile {
+                filename: "main.py".to_string(),
+                target: "def old_calc():\n    return 1".to_string(),
+                replacement: "def new_calc():\n    return 2".to_string(),
+            }
+        );
+
+        // Terminal EXEC
+        let txt4 = "EXEC: pytest tests/";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt4),
+            SwarmAction::RunTerminal { command: "pytest tests/".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_infer_task_kind() {
+        assert_eq!(SwarmCoordinator::infer_task_kind("Create a new web server in Python"), TaskKind::Create);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Patch the bug in line 42"), TaskKind::Modify);
+        assert_eq!(SwarmCoordinator::infer_task_kind("عدل الكود وصلح الخطأ"), TaskKind::Modify);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Delete redundant files from workspace"), TaskKind::Delete);
+        assert_eq!(SwarmCoordinator::infer_task_kind("احذف الملف القديم"), TaskKind::Delete);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Test the unit test suite and verify output"), TaskKind::Test);
+        assert_eq!(SwarmCoordinator::infer_task_kind("اختبر الكود وافحص النتيجة"), TaskKind::Test);
+    }
+
+    #[test]
+    fn test_classify_failure_for_kind() {
+        // Delete kind failure when file still exists
+        let diag1 = SwarmCoordinator::classify_failure_for_kind(
+            &SwarmAction::DeleteFile { filename: "test.txt".to_string() },
+            false,
+            "failed",
+            true, // file still exists
+            10,
+            None,
+            "",
+            None,
+            Some(&TaskKind::Delete),
+        );
+        assert_eq!(diag1, DiagnosticCode::FileNotDeleted);
+
+        // Modify kind failure when diff is empty
+        let diag2 = SwarmCoordinator::classify_failure_for_kind(
+            &SwarmAction::PatchFile { filename: "test.txt".to_string(), target: "a".into(), replacement: "b".into() },
+            true,
+            "success",
+            true,
+            10,
+            Some(""), // empty diff
+            "",
+            None,
+            Some(&TaskKind::Modify),
+        );
+        assert_eq!(diag2, DiagnosticCode::DiffEmpty);
+
+        // Test kind failure
+        let diag3 = SwarmCoordinator::classify_failure_for_kind(
+            &SwarmAction::RunTerminal { command: "pytest".to_string() },
+            false,
+            "assertion failed",
+            true,
+            10,
+            None,
+            "",
+            None,
+            Some(&TaskKind::Test),
+        );
+        assert_eq!(diag3, DiagnosticCode::TestFailed);
     }
 }

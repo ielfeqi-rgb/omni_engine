@@ -17,6 +17,29 @@ pub struct StagedDiff {
     pub new_content: Option<String>,
 }
 
+impl StagedDiff {
+    pub fn unified_diff(&self) -> String {
+        match (&self.original_content, &self.new_content) {
+            (Some(orig), Some(curr)) => MemoryVfs::generate_unified_diff(&self.path.display().to_string(), orig, curr),
+            (None, Some(curr)) => {
+                let mut out = format!("--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", self.path.display(), curr.lines().count());
+                for line in curr.lines() {
+                    out.push_str(&format!("+{}\n", line));
+                }
+                out
+            }
+            (Some(orig), None) => {
+                let mut out = format!("--- a/{}\n+++ /dev/null\n@@ -1,{} +0,0 @@\n", self.path.display(), orig.lines().count());
+                for line in orig.lines() {
+                    out.push_str(&format!("-{}\n", line));
+                }
+                out
+            }
+            (None, None) => String::new(),
+        }
+    }
+}
+
 /// In-Memory Virtual File System (VFS).
 /// Fully isolated inside RAM with zero initial host disk side-effects.
 /// Compatible with Windows and Linux paths.
@@ -62,6 +85,16 @@ impl MemoryVfs {
         active.insert(path_buf, content.to_vec());
     }
 
+    /// Take a baseline snapshot of a specific file in active VFS for diffing
+    pub fn snapshot_file<P: AsRef<Path>>(&self, path: P) {
+        let path_buf = Self::resolve_path(path);
+        let active = self.files.read();
+        if let Some(content) = active.get(&path_buf) {
+            let mut original = self.original_snapshots.write();
+            original.insert(path_buf, content.clone());
+        }
+    }
+
     /// Read file content from RAM VFS
     pub fn read_file<P: AsRef<Path>>(&self, path: P) -> Option<Vec<u8>> {
         let path_buf = Self::resolve_path(path);
@@ -92,6 +125,113 @@ impl MemoryVfs {
     pub fn list_files(&self) -> Vec<PathBuf> {
         let active = self.files.read();
         active.keys().cloned().collect()
+    }
+
+    /// Returns byte size of a file in VFS
+    pub fn file_size<P: AsRef<Path>>(&self, path: P) -> usize {
+        let path_buf = Self::resolve_path(path);
+        let active = self.files.read();
+        active.get(&path_buf).map(|b| b.len()).unwrap_or(0)
+    }
+
+    /// Surgically patch a file in RAM VFS by replacing the first occurrence of `target` with `replacement`
+    pub fn patch_file<P: AsRef<Path>>(&self, path: P, target: &str, replacement: &str) -> Result<bool, String> {
+        let path_buf = Self::resolve_path(path);
+        let mut active = self.files.write();
+        let bytes = active.get(&path_buf).ok_or_else(|| format!("File not found in VFS: {}", path_buf.display()))?;
+        let content_str = String::from_utf8(bytes.clone())
+            .map_err(|e| format!("File is not valid UTF-8: {}", e))?;
+
+        if !content_str.contains(target) {
+            return Err(format!("Target snippet not found in file '{}'", path_buf.display()));
+        }
+
+        let patched = content_str.replacen(target, replacement, 1);
+        active.insert(path_buf, patched.into_bytes());
+        Ok(true)
+    }
+
+    /// Generate a unified line-by-line diff for a specific file between original snapshot and active VFS
+    pub fn diff_file<P: AsRef<Path>>(&self, path: P) -> Option<String> {
+        let path_buf = Self::resolve_path(path);
+        let active = self.files.read();
+        let original = self.original_snapshots.read();
+
+        let orig_str = original.get(&path_buf).and_then(|b| String::from_utf8(b.clone()).ok());
+        let curr_str = active.get(&path_buf).and_then(|b| String::from_utf8(b.clone()).ok());
+
+        match (orig_str, curr_str) {
+            (None, None) => None,
+            (Some(orig), None) => {
+                let mut out = format!("--- a/{}\n+++ /dev/null\n@@ -1,{} +0,0 @@\n", path_buf.display(), orig.lines().count());
+                for line in orig.lines() {
+                    out.push_str(&format!("-{}\n", line));
+                }
+                Some(out)
+            }
+            (None, Some(curr)) => {
+                let mut out = format!("--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", path_buf.display(), curr.lines().count());
+                for line in curr.lines() {
+                    out.push_str(&format!("+{}\n", line));
+                }
+                Some(out)
+            }
+            (Some(orig), Some(curr)) => {
+                if orig == curr {
+                    return None;
+                }
+                Some(Self::generate_unified_diff(&path_buf.display().to_string(), &orig, &curr))
+            }
+        }
+    }
+
+    /// Standard Myers / LCS unified line-by-line diff algorithm
+    pub fn generate_unified_diff(filename: &str, old_text: &str, new_text: &str) -> String {
+        let old_lines: Vec<&str> = old_text.lines().collect();
+        let new_lines: Vec<&str> = new_text.lines().collect();
+
+        let mut diff = format!("--- a/{}\n+++ b/{}\n", filename, filename);
+
+        let m = old_lines.len();
+        let n = new_lines.len();
+
+        let mut dp = vec![vec![0usize; n + 1]; m + 1];
+        for i in 0..m {
+            for j in 0..n {
+                if old_lines[i] == new_lines[j] {
+                    dp[i + 1][j + 1] = dp[i][j] + 1;
+                } else {
+                    dp[i + 1][j + 1] = dp[i][j].max(dp[i + 1][j]);
+                }
+            }
+        }
+
+        let mut i = m;
+        let mut j = n;
+        let mut changes = Vec::new();
+
+        while i > 0 || j > 0 {
+            if i > 0 && j > 0 && old_lines[i - 1] == new_lines[j - 1] {
+                changes.push(format!(" {}", old_lines[i - 1]));
+                i -= 1;
+                j -= 1;
+            } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+                changes.push(format!("+{}", new_lines[j - 1]));
+                j -= 1;
+            } else if i > 0 && (j == 0 || dp[i][j - 1] < dp[i - 1][j]) {
+                changes.push(format!("-{}", old_lines[i - 1]));
+                i -= 1;
+            }
+        }
+
+        changes.reverse();
+        diff.push_str(&format!("@@ -1,{} +1,{} @@\n", m, n));
+        for line in changes {
+            diff.push_str(&line);
+            diff.push('\n');
+        }
+
+        diff
     }
 
     /// Compute staged changes (Diffs) between original snapshots and active sandbox modifications.
@@ -230,5 +370,34 @@ mod tests {
             let resolved = MemoryVfs::resolve_path("~/documents/notes.txt");
             assert_eq!(resolved, PathBuf::from(home).join("documents/notes.txt"));
         }
+    }
+
+    #[test]
+    fn test_vfs_patch_and_diff() {
+        let vfs = MemoryVfs::new();
+        let path = PathBuf::from("workspace/Game.java");
+
+        // 1. Initial preload
+        vfs.preload_file(&path, b"class Game {\n    void start() {\n        int x = 1;\n    }\n}\n");
+        assert_eq!(vfs.file_size(&path), 59);
+
+        // 2. Patch a single line surgically
+        let res = vfs.patch_file(&path, "int x = 1;", "int x = 100; // patched");
+        assert!(res.is_ok());
+
+        let patched_content = vfs.read_string(&path).unwrap();
+        assert!(patched_content.contains("int x = 100; // patched"));
+        assert!(!patched_content.contains("int x = 1;"));
+
+        // 3. Generate unified diff
+        let diff = vfs.diff_file(&path).unwrap();
+        assert!(diff.contains("-        int x = 1;"));
+        assert!(diff.contains("+        int x = 100; // patched"));
+
+        // 4. Test delete
+        assert!(vfs.exists(&path));
+        assert!(vfs.delete_file(&path));
+        assert!(!vfs.exists(&path));
+        assert_eq!(vfs.file_size(&path), 0);
     }
 }
