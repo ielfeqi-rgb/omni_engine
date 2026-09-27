@@ -21,6 +21,56 @@ pub enum SwarmAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiagnosticCode {
+    VfsFileNotWritten,
+    PlaceholderOrEmpty,
+    LuaSyntaxTrap,
+    NoCodeBlock,
+    RepeatedAttractor,
+}
+
+impl DiagnosticCode {
+    pub fn name(&self) -> &'static str {
+        match self {
+            DiagnosticCode::VfsFileNotWritten => "ERR_VFS_FILE_NOT_WRITTEN",
+            DiagnosticCode::PlaceholderOrEmpty => "ERR_PLACEHOLDER_OR_EMPTY",
+            DiagnosticCode::LuaSyntaxTrap => "ERR_LUA_SYNTAX",
+            DiagnosticCode::NoCodeBlock => "ERR_NO_CODE_BLOCK",
+            DiagnosticCode::RepeatedAttractor => "ERR_REPEATED_ATTRACTOR",
+        }
+    }
+
+    pub fn default_prescription(&self, target_entity: &str) -> String {
+        match self {
+            DiagnosticCode::VfsFileNotWritten => {
+                format!(
+                    "Call vfs.write(\"{}\", [[...]]) inside ```lua ... ``` to write the file directly to VFS.",
+                    target_entity
+                )
+            }
+            DiagnosticCode::PlaceholderOrEmpty => {
+                format!(
+                    "Write complete, working implementation inside [[...]] for {}. NEVER output placeholders like TODO, pass, or empty comments.",
+                    target_entity
+                )
+            }
+            DiagnosticCode::LuaSyntaxTrap => {
+                "Fix Lua syntax error. Ensure multi-line strings inside [[ ... ]] are properly opened and closed.".to_string()
+            }
+            DiagnosticCode::NoCodeBlock => {
+                "Output your code strictly inside a ```lua ... ``` block.".to_string()
+            }
+            DiagnosticCode::RepeatedAttractor => {
+                format!(
+                    "Break repetition attractor. Do not repeat failed patterns. Write complete, fresh code directly to '{}' with vfs.write.",
+                    target_entity
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThinkerDecision {
     Nudge(String),
     Reset(String),
@@ -360,7 +410,7 @@ Be direct, imperative, and specific (max 35 words).";
     }
 
     /// Evaluates worker failure with Epistemic Compaction:
-    /// 1. Temporary Thinker context inspects the error and code.
+    /// 1. Temporary Thinker context inspects the error, code, and deterministic diagnostic.
     /// 2. Thinker generates decision: NUDGE (minor fixable) or RESET (major rewrite).
     /// 3. Thinker context is wiped immediately, purging all broken code from active cache.
     /// 4. Returns the decision and a dense ledger entry.
@@ -370,6 +420,7 @@ Be direct, imperative, and specific (max 35 words).";
         attempt: usize,
         failed_code: &str,
         runtime_error: &str,
+        diagnostic: &DiagnosticCode,
     ) -> Result<(ThinkerDecision, String), String> {
         let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
 
@@ -393,8 +444,14 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         };
 
         let user_msg = format!(
-            "Subgoal: {}\nTarget: {}\nAttempt #{}\nWorker Code:\n{}\nRuntime Error:\n{}\n\nDecision:",
-            subgoal.description, subgoal.target_entity, attempt, snippet_code, snippet_err
+            "Subgoal: {}\nTarget: {}\nAttempt #{}\nDiagnostic: {} - {}\nWorker Code:\n{}\nRuntime Error:\n{}\n\nDecision:",
+            subgoal.description,
+            subgoal.target_entity,
+            attempt,
+            diagnostic.name(),
+            diagnostic.default_prescription(&subgoal.target_entity),
+            snippet_code,
+            snippet_err
         );
 
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
@@ -406,14 +463,72 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         let decision = Self::parse_thinker_decision(&raw, subgoal);
         let ledger_entry = match &decision {
             ThinkerDecision::Nudge(hint) => {
-                format!("[LEDGER: Worker #{} Attempt #{} FAILED -> Action: NUDGE ('{}')]", subgoal.id, attempt, hint)
+                format!(
+                    "[LEDGER: Worker #{} Attempt #{} FAILED ({}) -> Action: NUDGE ('{}')]",
+                    subgoal.id, attempt, diagnostic.name(), hint
+                )
             }
             ThinkerDecision::Reset(directive) => {
-                format!("[LEDGER: Worker #{} Attempt #{} FAILED -> Action: RESET ('{}')]", subgoal.id, attempt, directive)
+                format!(
+                    "[LEDGER: Worker #{} Attempt #{} FAILED ({}) -> Action: RESET ('{}')]",
+                    subgoal.id, attempt, diagnostic.name(), directive
+                )
             }
         };
 
         Ok((decision, ledger_entry))
+    }
+
+    pub fn classify_failure(
+        action: &SwarmAction,
+        exec_success: bool,
+        _exec_output: &str,
+        vfs_target_exists: bool,
+        vfs_target_size: usize,
+        vfs_content: Option<&str>,
+        generated_text: &str,
+        previous_diagnostic: Option<&DiagnosticCode>,
+    ) -> DiagnosticCode {
+        // Check for repeated attractor pattern
+        if let Some(prev) = previous_diagnostic {
+            if (*prev == DiagnosticCode::PlaceholderOrEmpty || *prev == DiagnosticCode::VfsFileNotWritten)
+                && (generated_text.contains("TODO") || generated_text.contains("pass") || generated_text.contains("<!-- TODO"))
+            {
+                return DiagnosticCode::RepeatedAttractor;
+            }
+        }
+
+        // 1. Missing code block or unparsed action
+        if matches!(action, SwarmAction::None) && !generated_text.contains("```lua") && !generated_text.contains("vfs.write") {
+            return DiagnosticCode::NoCodeBlock;
+        }
+
+        // 2. Lua execution failure / syntax trap
+        if !exec_success {
+            return DiagnosticCode::LuaSyntaxTrap;
+        }
+
+        // 3. File not created in VFS
+        if !vfs_target_exists {
+            return DiagnosticCode::VfsFileNotWritten;
+        }
+
+        // 4. File is too small or contains placeholder tokens
+        if vfs_target_size <= 30 {
+            return DiagnosticCode::PlaceholderOrEmpty;
+        }
+
+        if let Some(content) = vfs_content {
+            let trimmed = content.trim();
+            if trimmed.contains("TODO")
+                || trimmed.starts_with("pass")
+                || trimmed == "..."
+            {
+                return DiagnosticCode::PlaceholderOrEmpty;
+            }
+        }
+
+        DiagnosticCode::VfsFileNotWritten
     }
 
     pub fn parse_thinker_decision(text: &str, subgoal: &SubGoal) -> ThinkerDecision {
@@ -437,6 +552,24 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             };
             ThinkerDecision::Nudge(reason)
         }
+    }
+
+    pub fn is_explicit_single_file(goal: &str) -> bool {
+        let lower = goal.to_lowercase();
+        lower.contains("single file")
+            || lower.contains("one file")
+            || lower.contains("a file")
+            || lower.contains("a script")
+            || lower.contains("one script")
+            || lower.contains("single script")
+            || lower.contains("standalone script")
+            || lower.contains("ملف واحد")
+            || lower.contains("ملفا واحدا")
+            || lower.contains("سكربت واحد")
+            || lower.contains("صفحة واحدة")
+            || lower.contains("صفحه واحده")
+            || lower.contains("في ملف")
+            || lower.contains("فى ملف")
     }
 
 fn infer_target_entity(goal: &str) -> String {
@@ -514,18 +647,19 @@ fn is_build_task(text: &str) -> bool {
                 "You are the System 2 Sovereign Architect.\n\
                 Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
                 Workers write standalone project files via Lua: vfs.write(\"filename\", [[content]]).\n\n\
-                Decision Authority on Workers:\n\
+                PARSIMONY & WORKER DISPATCH RULES:\n\
                 - You decide how many workers to deploy (from 1 up to {} max budget).\n\
-                - For single-file deliverables (e.g. Python scripts, PDF generators, shell utilities, or standalone apps): Deploy exactly 1 worker to generate the complete file in one pass.\n\
-                - Only decompose into multiple sub-goals if the objective genuinely requires separate, independent modules or files.\n\
-                - Provide each worker with an explicit, self-contained implementation directive.\n\n\
+                - Rule of Parsimony: If the user objective asks for a single script, utility, single document, or standalone file (e.g. Python script, shell script, single web page, or report), deploy EXACTLY 1 worker to generate the complete file in one pass. Output EXACTLY ONE line for SUBGOAL.\n\
+                - Only decompose into multiple sub-goals if the objective genuinely requires multiple distinct physical files (e.g. separate frontend and backend, or html with separate css). Each sub-goal MUST target a distinct physical filename (ENTITY).\n\
+                - NEVER output multiple sub-goals for the same file or redundant sub-tasks.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
                 SUBGOAL: <explicit implementation directive> | ENTITY: <target filename>\n\n\
                 Examples:\n\
-                SUBGOAL: Write the complete Python automation script | ENTITY: main.py\n\
-                SUBGOAL: Write the PDF generation pipeline or document source | ENTITY: document.pdf\n\
-                SUBGOAL: Write the standalone web application | ENTITY: index.html\n\
-                SUBGOAL: Write the shell maintenance utility | ENTITY: script.sh",
+                Single-file deliverable:\n\
+                SUBGOAL: Write the complete standalone implementation | ENTITY: main.py\n\
+                Multi-file deliverable:\n\
+                SUBGOAL: Write the HTML structure and markup | ENTITY: index.html\n\
+                SUBGOAL: Write the external CSS styling | ENTITY: styles.css",
                 self.config.max_subgoals
             )
         } else {
@@ -548,6 +682,7 @@ fn is_build_task(text: &str) -> bool {
 
         let output = ctx.generate(&prompt, 256)?;
         let mut subgoals = Vec::new();
+        let mut seen_entities = std::collections::HashSet::new();
         let mut id = 1;
 
         for line in output.lines() {
@@ -564,6 +699,12 @@ fn is_build_task(text: &str) -> bool {
                     goal.split_whitespace().next().unwrap_or("general").to_string()
                 };
 
+                let entity_key = entity.to_lowercase();
+                if seen_entities.contains(&entity_key) {
+                    continue; // Skip duplicate entity: never spawn redundant workers for the same target
+                }
+                seen_entities.insert(entity_key);
+
                 if !desc.is_empty() {
                     subgoals.push(SubGoal {
                         id,
@@ -577,6 +718,11 @@ fn is_build_task(text: &str) -> bool {
                     }
                 }
             }
+        }
+
+        // If user goal explicitly specifies a single file/script, enforce exactly 1 worker
+        if Self::is_explicit_single_file(goal) && subgoals.len() > 1 {
+            subgoals.truncate(1);
         }
 
         // Fallback if model output did not match format exactly
@@ -617,6 +763,7 @@ fn is_build_task(text: &str) -> bool {
         let mut tokens_saved = 0;
         let mut final_finding = String::new();
         let target_path = std::path::PathBuf::from(&subgoal.target_entity);
+        let mut last_diagnostic: Option<DiagnosticCode> = None;
 
         while attempt <= max_attempts {
             // Check if starting fresh (attempt 1 or after a RESET)
@@ -808,11 +955,14 @@ fn is_build_task(text: &str) -> bool {
             };
 
             // GROUND TRUTH CHECK
+            let vfs_bytes = self.vfs.read_file(&target_path);
             let vfs_target_exists = self.vfs.exists(&target_path);
-            let vfs_target_size = self.vfs.read_file(&target_path).map(|c| c.len()).unwrap_or(0);
+            let vfs_target_size = vfs_bytes.as_ref().map(|c| c.len()).unwrap_or(0);
+            let vfs_str = vfs_bytes.as_ref().and_then(|b| std::str::from_utf8(b).ok());
+            let has_todo = vfs_str.map(|s| s.contains("TODO")).unwrap_or(false);
 
             let real_success = if is_build {
-                exec_success && vfs_target_exists && vfs_target_size > 30
+                exec_success && vfs_target_exists && vfs_target_size > 30 && !has_todo
             } else {
                 exec_success && !exec_output.trim().is_empty()
             };
@@ -840,9 +990,21 @@ fn is_build_task(text: &str) -> bool {
             rollbacks_count += 1;
             tokens_saved += excised;
 
+            // Deterministic Diagnostic Classification
+            let diagnostic = Self::classify_failure(
+                &action,
+                exec_success,
+                &exec_output,
+                vfs_target_exists,
+                vfs_target_size,
+                vfs_str,
+                &generated_text,
+                last_diagnostic.as_ref(),
+            );
+
             println!(
-                "  [ROLLBACK] Worker #{} rolled back to checkpoint {} (excised {} tokens). Worker frozen.",
-                subgoal.id, tokens_after, excised
+                "  [ROLLBACK] Worker #{} rolled back to checkpoint {} (excised {} tokens). Diagnostic: {}.",
+                subgoal.id, tokens_after, excised, diagnostic.name()
             );
 
             // ESCALATE TO THINKER FOR SOVEREIGN DECISION
@@ -850,18 +1012,23 @@ fn is_build_task(text: &str) -> bool {
                 exec_output.clone()
             } else if !vfs_target_exists {
                 format!("File '{}' was not written to VFS", subgoal.target_entity)
-            } else {
+            } else if vfs_target_size <= 30 {
                 format!("File '{}' is too small ({} bytes)", subgoal.target_entity, vfs_target_size)
+            } else {
+                format!("File '{}' contains incomplete placeholder code (TODO)", subgoal.target_entity)
             };
 
             let (decision, ledger_entry) = self.thinker_evaluate_failure(
                 subgoal,
                 attempt,
                 &generated_text,
-                &error_desc
+                &error_desc,
+                &diagnostic,
             )?;
 
             println!("  {}", ledger_entry);
+
+            last_diagnostic = Some(diagnostic);
 
             match decision {
                 ThinkerDecision::Nudge(hint) => {
@@ -877,7 +1044,10 @@ fn is_build_task(text: &str) -> bool {
         }
 
         if final_finding.is_empty() {
-            final_finding = format!("Task '{}' completed attempts budget.", subgoal.description);
+            final_finding = format!(
+                "FAILED: Worker #{} could not write target file '{}' to VFS after {} attempts.",
+                subgoal.id, subgoal.target_entity, max_attempts
+            );
         }
 
         Ok(WorkerFinding {
@@ -903,8 +1073,11 @@ fn is_build_task(text: &str) -> bool {
         }
 
         let system_msg = "You are the Executive Secretary reporting directly to the user.\n\
-Speak directly, clearly, and concisely without embellishments or theatrical language.\n\
-Summarize exactly what was accomplished (1, 2, 3), which files were verified, and confirm completion of the request.";
+Speak directly, clearly, honestly, and concisely without embellishments, fluff, or theatrical language.\n\
+CRITICAL GROUND TRUTH RULES:\n\
+1. If any task is marked FAILED, report it honestly as FAILED and specify which file was not written.\n\
+2. NEVER report a FAILED task as completed or successful.\n\
+3. Summarize exactly what was accomplished and verified in VFS.";
         let user_msg = format!("User Request: {}\n\nCompleted Work:\n{}\nProvide the final report:", original_goal, findings_block);
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
 
@@ -1076,5 +1249,101 @@ mod tests {
             SwarmCoordinator::parse_thinker_decision(t2, &sg),
             ThinkerDecision::Reset("Rewrite the architecture using grid layout".to_string())
         );
+    }
+
+    #[test]
+    fn test_diagnostic_code_taxonomy() {
+        let err1 = DiagnosticCode::VfsFileNotWritten;
+        assert_eq!(err1.name(), "ERR_VFS_FILE_NOT_WRITTEN");
+        assert!(err1.default_prescription("main.py").contains("vfs.write"));
+
+        let err2 = DiagnosticCode::PlaceholderOrEmpty;
+        assert_eq!(err2.name(), "ERR_PLACEHOLDER_OR_EMPTY");
+        assert!(err2.default_prescription("main.py").contains("NEVER output placeholders"));
+
+        let err3 = DiagnosticCode::LuaSyntaxTrap;
+        assert_eq!(err3.name(), "ERR_LUA_SYNTAX");
+
+        let err4 = DiagnosticCode::NoCodeBlock;
+        assert_eq!(err4.name(), "ERR_NO_CODE_BLOCK");
+
+        let err5 = DiagnosticCode::RepeatedAttractor;
+        assert_eq!(err5.name(), "ERR_REPEATED_ATTRACTOR");
+    }
+
+    #[test]
+    fn test_classify_failure() {
+        // 1. No code block
+        let diag1 = SwarmCoordinator::classify_failure(
+            &SwarmAction::None,
+            false,
+            "",
+            false,
+            0,
+            None,
+            "I will now write the file for you:",
+            None,
+        );
+        assert_eq!(diag1, DiagnosticCode::NoCodeBlock);
+
+        // 2. Lua syntax trap
+        let diag2 = SwarmCoordinator::classify_failure(
+            &SwarmAction::RunLua { script: "vfs.write(".to_string() },
+            false,
+            "syntax error near <eof>",
+            false,
+            0,
+            None,
+            "```lua\nvfs.write(\n```",
+            None,
+        );
+        assert_eq!(diag2, DiagnosticCode::LuaSyntaxTrap);
+
+        // 3. VFS file not written
+        let diag3 = SwarmCoordinator::classify_failure(
+            &SwarmAction::RunLua { script: "print('done')".to_string() },
+            true,
+            "done",
+            false,
+            0,
+            None,
+            "```lua\nprint('done')\n```",
+            None,
+        );
+        assert_eq!(diag3, DiagnosticCode::VfsFileNotWritten);
+
+        // 4. Placeholder or empty
+        let diag4 = SwarmCoordinator::classify_failure(
+            &SwarmAction::RunLua { script: "vfs.write('main.py', '# TODO')".to_string() },
+            true,
+            "",
+            true,
+            6,
+            Some("# TODO"),
+            "```lua\nvfs.write('main.py', '# TODO')\n```",
+            None,
+        );
+        assert_eq!(diag4, DiagnosticCode::PlaceholderOrEmpty);
+
+        // 5. Repeated attractor
+        let diag5 = SwarmCoordinator::classify_failure(
+            &SwarmAction::RunLua { script: "vfs.write('main.py', '# TODO')".to_string() },
+            true,
+            "",
+            true,
+            6,
+            Some("# TODO"),
+            "```lua\nvfs.write('main.py', '# TODO')\n```",
+            Some(&DiagnosticCode::PlaceholderOrEmpty),
+        );
+        assert_eq!(diag5, DiagnosticCode::RepeatedAttractor);
+    }
+
+    #[test]
+    fn test_explicit_single_file_detection() {
+        assert!(SwarmCoordinator::is_explicit_single_file("Create a script in a single file"));
+        assert!(SwarmCoordinator::is_explicit_single_file("اكتب كود بايثون في ملف واحد"));
+        assert!(SwarmCoordinator::is_explicit_single_file("Build a standalone script for backups"));
+        assert!(!SwarmCoordinator::is_explicit_single_file("Create an HTML app with external CSS and JS files"));
     }
 }
