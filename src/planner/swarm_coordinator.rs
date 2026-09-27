@@ -27,6 +27,7 @@ pub enum DiagnosticCode {
     LuaSyntaxTrap,
     NoCodeBlock,
     RepeatedAttractor,
+    MissingDependency(String),
 }
 
 impl DiagnosticCode {
@@ -37,6 +38,7 @@ impl DiagnosticCode {
             DiagnosticCode::LuaSyntaxTrap => "ERR_LUA_SYNTAX",
             DiagnosticCode::NoCodeBlock => "ERR_NO_CODE_BLOCK",
             DiagnosticCode::RepeatedAttractor => "ERR_REPEATED_ATTRACTOR",
+            DiagnosticCode::MissingDependency(_) => "ERR_MISSING_DEPENDENCY",
         }
     }
 
@@ -66,14 +68,30 @@ impl DiagnosticCode {
                     target_entity
                 )
             }
+            DiagnosticCode::MissingDependency(ref dep) => {
+                format!(
+                    "Required dependency or CLI tool '{}' is missing on host. Consult user or use standard library built-ins.",
+                    dep
+                )
+            }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DependencyChoice {
+    InstallAndRetry,
+    UseAlternative,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThinkerDecision {
     Nudge(String),
     Reset(String),
+    ConsultDependency {
+        dependency: String,
+        question: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -156,9 +174,10 @@ impl SwarmConfig {
         found_models.sort_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0));
         found_models.reverse();
 
-        // Largest model as orchestrator, smallest as worker
+        // Unified Sovereign Architecture: Both Thinker (System 2) and Worker (System 1) share
+        // the top-performing model in RAM via Arc<NativeLlamaModel>, saving memory and maximizing IQ.
         let orch = found_models[0].clone();
-        let worker = found_models.last().cloned().unwrap_or_else(|| orch.clone());
+        let worker = orch.clone();
 
         Some(Self {
             orchestrator_model_path: orch,
@@ -422,6 +441,24 @@ Be direct, imperative, and specific (max 35 words).";
         runtime_error: &str,
         diagnostic: &DiagnosticCode,
     ) -> Result<(ThinkerDecision, String), String> {
+        if let DiagnosticCode::MissingDependency(ref dep) = diagnostic {
+            let question = format!(
+                "Required dependency or CLI tool '{}' is missing on host.",
+                dep
+            );
+            let ledger_entry = format!(
+                "[LEDGER: Worker #{} Attempt #{} PAUSED (ERR_MISSING_DEPENDENCY: '{}') -> Action: CONSULT_USER]",
+                subgoal.id, attempt, dep
+            );
+            return Ok((
+                ThinkerDecision::ConsultDependency {
+                    dependency: dep.clone(),
+                    question,
+                },
+                ledger_entry,
+            ));
+        }
+
         let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
 
         let system_msg = "You are the System 2 Sovereign Thinker evaluating a worker's failed attempt.\n\
@@ -474,21 +511,98 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                     subgoal.id, attempt, diagnostic.name(), directive
                 )
             }
+            ThinkerDecision::ConsultDependency { dependency, .. } => {
+                format!(
+                    "[LEDGER: Worker #{} Attempt #{} PAUSED (ERR_MISSING_DEPENDENCY: '{}') -> Action: CONSULT_USER]",
+                    subgoal.id, attempt, dependency
+                )
+            }
         };
 
         Ok((decision, ledger_entry))
     }
 
+    pub fn extract_missing_dependency(text: &str) -> Option<String> {
+        // 1. Python ModuleNotFoundError: No module named 'openpyxl' or "openpyxl"
+        if let Some(idx) = text.find("No module named ") {
+            let sub = &text[idx + "No module named ".len()..];
+            let sub = sub.trim_start();
+            let mut quote = None;
+            let first_char = sub.chars().next()?;
+            let dep = if first_char == '\'' || first_char == '"' {
+                quote = Some(first_char);
+                &sub[1..]
+            } else {
+                sub
+            };
+            let end_idx = if let Some(q) = quote {
+                dep.find(q).unwrap_or_else(|| dep.split_whitespace().next().map(|s| s.len()).unwrap_or(dep.len()))
+            } else {
+                dep.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-').unwrap_or(dep.len())
+            };
+            let candidate = dep[..end_idx].trim().to_string();
+            if !candidate.is_empty() {
+                return Some(candidate);
+            }
+        }
+
+        // 2. Python ImportError: cannot import name ... from 'xxx'
+        if text.contains("ImportError") {
+            if let Some(from_idx) = text.find("from '") {
+                let sub = &text[from_idx + 6..];
+                if let Some(end) = sub.find('\'') {
+                    let dep = sub[..end].trim().to_string();
+                    if !dep.is_empty() {
+                        return Some(dep);
+                    }
+                }
+            }
+        }
+
+        // 3. Shell / Linux command not found:
+        // "command not found: jq" or "jq: command not found" or "sh: line 1: jq: not found"
+        if text.contains("command not found") || text.contains(": not found") {
+            for line in text.lines() {
+                if let Some(idx) = line.find("command not found:") {
+                    let candidate = line[idx + "command not found:".len()..].trim();
+                    if let Some(first_word) = candidate.split_whitespace().next() {
+                        return Some(first_word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string());
+                    }
+                } else if let Some(idx) = line.find(": command not found") {
+                    let prefix = line[..idx].trim();
+                    if let Some(last_word) = prefix.split_whitespace().last() {
+                        return Some(last_word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string());
+                    }
+                } else if let Some(idx) = line.find(": not found") {
+                    let prefix = line[..idx].trim();
+                    if let Some(last_word) = prefix.split_whitespace().last() {
+                        return Some(last_word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn classify_failure(
         action: &SwarmAction,
         exec_success: bool,
-        _exec_output: &str,
+        exec_output: &str,
         vfs_target_exists: bool,
         vfs_target_size: usize,
         vfs_content: Option<&str>,
         generated_text: &str,
         previous_diagnostic: Option<&DiagnosticCode>,
     ) -> DiagnosticCode {
+        // 0. Deterministic missing dependency detection from execution or output
+        if let Some(dep) = Self::extract_missing_dependency(exec_output) {
+            return DiagnosticCode::MissingDependency(dep);
+        }
+        if let Some(dep) = Self::extract_missing_dependency(generated_text) {
+            return DiagnosticCode::MissingDependency(dep);
+        }
+
         // Check for repeated attractor pattern
         if let Some(prev) = previous_diagnostic {
             if (*prev == DiagnosticCode::PlaceholderOrEmpty || *prev == DiagnosticCode::VfsFileNotWritten)
@@ -529,6 +643,44 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         }
 
         DiagnosticCode::VfsFileNotWritten
+    }
+
+    pub fn prompt_user_for_dependency(dep: &str, _question: &str) -> DependencyChoice {
+        println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
+        println!("  ⚠️  {}", format!("المكتبة أو الأداة المطلوبة غير متوفرة في النظام: '{}'", dep).bright_yellow().bold());
+        println!("  المفكر يستشيرك لاختيار مسار التنفيذ:");
+        println!("     [1] تثبيت المكتبة تلقائياً عبر الطرفية ومواصلة المهمة (pip install {})", dep);
+        println!("     [2] التحويل إلى بديل قياسي (مثل CSV أو مكتبات بايثون القياسية) دون تثبيت");
+        println!("{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
+
+        if !io::stdin().is_terminal() {
+            println!("  🤖 طرفية غير تفاعلية. الاختيار التلقائي: [1] محاولة التثبيت.");
+            return DependencyChoice::InstallAndRetry;
+        }
+
+        loop {
+            print!("  👉 اختيارك [1/2، الافتراضي: 1]: ");
+            let _ = io::stdout().flush();
+            let mut input = String::new();
+            match io::stdin().read_line(&mut input) {
+                Ok(0) => {
+                    println!();
+                    return DependencyChoice::InstallAndRetry;
+                }
+                Ok(_) => {
+                    let trimmed = input.trim();
+                    if trimmed.is_empty() || trimmed == "1" {
+                        return DependencyChoice::InstallAndRetry;
+                    } else if trimmed == "2" {
+                        return DependencyChoice::UseAlternative;
+                    }
+                    println!("     يرجى إدخال 1 أو 2.");
+                }
+                Err(_) => {
+                    return DependencyChoice::InstallAndRetry;
+                }
+            }
+        }
     }
 
     pub fn parse_thinker_decision(text: &str, subgoal: &SubGoal) -> ThinkerDecision {
@@ -582,7 +734,10 @@ fn infer_target_entity(goal: &str) -> String {
         "script.sh".to_string()
     } else if lower.contains(".json") || lower.contains("json") {
         "data.json".to_string()
-    } else if lower.contains(".csv") || lower.contains("csv") || lower.contains("جدول") {
+    } else if lower.contains(".csv") || lower.contains("csv") || lower.contains("جدول")
+        || lower.contains("excel") || lower.contains("xlsx") || lower.contains("xls")
+        || lower.contains("اكسل") || lower.contains("إكسل")
+    {
         "data.csv".to_string()
     } else if lower.contains(".md") || lower.contains("markdown") || lower.contains("تقرير") || lower.contains("report") {
         "report.md".to_string()
@@ -615,6 +770,8 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("shell")
         || lower.contains("json")
         || lower.contains("csv")
+        || lower.contains("excel")
+        || lower.contains("xlsx")
         || lower.contains("اكتب")
         || lower.contains("انشئ")
         || lower.contains("أنشئ")
@@ -627,12 +784,15 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("سكربت")
         || lower.contains("سكريبت")
         || lower.contains("بايثون")
+        || lower.contains("اكسل")
+        || lower.contains("إكسل")
         || lower.contains("تقرير")
         || lower.contains("ملف")
         || lower.contains("لعبة")
         || lower.contains("لعبه")
         || lower.contains("موقع")
         || lower.contains("تطبيق")
+        || lower.contains("جدول")
         || lower.contains("زر")
 }
 
@@ -651,12 +811,15 @@ fn is_build_task(text: &str) -> bool {
                 - You decide how many workers to deploy (from 1 up to {} max budget).\n\
                 - Rule of Parsimony: If the user objective asks for a single script, utility, single document, or standalone file (e.g. Python script, shell script, single web page, or report), deploy EXACTLY 1 worker to generate the complete file in one pass. Output EXACTLY ONE line for SUBGOAL.\n\
                 - Only decompose into multiple sub-goals if the objective genuinely requires multiple distinct physical files (e.g. separate frontend and backend, or html with separate css). Each sub-goal MUST target a distinct physical filename (ENTITY).\n\
-                - NEVER output multiple sub-goals for the same file or redundant sub-tasks.\n\n\
+                - NEVER output multiple sub-goals for the same file or redundant sub-tasks.\n\
+                - SPREADSHEETS & BINARY: Lua VFS cannot write binary ZIP archives (.xlsx, .docx). For spreadsheets, Excel, or tabular data, always direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel opens natively.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
                 SUBGOAL: <explicit implementation directive> | ENTITY: <target filename>\n\n\
                 Examples:\n\
                 Single-file deliverable:\n\
                 SUBGOAL: Write the complete standalone implementation | ENTITY: main.py\n\
+                Spreadsheet / tabular deliverable:\n\
+                SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv\n\
                 Multi-file deliverable:\n\
                 SUBGOAL: Write the HTML structure and markup | ENTITY: index.html\n\
                 SUBGOAL: Write the external CSS styling | ENTITY: styles.css",
@@ -787,7 +950,8 @@ fn is_build_task(text: &str) -> bool {
                         2. Output your Lua code inside a ```lua ... ``` block.\n\
                         3. Put complete, functional code or data inside [[ ... ]]. NEVER output placeholder comments like <!-- TODO --> or <!-- implementation -->.\n\
                         4. Desktop GUI libraries (gui.*, window.*) DO NOT EXIST. Implement web applications, scripts, or system tasks directly via vfs.write.\n\
-                        5. Always output DONE after fulfilling the objective.",
+                        5. For spreadsheets, Excel, or tables: write structured, clean CSV format via vfs.write(\"filename.csv\", [[col1,col2\\nval1,val2\\n]]). Excel opens CSV natively without external binary libraries.\n\
+                        6. Always output DONE after fulfilling the objective.",
                         subgoal.description
                     )
                 } else {
@@ -1039,6 +1203,44 @@ fn is_build_task(text: &str) -> bool {
                     current_directive = new_directive;
                     pending_nudge = None;
                     attempt += 1;
+                }
+                ThinkerDecision::ConsultDependency { dependency, question } => {
+                    let user_choice = Self::prompt_user_for_dependency(&dependency, &question);
+                    match user_choice {
+                        DependencyChoice::InstallAndRetry => {
+                            println!("  [TERMINAL] Installing dependency '{}' via pip...", dependency);
+                            let install_cmd = format!("pip install {} || pip3 install {}", dependency, dependency);
+                            match self.terminal.run_sync(&install_cmd, 60) {
+                                Ok(out) => {
+                                    let summary = out.lines().last().unwrap_or("Installation completed");
+                                    println!("  [TERMINAL] Installation completed: {}", summary);
+                                    pending_nudge = Some(format!(
+                                        "Dependency '{}' was installed on the system. Re-execute your script now.",
+                                        dependency
+                                    ));
+                                    attempt += 1;
+                                }
+                                Err(e) => {
+                                    println!("  [TERMINAL] Installation failed: {}. Falling back to standard library.", e);
+                                    current_directive = format!(
+                                        "Do not use external library '{}'. Implement the solution using only standard library or CSV format.",
+                                        dependency
+                                    );
+                                    pending_nudge = None;
+                                    attempt += 1;
+                                }
+                            }
+                        }
+                        DependencyChoice::UseAlternative => {
+                            println!("  [DECISION] Switching to standard library / CSV alternative without '{}'.", dependency);
+                            current_directive = format!(
+                                "Do not use external library '{}'. Implement the solution using standard library or standard tabular format (CSV).",
+                                dependency
+                            );
+                            pending_nudge = None;
+                            attempt += 1;
+                        }
+                    }
                 }
             }
         }
@@ -1337,6 +1539,47 @@ mod tests {
             Some(&DiagnosticCode::PlaceholderOrEmpty),
         );
         assert_eq!(diag5, DiagnosticCode::RepeatedAttractor);
+
+        // 6. Generic Missing dependency detection
+        let diag6 = SwarmCoordinator::classify_failure(
+            &SwarmAction::RunLua { script: "terminal.run('python3 script.py')".to_string() },
+            false,
+            "ModuleNotFoundError: No module named 'scipy'",
+            false,
+            0,
+            None,
+            "",
+            None,
+        );
+        assert_eq!(diag6, DiagnosticCode::MissingDependency("scipy".to_string()));
+
+        let diag7 = SwarmCoordinator::classify_failure(
+            &SwarmAction::RunLua { script: "terminal.run('ffmpeg -version')".to_string() },
+            false,
+            "/bin/sh: line 1: ffmpeg: command not found",
+            false,
+            0,
+            None,
+            "",
+            None,
+        );
+        assert_eq!(diag7, DiagnosticCode::MissingDependency("ffmpeg".to_string()));
+    }
+
+    #[test]
+    fn test_extract_missing_dependency_generic() {
+        assert_eq!(
+            SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'requests'"),
+            Some("requests".to_string())
+        );
+        assert_eq!(
+            SwarmCoordinator::extract_missing_dependency("sh: line 1: jq: command not found"),
+            Some("jq".to_string())
+        );
+        assert_eq!(
+            SwarmCoordinator::extract_missing_dependency("ImportError: cannot import name 'solve' from 'scipy'"),
+            Some("scipy".to_string())
+        );
     }
 
     #[test]

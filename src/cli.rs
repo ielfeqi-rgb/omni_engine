@@ -955,11 +955,15 @@ fn resolve_swarm_models(
         ));
     }
 
-    // Prompt for worker if not provided
+    // Default worker to same unified model if not explicitly provided
     if worker_path.is_none() {
-        let default_worker_idx = if found.len() > 1 { found.len() - 1 } else { 0 };
+        let default_worker_idx = if let Some(ref o) = orch_path {
+            found.iter().position(|(_, p, _)| p == o).unwrap_or(0)
+        } else {
+            0
+        };
         worker_path = Some(prompt_user_for_model(
-            "System 1 Swarm Worker (Fast Execution Agent)",
+            "System 1 Swarm Worker (Fast Execution Agent - Unified in RAM)",
             &found,
             default_worker_idx,
         ));
@@ -1336,7 +1340,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
     let models = discover_models(&base_dir.join("models"), base_dir);
     let mut session = InteractiveSession {
         orchestrator_path: if !models.is_empty() { Some(models[0].1.clone()) } else { None },
-        worker_path: if !models.is_empty() { Some(models.last().unwrap().1.clone()) } else { None },
+        worker_path: if !models.is_empty() { Some(models[0].1.clone()) } else { None },
         max_subgoals: 3,
         max_steps_per_worker: 5,
         output_dir: PathBuf::from("./workspace"),
