@@ -404,6 +404,7 @@ impl SwarmCoordinator {
         let mut ctx = self.orchestrator_model.create_context(2048, 256, 4)?;
         let system_msg = "You are the System 2 Sovereign Thinker commanding an execution worker.\n\
 The user communicates ONLY with you. Workers are your executive hands.\n\
+Workers are localized, stateless code-generation engines with short-term context. They do not converse; they execute.\n\
 Your worker is equipped with:\n\
 - Direct code generation: Write complete code inside ```<lang> ... ``` blocks\n\
 - vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
@@ -411,7 +412,8 @@ Your worker is equipped with:\n\
 - terminal.run(\"command\"): Execute shell command on host\n\
 - DONE: Finish task\n\n\
 Your Task:\n\
-Take the user's goal and issue a single, concrete, explicit operational directive commanding the worker what exact file and complete functionality to implement.\n\
+Command the worker what EXACT technical functionality, algorithm, and logic to implement for the target file.\n\
+Do NOT give vague directives like 'write implementation'. Specify the concrete purpose and features.\n\
 Be direct, imperative, and specific (max 35 words).";
 
         let prev_summary = if previous_findings.is_empty() {
@@ -841,7 +843,7 @@ fn is_build_task(text: &str) -> bool {
                 SUBGOAL: <explicit implementation directive> | ENTITY: <target filename>\n\n\
                 Examples:\n\
                 Single-file deliverable:\n\
-                SUBGOAL: Write the complete standalone implementation | ENTITY: main.py\n\
+                SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py\n\
                 Spreadsheet / tabular deliverable:\n\
                 SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv\n\
                 Multi-file deliverable:\n\
