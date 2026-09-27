@@ -1306,7 +1306,8 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
             println!("  :: {}", "SYNTHESIZED GROUND TRUTH REPORT:".bright_yellow().bold());
             println!("{}\n", "================================================================================".bright_cyan());
             println!("{}\n", res.final_report.trim().bright_white());
-            if res.final_report.contains("FAILED") || res.findings.iter().any(|f| f.finding.starts_with("FAILED")) {
+            let has_failures = res.findings.iter().any(|f| f.finding.starts_with("FAILED"));
+            if has_failures {
                 println!("[!]  {}", "Mission completed with unresolved items or missing dependencies. Review report above.\n".bright_red().bold());
             } else {
                 println!("[+] {}", format!("Mission verified and completed. Project files saved in '{}'\n", session.output_dir.display()).bright_green().bold());
