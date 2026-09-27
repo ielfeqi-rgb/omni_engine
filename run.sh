@@ -2,4 +2,11 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export LD_LIBRARY_PATH="$SCRIPT_DIR/bin:$LD_LIBRARY_PATH"
-exec "$SCRIPT_DIR/omni_engine" "$@"
+if [ -f "$SCRIPT_DIR/bin/omni_engine" ]; then
+    exec "$SCRIPT_DIR/bin/omni_engine" "$@"
+elif [ -f "$SCRIPT_DIR/target/release/omni_engine" ]; then
+    exec "$SCRIPT_DIR/target/release/omni_engine" "$@"
+else
+    echo "[-] Error: omni_engine binary not found."
+    exit 1
+fi
