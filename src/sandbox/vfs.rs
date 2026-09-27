@@ -88,6 +88,12 @@ impl MemoryVfs {
         active.remove(&path_buf).is_some()
     }
 
+    /// List all file paths currently stored in RAM VFS
+    pub fn list_files(&self) -> Vec<PathBuf> {
+        let active = self.files.read();
+        active.keys().cloned().collect()
+    }
+
     /// Compute staged changes (Diffs) between original snapshots and active sandbox modifications.
     pub fn generate_staged_diffs(&self) -> Vec<StagedDiff> {
         let active = self.files.read();

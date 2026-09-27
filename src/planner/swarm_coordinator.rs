@@ -313,10 +313,13 @@ impl SwarmCoordinator {
         }
         println!();
 
-        // PHASE 2: System 1 Swarm Execution with Thinker Steering & Physical KV Rollback
+        // PHASE 2: System 1 Swarm Execution with Continuous Shared KV Attention & Physical KV Rollback
+        // Allocate single unified KV context for the swarm mission (8192 tokens budget)
+        let mut worker_ctx = self.worker_model.create_context(8192, 512, 4)?;
         let mut findings: Vec<WorkerFinding> = Vec::new();
 
-        for mut sg in subgoals {
+        for (idx, mut sg) in subgoals.into_iter().enumerate() {
+            let is_first_worker = idx == 0;
             match self.thinker_dispatch_directive(user_goal, &sg, &findings) {
                 Ok(directive) if !directive.is_empty() => {
                     println!(
@@ -335,10 +338,13 @@ impl SwarmCoordinator {
                 sg.description.bright_white()
             );
 
-            let finding = self.run_worker_loop(user_goal, &sg)?;
+            let finding = self.run_worker_loop(user_goal, &sg, &mut worker_ctx, is_first_worker, &findings)?;
             findings.push(finding);
             println!();
         }
+
+        // Swarm Mission Completed: Purge shared KV-cache (Epistemic Apoptosis)
+        worker_ctx.kv_cache_clear();
 
         // PHASE 3: System 2 Orchestrator Grounded Synthesis
         println!("  [THINKER SYNTHESIS] Synthesizing verified deliverables...");
@@ -739,9 +745,37 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                 && (lower.contains("python") || lower.contains("بايثون") || lower.contains("script") || lower.contains("سكربت")))
     }
 
+    /// Normalizes entity filename to proper casing (e.g. PascalCase for Java files)
+    pub fn normalize_entity_filename(entity: &str) -> String {
+        let trimmed = entity.trim();
+        if trimmed.to_lowercase().ends_with(".java") {
+            let stem = &trimmed[..trimmed.len() - 5];
+            let pascal: String = stem
+                .split(|c: char| c == '_' || c == '-')
+                .filter(|s| !s.is_empty())
+                .map(|word| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => {
+                            let rest: String = chars.collect();
+                            first.to_uppercase().collect::<String>() + &rest
+                        }
+                    }
+                })
+                .collect();
+            if !pascal.is_empty() {
+                return format!("{}.java", pascal);
+            }
+        }
+        trimmed.to_string()
+    }
+
 fn infer_target_entity(goal: &str) -> String {
     let lower = goal.to_lowercase();
-    if lower.contains(".py") || lower.contains("python") || lower.contains("بايثون") {
+    if lower.contains(".java") || lower.contains("java") || lower.contains("جافا") {
+        "Main.java".to_string()
+    } else if lower.contains(".py") || lower.contains("python") || lower.contains("بايثون") {
         if lower.contains("speed") || lower.contains("سرعة") || lower.contains("سرعه") {
             "measure_speed.py".to_string()
         } else {
@@ -772,6 +806,8 @@ fn is_build_task(text: &str) -> bool {
     lower.contains("create")
         || lower.contains("build")
         || lower.contains("game")
+        || lower.contains("java")
+        || lower.contains("جافا")
         || lower.contains("html")
         || lower.contains("css")
         || lower.contains("js")
@@ -832,11 +868,12 @@ fn is_build_task(text: &str) -> bool {
             format!(
                 "You are the System 2 Sovereign Architect.\n\
                 Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
-                Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html) or via vfs.write(\"filename\", [[content]]).\n\n\
+                Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java) or via vfs.write(\"filename\", [[content]]).\n\n\
                 PARSIMONY & WORKER DISPATCH RULES:\n\
                 - You decide how many workers to deploy (from 1 up to {} max budget).\n\
                 - Rule of Parsimony: If the user objective asks for a single script, utility, single document, or standalone file (e.g. Python script, shell script, single web page, or report), deploy EXACTLY 1 worker to generate the complete file in one pass. Output EXACTLY ONE line for SUBGOAL.\n\
                 - Only decompose into multiple sub-goals if the objective genuinely requires multiple distinct physical files (e.g. separate frontend and backend, or html with separate css). Each sub-goal MUST target a distinct physical filename (ENTITY).\n\
+                - For Java: Target filenames MUST use PascalCase (e.g. GameLoop.java, Snake.java, Food.java) matching their primary public class.\n\
                 - NEVER output multiple sub-goals for the same file or redundant sub-tasks.\n\
                 - SPREADSHEETS & BINARY: Lua VFS cannot write binary ZIP archives (.xlsx, .docx). For spreadsheets, Excel, or tabular data, always direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel opens natively.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
@@ -844,6 +881,10 @@ fn is_build_task(text: &str) -> bool {
                 Examples:\n\
                 Single-file deliverable:\n\
                 SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py\n\
+                Java multi-file deliverable:\n\
+                SUBGOAL: Implement main game window, board panel, and game loop | ENTITY: GameLoop.java\n\
+                SUBGOAL: Implement snake body segments, movement, and direction | ENTITY: Snake.java\n\
+                SUBGOAL: Implement food spawning, collision logic, and score tracking | ENTITY: Food.java\n\
                 Spreadsheet / tabular deliverable:\n\
                 SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv\n\
                 Multi-file deliverable:\n\
@@ -880,13 +921,14 @@ fn is_build_task(text: &str) -> bool {
                 let rest = l.trim_start_matches("SUBGOAL:").trim();
                 let parts: Vec<&str> = rest.split("| ENTITY:").collect();
                 let desc = parts[0].trim().to_string();
-                let entity = if parts.len() > 1 && !parts[1].trim().is_empty() {
+                let raw_entity = if parts.len() > 1 && !parts[1].trim().is_empty() {
                     parts[1].trim().to_string()
                 } else if is_build {
                     Self::infer_target_entity(goal)
                 } else {
                     goal.split_whitespace().next().unwrap_or("general").to_string()
                 };
+                let entity = Self::normalize_entity_filename(&raw_entity);
 
                 let entity_key = entity.to_lowercase();
                 if seen_entities.contains(&entity_key) {
@@ -937,10 +979,16 @@ fn is_build_task(text: &str) -> bool {
         Ok(subgoals)
     }
 
-    /// System 1: Autonomous Worker Loop with Checkpoint Freeze and Thinker Sovereign Decisions
-    fn run_worker_loop(&self, user_goal: &str, subgoal: &SubGoal) -> Result<WorkerFinding, String> {
+    /// System 1: Autonomous Worker Loop with Checkpoint Freeze and Unified KV-Cache Stream
+    fn run_worker_loop(
+        &self,
+        user_goal: &str,
+        subgoal: &SubGoal,
+        worker_ctx: &mut NativeLlamaContext,
+        is_first_worker: bool,
+        previous_findings: &[WorkerFinding],
+    ) -> Result<WorkerFinding, String> {
         let is_build = Self::is_build_task(&subgoal.description) || Self::is_build_task(user_goal);
-        let mut worker_ctx = self.worker_model.create_context(4096, 512, 4)?;
 
         let mut attempt = 1;
         let max_attempts = 3;
@@ -954,76 +1002,180 @@ fn is_build_task(text: &str) -> bool {
         let target_path = std::path::PathBuf::from(&subgoal.target_entity);
         let mut last_diagnostic: Option<DiagnosticCode> = None;
 
+        // Unified Sovereign Swarm Memory:
+        // Record the anchor cursor where this worker begins in the shared KV cache.
+        let worker_initial_cursor = worker_ctx.current_cursor();
+
         while attempt <= max_attempts {
             // Check if starting fresh (attempt 1 or after a RESET)
             if pending_nudge.is_none() {
-                worker_ctx.kv_cache_clear();
+                if is_first_worker && attempt == 1 {
+                    worker_ctx.kv_cache_clear();
+                } else if attempt > 1 {
+                    // RESET triggered: Surgically roll back ONLY this worker's failed attempt,
+                    // preserving all prior workers' KV-cache intact!
+                    let _ = worker_ctx.rollback_to(worker_initial_cursor);
+                    println!(
+                        "  [WORKER RESET] Worker #{} rewound to initial cursor {} (Prior KV cache preserved).",
+                        subgoal.id, worker_initial_cursor
+                    );
+                }
 
-                let system_msg = if is_build {
-                    format!(
-                        "You are an Executive Hands Worker in an autonomous dual-model swarm.\n\
-                        You are directed exclusively by the System 2 Sovereign Thinker.\n\
-                        Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
-                        Overall Goal: {}\n\
-                        Current Task: {}\n\
-                        Target File: {}\n\n\
-                        [ENGINE EXECUTION MANDATE]:\n\
-                        1. You are a pure code-generation engine. You have NO conversational persona.\n\
-                        2. NEVER output conversational speech, greetings, explanations, or commentary.\n\
-                        3. Output ONLY the complete, production-ready code for '{}' inside a code block (e.g. ```python ... ```, ```sh ... ```) or call vfs.write(\"{}\", [[...]]) inside a ```lua ... ``` block.\n\
-                        4. The code MUST be 100% complete, fully implemented, and standalone.\n\
-                        5. NEVER output placeholder comments like TODO, FIXME, pass, or ellipses (...).\n\
-                        6. For spreadsheets, Excel, or tables: output clean CSV format with headers.",
-                        user_goal, subgoal.description, subgoal.target_entity, subgoal.target_entity, subgoal.target_entity
-                    )
+                if is_first_worker {
+                    let java_mandate = if subgoal.target_entity.ends_with(".java") {
+                        let stem = subgoal.target_entity.trim_end_matches(".java");
+                        format!(
+                            "\n- Java Requirement: The primary public class MUST be named 'public class {}' to match '{}.java'.",
+                            stem, stem
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                    let system_msg = if is_build {
+                        format!(
+                            "You are an Executive Hands Worker in an autonomous dual-model swarm.\n\
+                            You are directed exclusively by the System 2 Sovereign Thinker.\n\
+                            Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
+                            Overall Goal: {}\n\
+                            Current Task: {}\n\
+                            Target File: {}\n\n\
+                            [ENGINE EXECUTION MANDATE]:\n\
+                            1. You are a pure code-generation engine. You have NO conversational persona.\n\
+                            2. NEVER output conversational speech, greetings, explanations, or commentary.\n\
+                            3. Output ONLY the complete, production-ready code for '{}' inside a code block (e.g. ```python ... ```, ```sh ... ```, ```java ... ```) or call vfs.write(\"{}\", [[...]]) inside a ```lua ... ``` block.\n\
+                            4. The code MUST be 100% complete, fully implemented, and standalone.\n\
+                            5. NEVER output placeholder comments like TODO, FIXME, pass, or ellipses (...).\n\
+                            6. For spreadsheets, Excel, or tables: output clean CSV format with headers.",
+                            user_goal, subgoal.description, subgoal.target_entity, subgoal.target_entity, subgoal.target_entity
+                        )
+                    } else {
+                        format!(
+                            "You are an Executive Hands Worker in an autonomous dual-model swarm.\n\
+                            You are directed exclusively by the System 2 Sovereign Thinker.\n\
+                            Objective: {}\n\n\
+                            Available Commands:\n\
+                            - SEARCH: <query>\n\
+                            - FETCH: <result index or URL>\n\
+                            - REPORT: <discovered facts>\n\
+                            - DONE\n\n\
+                            Rule: Output exactly ONE command per step.\n\
+                            When facts are found, output REPORT: <facts>.\n\
+                            When objective is fulfilled, output DONE.",
+                            subgoal.description
+                        )
+                    };
+
+                    let user_msg = if is_build {
+                        format!(
+                            "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
+                            [ENGINE DIRECTIVE INJECTION - STRICT CONSTRAINTS]:\n\
+                            - Output EXCLUSIVELY the complete, working code inside a single markdown code block.\n\
+                            - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
+                            - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.{}\n\
+                            - Generate the code for '{}' now:",
+                            user_goal, subgoal.description, subgoal.target_entity, current_directive,
+                            java_mandate, subgoal.target_entity
+                        )
+                    } else {
+                        format!(
+                            "Goal: {}\nThinker Directive: {}\nTask: {}\n\n\
+                            [ENGINE DIRECTIVE INJECTION]:\n\
+                            - Output EXCLUSIVELY one command: SEARCH: <query> or REPORT: <facts>.\n\
+                            - ZERO conversational text.\n\
+                            Execute now:",
+                            user_goal, current_directive, subgoal.description
+                        )
+                    };
+
+                    let prompt = Self::format_prompt(&self.worker_model, &system_msg, &user_msg);
+                    let prompt_tokens = self.worker_model.tokenize(&prompt, true)?;
+                    worker_ctx.eval_tokens(&prompt_tokens, 0)?;
                 } else {
-                    format!(
-                        "You are an Executive Hands Worker in an autonomous dual-model swarm.\n\
-                        You are directed exclusively by the System 2 Sovereign Thinker.\n\
-                        Objective: {}\n\n\
-                        Available Commands:\n\
-                        - SEARCH: <query>\n\
-                        - FETCH: <result index or URL>\n\
-                        - REPORT: <discovered facts>\n\
-                        - DONE\n\n\
-                        Rule: Output exactly ONE command per step.\n\
-                        When facts are found, output REPORT: <facts>.\n\
-                        When objective is fulfilled, output DONE.",
-                        subgoal.description
-                    )
-                };
+                    // Subsequent Workers: Seamless Multi-Turn continuation in Shared KV-Cache
+                    let vfs_files = self.vfs.list_files();
+                    let vfs_files_list = if vfs_files.is_empty() {
+                        "None".to_string()
+                    } else {
+                        vfs_files
+                            .iter()
+                            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
 
-                let user_msg = if is_build {
-                    format!(
-                        "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
-                        [ENGINE DIRECTIVE INJECTION - STRICT CONSTRAINTS]:\n\
-                        - Output EXCLUSIVELY the complete, working code inside a single markdown code block.\n\
-                        - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
-                        - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.\n\
-                        - Generate the code for '{}' now:",
-                        user_goal, subgoal.description, subgoal.target_entity, current_directive, subgoal.target_entity
-                    )
-                } else {
-                    format!(
-                        "Goal: {}\nThinker Directive: {}\nTask: {}\n\n\
-                        [ENGINE DIRECTIVE INJECTION]:\n\
-                        - Output EXCLUSIVELY one command: SEARCH: <query> or REPORT: <facts>.\n\
-                        - ZERO conversational text.\n\
-                        Execute now:",
-                        user_goal, current_directive, subgoal.description
-                    )
-                };
+                    let prev_summary = previous_findings
+                        .last()
+                        .map(|f| format!("Deliverable for Task #{} committed to VFS: {}", f.worker_id, f.finding))
+                        .unwrap_or_else(|| "Previous task complete.".to_string());
 
-                let prompt = Self::format_prompt(&self.worker_model, &system_msg, &user_msg);
-                let prompt_tokens = self.worker_model.tokenize(&prompt, true)?;
-                worker_ctx.eval_tokens(&prompt_tokens, 0)?;
+                    let observation = format!(
+                        "{}\nFiles currently in VFS: [{}]",
+                        prev_summary, vfs_files_list
+                    );
+
+                    let java_guidance = if subgoal.target_entity.ends_with(".java") {
+                        let stem = subgoal.target_entity.trim_end_matches(".java");
+                        format!(
+                            "\n- In Java, you MUST declare 'public class {}' matching the filename exactly.\n\
+                            - Inspect the previous Java classes above in active memory. Use their exact class names, methods, and variables without mismatch.",
+                            stem
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                    let next_instruction = if is_build {
+                        format!(
+                            "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
+                            Task #{}: {}\n\
+                            Target File: {}\n\
+                            Thinker Directive: {}\n\n\
+                            [MANDATORY INTEROPERABILITY]:\n\
+                            - You share continuous attention memory with prior workers above.\n\
+                            - Strictly attend to the exact class names, method signatures, return types, and fields defined in prior files in memory.\n\
+                            - Ensure 100% interoperability and compatibility.{}\n\
+                            - Output EXCLUSIVELY the complete, working code for '{}' inside a single code block.\n\
+                            - ZERO conversational text outside the code block.\n\
+                            Generate the code for '{}' now:",
+                            subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
+                            java_guidance, subgoal.target_entity, subgoal.target_entity
+                        )
+                    } else {
+                        format!(
+                            "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
+                            Task #{}: {}\n\
+                            Target: {}\n\
+                            Thinker Directive: {}\n\n\
+                            - Build upon previous findings above in memory.\n\
+                            - Output EXCLUSIVELY one command: SEARCH: <query> or REPORT: <facts>.\n\
+                            Execute now:",
+                            subgoal.id, subgoal.description, subgoal.target_entity, current_directive
+                        )
+                    };
+
+                    let turn = Self::format_observation_turn(&self.worker_model, &observation, &next_instruction);
+                    let turn_tokens = self.worker_model.tokenize(&turn, false)?;
+                    worker_ctx.eval_tokens(&turn_tokens, 0)?;
+                }
 
                 // CHECKPOINT FREEZE: Anchor cursor position before generation
                 checkpoint = worker_ctx.current_cursor();
-                println!(
-                    "  [WORKER CHECKPOINT] Worker #{} anchored at position {} tokens.",
-                    subgoal.id, checkpoint
-                );
+                if is_first_worker {
+                    println!(
+                        "  [WORKER CONTEXT] Worker #1 (Lead): Anchored at position {} tokens.",
+                        checkpoint
+                    );
+                } else {
+                    println!(
+                        "  [SHARED KV MEMORY] Worker #{} inherited {} tokens of attention context from prior workers.",
+                        subgoal.id, worker_initial_cursor.to_string().bright_cyan()
+                    );
+                    println!(
+                        "  [WORKER CONTEXT] Worker #{} anchored at position {} tokens in unified KV-stream.",
+                        subgoal.id, checkpoint
+                    );
+                }
             } else if let Some(ref nudge) = pending_nudge {
                 // NUDGE BRANCH: Worker is frozen at checkpoint!
                 let nudge_turn = format!(
@@ -1219,6 +1371,30 @@ fn is_build_task(text: &str) -> bool {
                                 syntax_error = Some(res.trim().to_string());
                             }
                         }
+                    } else if subgoal.target_entity.ends_with(".java") {
+                        let stem = subgoal.target_entity.trim_end_matches(".java");
+                        let open_braces = code.chars().filter(|&c| c == '{').count();
+                        let close_braces = code.chars().filter(|&c| c == '}').count();
+                        if open_braces != close_braces {
+                            syntax_error = Some(format!(
+                                "Java syntax error: Unbalanced curly braces ({} open vs {} close)",
+                                open_braces, close_braces
+                            ));
+                        } else {
+                            let has_decl = code.lines().any(|l| {
+                                let words: Vec<&str> = l.split_whitespace().collect();
+                                words.windows(2).any(|w| {
+                                    (w[0] == "class" || w[0] == "interface" || w[0] == "enum")
+                                        && (w[1] == stem || w[1].starts_with(&format!("{}<", stem)) || w[1].starts_with(&format!("{}(", stem)))
+                                })
+                            });
+                            if !has_decl {
+                                syntax_error = Some(format!(
+                                    "Java structural mismatch: File is named '{}.java' but does not declare 'class {}'",
+                                    stem, stem
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -1237,8 +1413,7 @@ fn is_build_task(text: &str) -> bool {
                 println!("  │     * Status: Staged in RAM Sandbox VFS -> Ready for host commit");
                 println!("{}", "  └────────────────────────────────────────────────────────────────────────┘".bright_green());
 
-                // Worker returns to idle: 100% cache clear
-                worker_ctx.kv_cache_clear();
+                // Unified Swarm Attention: Generated deliverable stays in active KV-cache for subsequent workers
                 final_finding = if is_build {
                     format!("Target file '{}' created, syntax verified, and staged in VFS ({} bytes).", subgoal.target_entity, vfs_target_size)
                 } else {
@@ -1759,5 +1934,16 @@ mod tests {
         assert!(SwarmCoordinator::is_explicit_single_file("I need a Python program to measure internet speed."));
         assert!(SwarmCoordinator::is_explicit_single_file("أريد برنامج بايثون لقياس سرعة الإنترنت"));
         assert!(!SwarmCoordinator::is_explicit_single_file("Create an HTML app with external CSS and JS files"));
+    }
+
+    #[test]
+    fn test_normalize_entity_filename() {
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("game_loop.java"), "GameLoop.java");
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("snake_body.java"), "SnakeBody.java");
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("collision_detection.java"), "CollisionDetection.java");
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("GameLoop.java"), "GameLoop.java");
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("Snake.java"), "Snake.java");
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("main.py"), "main.py");
+        assert_eq!(SwarmCoordinator::normalize_entity_filename("styles.css"), "styles.css");
     }
 }
