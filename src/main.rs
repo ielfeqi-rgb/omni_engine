@@ -21,7 +21,6 @@ use auth::KeyManager;
 use downloader::ModelDownloader;
 use llama_manager::LlamaManager;
 use logger::LogBuffer;
-use std::io::IsTerminal;
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use web_server::{create_router, AppState};
@@ -48,8 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // If running interactively with no args, open Sovereign Terminal Console
-    if args.len() <= 1 && std::io::stdin().is_terminal() {
+    // If running with no args, open Sovereign Terminal Console by default
+    if args.len() <= 1 {
         return cli::run_interactive_console(&base_dir).await;
     }
 

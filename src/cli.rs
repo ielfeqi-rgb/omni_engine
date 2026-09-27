@@ -172,8 +172,7 @@ pub fn print_status(base_dir: &PathBuf) {
 }
 
 pub fn print_models(base_dir: &PathBuf) {
-    let llama_manager = LlamaManager::new(base_dir.clone());
-    let models = llama_manager.list_available_models();
+    let models = discover_models(&base_dir.join("models"), base_dir);
 
     println!("================================================================================");
     println!("                      📦 LOCAL GGUF MODEL REPOSITORY                            ");
@@ -181,23 +180,13 @@ pub fn print_models(base_dir: &PathBuf) {
 
     if models.is_empty() {
         println!("  No GGUF models found in: {}", base_dir.join("models").display());
-        println!("  💡 Tip: Place .gguf models into the 'models/' directory or use the Web UI downloader.");
+        println!("  💡 Tip: Place .gguf models into the 'models/' directory.");
     } else {
-        println!("  {:<4} {:<40} {:<12}", "#", "Model Filename", "File Size");
-        println!("  {}", "-".repeat(60));
-        for (i, m) in models.iter().enumerate() {
-            let path = base_dir.join("models").join(m);
-            let size_str = if let Ok(meta) = fs::metadata(&path) {
-                let mb = meta.len() as f64 / (1024.0 * 1024.0);
-                if mb >= 1024.0 {
-                    format!("{:.2} GB", mb / 1024.0)
-                } else {
-                    format!("{:.1} MB", mb)
-                }
-            } else {
-                "Unknown".to_string()
-            };
-            println!("  {:<4} {:<40} {:<12}", i + 1, m, size_str);
+        println!("  {:<4} {:<45} {:<12} {}", "#", "Model Filename", "File Size", "Role");
+        println!("  {}", "-".repeat(75));
+        for (i, (name, _, size_str)) in models.iter().enumerate() {
+            let role = if i == 0 { "★ Primary (Unified Model in RAM)" } else { "Available" };
+            println!("  [{}]  {:<45} {:<12} {}", i + 1, name, size_str, role);
         }
     }
     println!("================================================================================");
@@ -1039,28 +1028,34 @@ fn print_session_header(session: &InteractiveSession) {
     println!("║             Native C-FFI • Dual-Model Swarm • Zero-Cheat Causal KV Rollback              ║");
     println!("{}\n", "╚══════════════════════════════════════════════════════════════════════════════════════════╝".bright_cyan());
 
+    let is_unified = session.orchestrator_path.is_some() && session.orchestrator_path == session.worker_path;
     let orch_display = session.orchestrator_path.as_ref()
         .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
-        .unwrap_or_else(|| "None (Type 'models' to select)".to_string());
+        .unwrap_or_else(|| "None (Type 'models' to configure)".to_string());
 
-    let worker_display = session.worker_path.as_ref()
-        .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
-        .unwrap_or_else(|| "None (Type 'models' to select)".to_string());
+    if is_unified {
+        println!("  🧠 {:<33} : {}", "Unified Model Architecture".bright_white().bold(), orch_display.bright_green().bold());
+        println!("  ⚡ {:<33} : {}", "Memory Allocation (RAM)".bright_white(), "Shared via Arc (~1.04 GB • 100% ephemeral worker cache)".bright_cyan());
+    } else {
+        let worker_display = session.worker_path.as_ref()
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .unwrap_or_else(|| "None".to_string());
+        println!("  🧠 {:<33} : {}", "System 2 Thinker (Planner)".bright_white().bold(), orch_display.bright_green());
+        println!("  ⚡ {:<33} : {}", "System 1 Worker (Executor)".bright_white().bold(), worker_display.bright_cyan());
+        println!("  ⚙️  {:<33} : {}", "Architecture Mode".bright_white(), "Dual-Model Split".bright_yellow());
+    }
 
-    println!("  🧠 {:<33} : {}", "System 2 Thinker (Orchestrator)".bright_white().bold(), orch_display.bright_green());
-    println!("  ⚡ {:<33} : {}", "System 1 Swarm Worker".bright_white().bold(), worker_display.bright_cyan());
     println!("  🎯 {:<33} : {} subgoals", "Planning Depth".bright_white(), session.max_subgoals.to_string().bright_yellow());
-    println!("  👣 {:<33} : {} steps/worker", "Execution Budget".bright_white(), session.max_steps_per_worker.to_string().bright_yellow());
+    println!("  👣 {:<33} : {} attempts/worker", "Execution Budget".bright_white(), session.max_steps_per_worker.to_string().bright_yellow());
     println!("  📁 {:<33} : {}", "Output Directory".bright_white(), session.output_dir.display().to_string().bright_magenta());
     println!();
-    println!("  {} {} | {} | {} | {} | {} | {} | {} | {}",
+    println!("  {} {} | {} | {} | {} | {} | {} | {}",
         "Quick Commands:".bright_yellow().bold(),
-        "run <goal>".bright_white().bold(),
-        "chat".bright_white(),
+        "<type your goal directly>".bright_green().bold(),
         "models".bright_white(),
         "config".bright_white(),
+        "chat".bright_white(),
         "status".bright_white(),
-        "kv-test".bright_white(),
         "help".bright_white(),
         "exit".bright_white()
     );
@@ -1071,19 +1066,22 @@ fn print_console_help() {
     use colored::*;
     println!("\n{}", "📖 OMNI ENGINE CONSOLE COMMAND REFERENCE".bright_yellow().bold());
     println!("  {}", "─".repeat(70));
-    println!("  {:<26} {}", "run <goal>".bright_cyan().bold(), "Execute autonomous dual-model swarm for any mission or task");
-    println!("  {:<26} {}", "chat".bright_white().bold(), "Direct native C-FFI conversational dialogue with active model");
-    println!("  {:<26} {}", "models".bright_white().bold(), "Interactively choose or switch Thinker & Worker models");
-    println!("  {:<26} {}", "config".bright_white().bold(), "Adjust subgoals limit, worker steps, and output directory");
-    println!("  {:<26} {}", "status".bright_white().bold(), "Inspect system RAM, CPU cores, and engine status");
-    println!("  {:<26} {}", "kv-test".bright_white().bold(), "Run live physical KV-cache manipulation test on hardware");
-    println!("  {:<26} {}", "clear".bright_white().bold(), "Clear the terminal screen");
-    println!("  {:<26} {}", "help".bright_white().bold(), "Display this command guide");
-    println!("  {:<26} {}\n", "exit / quit".bright_white().bold(), "Exit the interactive console back to bash");
+    println!("  {:<28} {}", "<any prompt or goal>".bright_green().bold(), "Type your task directly to launch the autonomous swarm");
+    println!("  {:<28} {}", "run <goal>".bright_cyan().bold(), "Explicitly execute autonomous swarm for any mission or task");
+    println!("  {:<28} {}", "chat".bright_white().bold(), "Direct native C-FFI conversational dialogue with active model");
+    println!("  {:<28} {}", "models".bright_white().bold(), "Interactively choose unified model or dual-model split");
+    println!("  {:<28} {}", "config".bright_white().bold(), "Interactive menu to adjust subgoals, worker attempts, and output dir");
+    println!("  {:<28} {}", "status".bright_white().bold(), "Inspect system RAM, CPU cores, and engine status");
+    println!("  {:<28} {}", "kv-test".bright_white().bold(), "Run live physical KV-cache manipulation test on hardware");
+    println!("  {:<28} {}", "clear".bright_white().bold(), "Clear the terminal screen");
+    println!("  {:<28} {}", "help / ?".bright_white().bold(), "Display this command guide");
+    println!("  {:<28} {}\n", "exit / quit".bright_white().bold(), "Exit the interactive console back to bash");
 }
 
 fn handle_interactive_models(session: &mut InteractiveSession, base_dir: &Path) {
     use colored::*;
+    use std::io::{self, Write};
+
     let models = discover_models(&base_dir.join("models"), base_dir);
     if models.is_empty() {
         println!("❌ No GGUF models found in models/ directory.");
@@ -1091,7 +1089,7 @@ fn handle_interactive_models(session: &mut InteractiveSession, base_dir: &Path) 
     }
 
     println!("\n{}", "================================================================================".bright_cyan());
-    println!("  📦 {}", "SELECT MODELS FOR SOVEREIGN SWARM DUAL-ARCHITECTURE".bright_yellow().bold());
+    println!("  📦 {}", "MODEL & ARCHITECTURE CONFIGURATION".bright_yellow().bold());
     println!("{}", "================================================================================".bright_cyan());
     println!("  Available GGUF Models:\n");
     println!("  {:<4} {:<45} {:<12}", "#", "Model Filename", "File Size");
@@ -1101,81 +1099,176 @@ fn handle_interactive_models(session: &mut InteractiveSession, base_dir: &Path) 
     }
     println!("{}\n", "================================================================================".bright_cyan());
 
-    let orch_idx = session.orchestrator_path.as_ref()
-        .and_then(|p| models.iter().position(|(_, path, _)| path == p))
-        .unwrap_or(0);
-    session.orchestrator_path = Some(prompt_user_for_model(
-        "System 2 Thinker (Orchestrator / High-Level Planner)",
-        &models,
-        orch_idx,
-    ));
+    let is_unified = session.orchestrator_path.is_some() && session.orchestrator_path == session.worker_path;
+    let curr_orch = session.orchestrator_path.as_ref()
+        .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+        .unwrap_or_else(|| "None".to_string());
 
-    let worker_idx = session.worker_path.as_ref()
-        .and_then(|p| models.iter().position(|(_, path, _)| path == p))
-        .unwrap_or_else(|| if models.len() > 1 { models.len() - 1 } else { 0 });
-    session.worker_path = Some(prompt_user_for_model(
-        "System 1 Swarm Worker (Fast Execution Agent)",
-        &models,
-        worker_idx,
-    ));
+    println!("  Current Configuration:");
+    if is_unified {
+        println!("    Architecture : {} ({})", "Unified Model in RAM".bright_green().bold(), curr_orch);
+    } else {
+        let curr_worker = session.worker_path.as_ref()
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .unwrap_or_else(|| "None".to_string());
+        println!("    Architecture : Dual-Model Split");
+        println!("    Thinker      : {}", curr_orch);
+        println!("    Worker       : {}", curr_worker);
+    }
+
+    println!("\n  Selection Options:");
+    println!("    [1] Set Unified Model (Single model in RAM for both Thinker & Worker - Recommended)");
+    println!("    [2] Set Dual-Model Split (Separate models for Thinker and Worker)");
+    println!("    [0] Cancel / Keep current setup\n");
+
+    print!("👉 Select option [0-2, default: 1]: ");
+    let _ = io::stdout().flush();
+    let mut choice = String::new();
+    if io::stdin().read_line(&mut choice).is_err() {
+        return;
+    }
+    let choice_trimmed = choice.trim();
+
+    if choice_trimmed == "0" {
+        println!("  Keeping current configuration.");
+        return;
+    }
+
+    if choice_trimmed == "2" {
+        println!("\n  Configuring Dual-Model Split:");
+        let orch_idx = session.orchestrator_path.as_ref()
+            .and_then(|p| models.iter().position(|(_, path, _)| path == p))
+            .unwrap_or(0);
+        session.orchestrator_path = Some(prompt_user_for_model(
+            "System 2 Thinker (Orchestrator)",
+            &models,
+            orch_idx,
+        ));
+
+        let worker_idx = session.worker_path.as_ref()
+            .and_then(|p| models.iter().position(|(_, path, _)| path == p))
+            .unwrap_or(0);
+        session.worker_path = Some(prompt_user_for_model(
+            "System 1 Worker (Executor)",
+            &models,
+            worker_idx,
+        ));
+    } else {
+        println!("\n  Configuring Unified Model:");
+        let cur_idx = session.orchestrator_path.as_ref()
+            .and_then(|p| models.iter().position(|(_, path, _)| path == p))
+            .unwrap_or(0);
+        let selected = prompt_user_for_model(
+            "Unified Model (Shared by Thinker & Worker via Arc)",
+            &models,
+            cur_idx,
+        );
+        session.orchestrator_path = Some(selected.clone());
+        session.worker_path = Some(selected);
+    }
 
     let o_name = session.orchestrator_path.as_ref().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
     let w_name = session.worker_path.as_ref().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
 
-    println!("\n  🎯 {}", "Updated Active Swarm Architecture:".bright_green().bold());
-    println!("     🧠 System 2 Thinker (Orchestrator): {}", o_name.bright_white().bold());
-    println!("     ⚡ System 1 Swarm Worker:           {}\n", w_name.bright_white().bold());
+    println!("\n  🎯 {}", "Configuration Saved:".bright_green().bold());
+    if session.orchestrator_path == session.worker_path {
+        println!("     🚀 Mode:    Unified Sovereign Architecture");
+        println!("     🧠 Model:   {} (Shared in RAM • Zero redundancy)\n", o_name.bright_white().bold());
+    } else {
+        println!("     🧠 Thinker: {}", o_name.bright_white().bold());
+        println!("     ⚡ Worker:  {}\n", w_name.bright_white().bold());
+    }
 }
 
-fn handle_interactive_config(session: &mut InteractiveSession) {
+fn handle_interactive_config(session: &mut InteractiveSession, base_dir: &Path) {
     use colored::*;
     use std::io::{self, Write};
 
-    println!("\n{}", "⚙️  CONFIGURE SWARM EXECUTION PARAMETERS".bright_yellow().bold());
-    println!("  (Press Enter without typing to keep current value)\n");
+    loop {
+        let is_unified = session.orchestrator_path.is_some() && session.orchestrator_path == session.worker_path;
+        let orch_name = session.orchestrator_path.as_ref()
+            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .unwrap_or_else(|| "None".to_string());
 
-    print!("👉 Max Subgoals [current: {}]: ", session.max_subgoals);
-    let _ = io::stdout().flush();
-    let mut input = String::new();
-    if io::stdin().read_line(&mut input).is_ok() {
+        println!("\n{}", "⚙️  SWARM SYSTEM CONFIGURATION MENU".bright_yellow().bold());
+        println!("{}", "─".repeat(70).dimmed());
+        if is_unified {
+            println!("  [1] Active Model Architecture : {} ({})", "Unified in RAM".bright_green().bold(), orch_name);
+        } else {
+            let worker_name = session.worker_path.as_ref()
+                .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                .unwrap_or_else(|| "None".to_string());
+            println!("  [1] Active Model Architecture : Dual Model Split (T: {}, W: {})", orch_name, worker_name);
+        }
+        println!("  [2] Max Planning Depth (Subgoals)  : {} subgoals", session.max_subgoals.to_string().bright_yellow());
+        println!("  [3] Execution Budget per Worker     : {} attempts", session.max_steps_per_worker.to_string().bright_yellow());
+        println!("  [4] Workspace Output Directory      : {}", session.output_dir.display().to_string().bright_magenta());
+        println!("  [0] Done / Back to Console");
+        println!("{}", "─".repeat(70).dimmed());
+
+        print!("👉 Select setting to adjust [0-4, default: 0]: ");
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            break;
+        }
+
         let trimmed = input.trim();
-        if !trimmed.is_empty() {
-            if let Ok(v) = trimmed.parse::<usize>() {
-                if v > 0 {
-                    session.max_subgoals = v;
+        match trimmed {
+            "1" => {
+                handle_interactive_models(session, base_dir);
+            }
+            "2" => {
+                print!("👉 Enter new Max Subgoals [1-10, current: {}]: ", session.max_subgoals);
+                let _ = io::stdout().flush();
+                let mut v_str = String::new();
+                if io::stdin().read_line(&mut v_str).is_ok() {
+                    if let Ok(v) = v_str.trim().parse::<usize>() {
+                        if (1..=10).contains(&v) {
+                            session.max_subgoals = v;
+                            println!("  ✅ Max subgoals set to {}", v);
+                        } else {
+                            println!("  ⚠️ Value must be between 1 and 10.");
+                        }
+                    }
                 }
+            }
+            "3" => {
+                print!("👉 Enter new Max Steps per Worker [1-15, current: {}]: ", session.max_steps_per_worker);
+                let _ = io::stdout().flush();
+                let mut v_str = String::new();
+                if io::stdin().read_line(&mut v_str).is_ok() {
+                    if let Ok(v) = v_str.trim().parse::<usize>() {
+                        if (1..=15).contains(&v) {
+                            session.max_steps_per_worker = v;
+                            println!("  ✅ Max steps per worker set to {}", v);
+                        } else {
+                            println!("  ⚠️ Value must be between 1 and 15.");
+                        }
+                    }
+                }
+            }
+            "4" => {
+                print!("👉 Enter new Output Directory [current: {}]: ", session.output_dir.display());
+                let _ = io::stdout().flush();
+                let mut dir_str = String::new();
+                if io::stdin().read_line(&mut dir_str).is_ok() {
+                    let d = dir_str.trim();
+                    if !d.is_empty() {
+                        session.output_dir = PathBuf::from(d);
+                        println!("  ✅ Output directory set to '{}'", session.output_dir.display());
+                    }
+                }
+            }
+            "0" | "" => {
+                println!("  Returning to console.");
+                break;
+            }
+            _ => {
+                println!("  ⚠️ Invalid selection. Please enter 0, 1, 2, 3, or 4.");
             }
         }
     }
-
-    print!("👉 Max Steps per Worker [current: {}]: ", session.max_steps_per_worker);
-    let _ = io::stdout().flush();
-    input.clear();
-    if io::stdin().read_line(&mut input).is_ok() {
-        let trimmed = input.trim();
-        if !trimmed.is_empty() {
-            if let Ok(v) = trimmed.parse::<usize>() {
-                if v > 0 {
-                    session.max_steps_per_worker = v;
-                }
-            }
-        }
-    }
-
-    print!("👉 Output Directory [current: {}]: ", session.output_dir.display());
-    let _ = io::stdout().flush();
-    input.clear();
-    if io::stdin().read_line(&mut input).is_ok() {
-        let trimmed = input.trim();
-        if !trimmed.is_empty() {
-            session.output_dir = PathBuf::from(trimmed);
-        }
-    }
-
-    println!("\n  ✅ Settings updated:");
-    println!("     Subgoals: {}", session.max_subgoals.to_string().bright_yellow());
-    println!("     Steps:    {}", session.max_steps_per_worker.to_string().bright_yellow());
-    println!("     Output:   {}\n", session.output_dir.display().to_string().bright_magenta());
 }
 
 fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
@@ -1198,7 +1291,7 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
         verbose: true,
     };
 
-    println!("\n⚡ Initializing Sovereign Swarm Coordinator for: {}", goal.bright_yellow().bold());
+    println!("\n⚡ Initializing Sovereign Swarm for: {}", goal.bright_yellow().bold());
     let coordinator = match crate::planner::SwarmCoordinator::new(config) {
         Ok(c) => c,
         Err(e) => {
@@ -1213,7 +1306,11 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
             println!("  📋 {}", "SYNTHESIZED GROUND TRUTH REPORT:".bright_yellow().bold());
             println!("{}\n", "================================================================================".bright_cyan());
             println!("{}\n", res.final_report.trim().bright_white());
-            println!("✅ Mission completed. Project files written to '{}'\n", session.output_dir.display().to_string().bright_magenta());
+            if res.final_report.contains("FAILED") || res.findings.iter().any(|f| f.finding.starts_with("FAILED")) {
+                println!("⚠️  {}", "Mission completed with unresolved items or missing dependencies. Review report above.\n".bright_red().bold());
+            } else {
+                println!("✅ {}", format!("Mission verified and completed. Project files saved in '{}'\n", session.output_dir.display()).bright_green().bold());
+            }
         }
         Err(e) => {
             eprintln!("❌ Swarm execution failed: {}\n", e);
@@ -1353,16 +1450,17 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
         let _ = io::stdout().flush();
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            break;
+        match io::stdin().read_line(&mut input) {
+            Ok(0) => {
+                // EOF encountered cleanly
+                println!();
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
         }
 
-        let line = input.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let trimmed_line = line.trim();
+        let trimmed_line = input.trim();
         if trimmed_line.is_empty() {
             continue;
         }
@@ -1377,12 +1475,12 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             let mut parts = trimmed_line.splitn(2, ' ');
             let first = parts.next().unwrap_or("").to_lowercase();
             match first.as_str() {
-                "run" | "goal" | "swarm" | "config" | "models" | "model" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "exit" | "quit" | "q" | "chat" => {
+                "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" => {
                     (first, parts.next().unwrap_or("").trim())
                 }
                 _ => {
-                    // Plain text: Direct Chat with model!
-                    ("direct_chat".to_string(), trimmed_line)
+                    // Smart UX: User inputs a prompt or goal directly -> Launch Swarm Coordinator!
+                    ("run".to_string(), trimmed_line)
                 }
             }
         };
@@ -1409,7 +1507,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                 handle_interactive_models(&mut session, base_dir);
             }
             "config" | "cfg" | "c" => {
-                handle_interactive_config(&mut session);
+                handle_interactive_config(&mut session, base_dir);
             }
             "status" | "info" => {
                 print_status(base_dir);
@@ -1443,15 +1541,8 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                     execute_interactive_swarm(&session_clone, &goal_clone);
                 }).await;
             }
-            "direct_chat" => {
-                let session_clone = session.clone();
-                let prompt_clone = rest_args.to_string();
-                let _ = tokio::task::spawn_blocking(move || {
-                    execute_direct_chat_turn(&session_clone, &prompt_clone);
-                }).await;
-            }
             unknown => {
-                println!("⚠️ Unknown command '/{}'. Type '/help' for command reference, or '/run <goal>' to start a mission.", unknown);
+                println!("⚠️ Unknown command '{}'. Type 'help' for command reference, or enter your goal directly.", unknown);
             }
         }
     }
@@ -1465,84 +1556,4 @@ fn clean_goal_string(raw: &str) -> String {
         s = &s[1..s.len() - 1];
     }
     s.trim_matches('"').trim_matches('\'').trim().to_string()
-}
-
-fn execute_direct_chat_turn(session: &InteractiveSession, prompt: &str) {
-    use std::io::{self, Write};
-
-    let model_path = match &session.orchestrator_path {
-        Some(p) => p.clone(),
-        None => match &session.worker_path {
-            Some(p) => p.clone(),
-            None => {
-                println!("❌ No active model configured. Type '/models' first.");
-                return;
-            }
-        },
-    };
-
-    let model = match crate::native_llama::NativeLlamaModel::load(&model_path, 0) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("❌ Failed to load model: {}", e);
-            return;
-        }
-    };
-
-    let mut ctx = match model.create_context(2048, 512, 4) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("❌ Failed to create context: {}", e);
-            return;
-        }
-    };
-
-    let formatted_prompt = format!("<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n", prompt);
-    print!("🤖 ");
-    let _ = io::stdout().flush();
-
-    let prompt_tokens = match model.tokenize(&formatted_prompt, true) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("❌ Tokenization error: {}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = ctx.eval_tokens(&prompt_tokens, 0) {
-        eprintln!("❌ Evaluation error: {}", e);
-        return;
-    }
-
-    let mut generated_count = 0;
-    let max_gen_tokens = 512;
-    while generated_count < max_gen_tokens {
-        let next_tok = match ctx.sample_greedy() {
-            Ok(t) => t,
-            Err(_) => break,
-        };
-
-        let piece = match model.token_to_piece(next_tok) {
-            Ok(p) => p,
-            Err(_) => break,
-        };
-
-        if piece.is_empty()
-            || piece.contains("<|im_end|>")
-            || piece.contains("<|endoftext|>")
-            || piece.contains("<|eot_id|>")
-            || piece.contains("</s>")
-        {
-            break;
-        }
-
-        print!("{}", piece);
-        let _ = io::stdout().flush();
-
-        if let Err(_) = ctx.eval_tokens(&[next_tok], 0) {
-            break;
-        }
-        generated_count += 1;
-    }
-    println!("\n");
 }
