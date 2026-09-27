@@ -12,3 +12,5 @@ preview_*.png
 RESEARCH_PAPER.pdf
 config/
 models
+workspace/
+GameLoop.py

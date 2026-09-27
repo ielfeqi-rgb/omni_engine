@@ -127,6 +127,12 @@ impl MemoryVfs {
         active.keys().cloned().collect()
     }
 
+    /// Returns all file paths and their contents currently stored in RAM VFS
+    pub fn all_files(&self) -> Vec<(PathBuf, Vec<u8>)> {
+        let active = self.files.read();
+        active.iter().map(|(p, c)| (p.clone(), c.clone())).collect()
+    }
+
     /// Returns byte size of a file in VFS
     pub fn file_size<P: AsRef<Path>>(&self, path: P) -> usize {
         let path_buf = Self::resolve_path(path);

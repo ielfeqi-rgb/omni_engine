@@ -241,6 +241,14 @@ cargo build --release
 ./omni_engine serve --port 8090
 ```
 
+### 6.5 Isolated Host Sandbox & Pre-Commit Testing (Bubblewrap)
+Omni Engine features host-grounded container sandboxing to test executable deliverables (`.py`, `.sh`, `.java`) before committing them to the host filesystem:
+- **Bubblewrap (`bwrap`)**: Recommended for hardware-enforced unprivileged container isolation with read-only root filesystems (`/usr`, `/etc`), private ephemeral `/tmp`, and isolated network/PID/IPC namespaces:
+  - **Fedora / RHEL**: `sudo dnf install bubblewrap`
+  - **Ubuntu / Debian**: `sudo apt install bubblewrap`
+  - **Arch Linux**: `sudo pacman -S bubblewrap`
+- **Zero-Breakage Graceful Fallback**: If `bwrap` is not installed on the system, Omni Engine automatically falls back to an isolated ephemeral `tempfs` sandbox with strict execution timeouts.
+
 ---
 
 ## 7. Research Paper & Formal Citation

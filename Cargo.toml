@@ -34,6 +34,7 @@ mlua = { version = "0.9", features = ["lua54", "vendored"] }
 parking_lot = "0.12"
 libloading = "0.8"
 flate2 = "1.0"
+tempfile = "3"
 
 
 [build-dependencies]

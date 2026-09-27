@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::causal_memory::dag::CausalGraph;
 use crate::native_llama::{NativeLlamaContext, NativeLlamaModel};
-use crate::sandbox::{MemoryVfs, WebLens, SearchResult};
+use crate::sandbox::{MemoryVfs, WebLens, SearchResult, IsolatedJail, JailExecutionResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -1044,7 +1044,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv\n\
                 Multi-file deliverable:\n\
                 SUBGOAL: Write the HTML structure and markup | ENTITY: index.html\n\
-                SUBGOAL: Write the external CSS styling | ENTITY: styles.css",
+                SUBGOAL: Write the external CSS styling | ENTITY: styles.css\n\n\
+                - REVIEW & TEST WORKER: When the objective creates an executable script or program (e.g. .py, .sh, .java), you may deploy a final review/smoke test worker (kind: TEST, ENTITY: <target>) to verify runtime stability in the isolated container sandbox before final delivery to the user.",
                 self.config.max_subgoals
             )
         } else {
@@ -1108,7 +1109,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             }
         }
 
-        // If user goal explicitly specifies a single file/script, enforce exactly 1 worker
+        // If user goal explicitly specifies a single file/script, enforce exactly 1 creation worker
         if Self::is_explicit_single_file(goal) && subgoals.len() > 1 {
             subgoals.truncate(1);
         }
@@ -1132,6 +1133,39 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     target_entity: goal.split_whitespace().next().unwrap_or("topic").to_string(),
                     kind: TaskKind::Search,
                     guidance: None,
+                });
+            }
+        }
+
+        // Thinker Sovereign Review Gate:
+        // When building executable deliverables (.py, .sh, .js), deploy a Review & Smoke Test worker
+        // to execute and verify the deliverable in the isolated host sandbox before delivery to user.
+        if is_build && subgoals.len() < self.config.max_subgoals {
+            let has_executable = subgoals.iter().any(|sg| {
+                sg.target_entity.ends_with(".py")
+                    || sg.target_entity.ends_with(".sh")
+                    || sg.target_entity.ends_with(".js")
+            });
+            let has_test_worker = subgoals.iter().any(|sg| sg.kind == TaskKind::Test);
+
+            if has_executable && !has_test_worker {
+                let target = subgoals
+                    .iter()
+                    .find(|sg| {
+                        sg.target_entity.ends_with(".py")
+                            || sg.target_entity.ends_with(".sh")
+                            || sg.target_entity.ends_with(".js")
+                    })
+                    .map(|sg| sg.target_entity.clone())
+                    .unwrap_or_else(|| "main.py".to_string());
+
+                let next_id = subgoals.len() + 1;
+                subgoals.push(SubGoal {
+                    id: next_id,
+                    description: format!("Run isolated sandbox smoke test and review runtime execution of '{}'", target),
+                    target_entity: target,
+                    kind: TaskKind::Test,
+                    guidance: Some("Execute isolated sandbox test and verify zero runtime errors before final host commit".to_string()),
                 });
             }
         }
@@ -1296,21 +1330,37 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     };
 
                     let next_instruction = if is_build {
-                        format!(
-                            "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
-                            Task #{}: {}\n\
-                            Target File: {}\n\
-                            Thinker Directive: {}\n\n\
-                            [MANDATORY INTEROPERABILITY]:\n\
-                            - You share continuous attention memory with prior workers above.\n\
-                            - Strictly attend to the exact class names, method signatures, return types, and fields defined in prior files in memory.\n\
-                            - Ensure 100% interoperability and compatibility.{}\n\
-                            - Output EXCLUSIVELY the complete, working code for '{}' inside a single code block.\n\
-                            - ZERO conversational text outside the code block.\n\
-                            Generate the code for '{}' now:",
-                            subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
-                            java_guidance, subgoal.target_entity, subgoal.target_entity
-                        )
+                        if subgoal.kind == TaskKind::Test {
+                            format!(
+                                "[CONTINUOUS SWARM DIRECTIVE - ISOLATED TEST WORKER]:\n\
+                                Task #{}: {}\n\
+                                Target File: {}\n\
+                                Thinker Directive: {}\n\n\
+                                [SANDBOX TEST MANDATE]:\n\
+                                - Your role is to review and test the staged deliverable in the isolated sandbox.\n\
+                                - Output the command to test '{}', e.g.:\n\
+                                RUN: python3 {}\n\
+                                Execute test now:",
+                                subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
+                                subgoal.target_entity, subgoal.target_entity
+                            )
+                        } else {
+                            format!(
+                                "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
+                                Task #{}: {}\n\
+                                Target File: {}\n\
+                                Thinker Directive: {}\n\n\
+                                [MANDATORY INTEROPERABILITY]:\n\
+                                - You share continuous attention memory with prior workers above.\n\
+                                - Strictly attend to the exact class names, method signatures, return types, and fields defined in prior files in memory.\n\
+                                - Ensure 100% interoperability and compatibility.{}\n\
+                                - Output EXCLUSIVELY the complete, working code for '{}' inside a single code block.\n\
+                                - ZERO conversational text outside the code block.\n\
+                                Generate the code for '{}' now:",
+                                subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
+                                java_guidance, subgoal.target_entity, subgoal.target_entity
+                            )
+                        }
                     } else {
                         format!(
                             "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
@@ -1401,7 +1451,28 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 }
             }
 
-            let action = Self::parse_action(&generated_text);
+            let parsed_action = Self::parse_action(&generated_text);
+            let action = if subgoal.kind == TaskKind::Test {
+                match parsed_action {
+                    SwarmAction::RunTerminal { .. } => parsed_action,
+                    SwarmAction::WriteFile { ref content, .. } if content.contains("python") || content.contains("pytest") || content.contains("bash") || content.contains("sh ") => {
+                        let cmd = content.lines().find(|l| l.contains("python") || l.contains("bash") || l.contains("pytest")).unwrap_or(content).trim();
+                        SwarmAction::RunTerminal { command: cmd.to_string() }
+                    }
+                    _ => {
+                        let default_cmd = if subgoal.target_entity.ends_with(".py") {
+                            format!("python3 {}", subgoal.target_entity)
+                        } else if subgoal.target_entity.ends_with(".sh") {
+                            format!("bash {}", subgoal.target_entity)
+                        } else {
+                            format!("test -f {}", subgoal.target_entity)
+                        };
+                        SwarmAction::RunTerminal { command: default_cmd }
+                    }
+                }
+            } else {
+                parsed_action
+            };
             let tokens_at_attempt_end = worker_ctx.current_cursor();
 
             if self.config.verbose {
@@ -1418,7 +1489,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             }
 
             // Execute action
-            let (exec_success, exec_output) = match action {
+            let (mut exec_success, mut exec_output) = match action {
                 SwarmAction::WriteFile { ref filename, ref content } => {
                     let actual_filename = if filename.is_empty() {
                         &subgoal.target_entity
@@ -1468,17 +1539,19 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                 }
                 SwarmAction::RunTerminal { ref command } => {
-                    println!("  [EXECUTION] Host terminal exec: '{}'...", command);
-                    match self.terminal.run_sync(command, 30) {
-                        Ok(output) => {
-                            let has_error = output.contains("Traceback (most recent call last)")
-                                || output.contains("SyntaxError:")
-                                || output.contains("command not found")
-                                || output.contains("FAILED");
-                            (!has_error, output)
+                    let bwrap_active = IsolatedJail::is_bwrap_available();
+                    println!(
+                        "  [EXECUTION] Isolated Sandbox exec (bwrap={}): '{}'...",
+                        bwrap_active, command
+                    );
+                    let vfs_files = self.vfs.all_files();
+                    match IsolatedJail::run_in_jail(command, &vfs_files, std::time::Duration::from_secs(30)) {
+                        Ok(jail_res) => {
+                            let combined = format!("{}{}", jail_res.stdout, jail_res.stderr);
+                            (jail_res.success, combined)
                         }
                         Err(e) => {
-                            (false, format!("Terminal execution error: {}", e))
+                            (false, format!("Isolated jail error: {}", e))
                         }
                     }
                 }
@@ -1605,6 +1678,19 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 syntax_error = Some(err_line.to_string());
                             }
                         }
+                        if syntax_error.is_none() {
+                            let vfs_files = self.vfs.all_files();
+                            if let Ok(smoke_res) = IsolatedJail::smoke_test_script(&subgoal.target_entity, &vfs_files, std::time::Duration::from_secs(4)) {
+                                if let Some(ref dep) = smoke_res.missing_dependency {
+                                    println!(
+                                        "  [SMOKE TEST] Detected missing host dependency in sandbox: '{}'",
+                                        dep.bright_yellow()
+                                    );
+                                    exec_success = false;
+                                    exec_output = format!("ModuleNotFoundError: No module named '{}'", dep);
+                                }
+                            }
+                        }
                     } else if subgoal.target_entity.ends_with(".json") {
                         if let Err(e) = serde_json::from_str::<serde_json::Value>(code) {
                             syntax_error = Some(format!("JSON syntax error: {}", e));
@@ -1726,7 +1812,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         println!("  │     * Tracking: Tombstone recorded in VFS ledger");
                     }
                     TaskKind::Test => {
-                        println!("  │     * Execution Test: PASSED with zero error tracebacks");
+                        let bwrap_active = IsolatedJail::is_bwrap_available();
+                        println!("  │     * Sandbox Gate: PASSED (Isolation: {}, zero tracebacks)", if bwrap_active { "Bubblewrap bwrap" } else { "Ephemeral Tempdir" });
                     }
                     TaskKind::Search => {
                         println!("  │     * Search/Fetch: Gathered factual ground truth");
@@ -1819,8 +1906,12 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     let user_choice = Self::prompt_user_for_dependency(&dependency, &question);
                     match user_choice {
                         DependencyChoice::InstallAndRetry => {
-                            println!("  [TERMINAL] Installing dependency '{}' via pip...", dependency);
-                            let install_cmd = format!("pip install {} || pip3 install {}", dependency, dependency);
+                            println!("  [TERMINAL] Installing dependency '{}'...", dependency);
+                            let install_cmd = if dependency == "tkinter" {
+                                "sudo dnf install -y python3-tkinter || sudo apt-get install -y python3-tk || pip install tk".to_string()
+                            } else {
+                                format!("pip install {} || pip3 install {}", dependency, dependency)
+                            };
                             match self.terminal.run_sync(&install_cmd, 60) {
                                 Ok(out) => {
                                     let summary = out.lines().last().unwrap_or("Installation completed");
@@ -1832,10 +1923,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                     attempt += 1;
                                 }
                                 Err(e) => {
-                                    println!("  [TERMINAL] Installation failed: {}. Falling back to standard library.", e);
+                                    println!("  [TERMINAL] Installation failed: {}. Falling back to standard library / CLI alternative.", e);
                                     current_directive = format!(
-                                        "Do not use external library '{}'. Implement the solution using only standard library or CSV format.",
-                                        dependency
+                                        "Do not use external library '{}'. Implement the solution using standard library or CLI alternative without '{}'.",
+                                        dependency, dependency
                                     );
                                     pending_nudge = None;
                                     attempt += 1;
@@ -1843,10 +1934,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             }
                         }
                         DependencyChoice::UseAlternative => {
-                            println!("  [DECISION] Switching to standard library / CSV alternative without '{}'.", dependency);
+                            println!("  [DECISION] Switching to standard library / CLI alternative without '{}'.", dependency);
                             current_directive = format!(
-                                "Do not use external library '{}'. Implement the solution using standard library or standard tabular format (CSV).",
-                                dependency
+                                "Do not use external library '{}'. Implement the solution using standard library or CLI alternative without '{}'.",
+                                dependency, dependency
                             );
                             pending_nudge = None;
                             attempt += 1;
@@ -2425,5 +2516,19 @@ mod tests {
             Some(&TaskKind::Test),
         );
         assert_eq!(diag3, DiagnosticCode::TestFailed);
+
+        // Missing dependency extraction in test kind
+        let diag4 = SwarmCoordinator::classify_failure_for_kind(
+            &SwarmAction::RunTerminal { command: "python3 GameLoop.py".to_string() },
+            false,
+            "ModuleNotFoundError: No module named 'tkinter'",
+            true,
+            100,
+            None,
+            "",
+            None,
+            Some(&TaskKind::Test),
+        );
+        assert_eq!(diag4, DiagnosticCode::MissingDependency("tkinter".to_string()));
     }
 }
