@@ -25,7 +25,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
         } else {
             available[0].clone()
         };
-        println!("{}", format!("  ⏳ Engine is idle. Auto-launching '{}' on port {}...", chosen, port).yellow());
+        println!("{}", format!("  [*] Engine is idle. Auto-launching '{}' on port {}...", chosen, port).yellow());
         if let Err(e) = llama_manager.start(chosen.clone(), port, 0, 2048) {
             eprintln!("  [!] Failed to auto-start model: {}", e);
             return;
@@ -87,7 +87,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             "/clear" | "clear" => {
                 conversation.truncate(1);
                 print!("\x1B[2J\x1B[1;1H"); // clear screen
-                println!("{}", "  [✓] Conversation context reset.".green().bold());
+                println!("{}", "  [+] Conversation context reset.".green().bold());
                 println!();
                 continue;
             }
@@ -121,28 +121,28 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                 terminal_bridge.arm_and_warmup();
                 println!(
                     "  {} {}",
-                    "🎯 [INTENT PROBE]:".bright_cyan().bold(),
+                    "[INTENT PROBE]:".bright_cyan().bold(),
                     "PREDICTED -> TermHost [PTY Buffer Armed & Ready (0ms Latency)]".bright_green()
                 );
             }
             crate::planner::SpeculativeTarget::WebBrowser => {
                 println!(
                     "  {} {}",
-                    "🎯 [INTENT PROBE]:".bright_cyan().bold(),
+                    "[INTENT PROBE]:".bright_cyan().bold(),
                     "PREDICTED -> WebBrowser [HTTP / RSS Pipeline Primed]".bright_blue()
                 );
             }
             crate::planner::SpeculativeTarget::DirectVfs => {
                 println!(
                     "  {} {}",
-                    "🎯 [INTENT PROBE]:".bright_cyan().bold(),
+                    "[INTENT PROBE]:".bright_cyan().bold(),
                     "PREDICTED -> MemoryVfs [RAM Buffer Staged]".bright_yellow()
                 );
             }
             crate::planner::SpeculativeTarget::PureChat => {
                 println!(
                     "  {} {}",
-                    "🎯 [INTENT PROBE]:".bright_cyan().bold(),
+                    "[INTENT PROBE]:".bright_cyan().bold(),
                     "PREDICTED -> Pure Interactive Dialogue [Tools Sleeping]".dimmed()
                 );
             }
@@ -153,14 +153,14 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
         let something_i_know = if let Some(plan) = &intent.dual_system_plan {
             println!(
                 "  {} [Plan A: {}, Plan B: {}, Plan C: {}]",
-                "🧠 [SYSTEM 2 TRI-PLAN SYNTHESIS]:".bright_purple().bold(),
+                "[SYSTEM 2 TRI-PLAN SYNTHESIS]:".bright_purple().bold(),
                 plan.plan_a.bright_cyan(),
                 plan.plan_b.bright_yellow(),
                 plan.plan_c.dimmed()
             );
             println!(
                 "  {} {}",
-                "⚡ [CAVEMAN INVARIANTS]:".bright_yellow().bold(),
+                "[CAVEMAN INVARIANTS]:".bright_yellow().bold(),
                 plan.caveman_constraints.join("; ").dimmed()
             );
             plan.distilled_something_i_know.clone()
@@ -230,7 +230,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                     if !response.status().is_success() {
                         pb.finish_and_clear();
                         let err_text = response.text().await.unwrap_or_default();
-                        println!("{} {}", "  [✗] Backend Inference Error:".red().bold(), err_text);
+                        println!("{} {}", "  [-] Backend Inference Error:".red().bold(), err_text);
                         break;
                     }
 
@@ -299,13 +299,13 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                             if exec_res.success {
                                 println!(
                                     "  {} {}",
-                                    "⚡ [EXECUTIVE ACTION DISPATCHED]:".bright_yellow().bold(),
+                                    "[EXECUTIVE ACTION DISPATCHED]:".bright_yellow().bold(),
                                     exec_res.output.bright_cyan()
                                 );
                                 if exec_res.requires_user_confirmation {
                                     println!(
                                         "  {} Use {} to review full diffs and authorize commit to disk.",
-                                        "🔒 [GATE REQUIRED]:".bright_red().bold(),
+                                        "[GATE REQUIRED]:".bright_red().bold(),
                                         "/commit".bright_yellow().bold()
                                     );
                                 }
@@ -319,12 +319,12 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                                 // Execution trapped! Initiate Causal KV Rollback & Autonomous Fallback
                                 println!(
                                     "  {} {}",
-                                    "⚠️  [EXECUTIVE ACTION TRAPPED]:".bright_red().bold(),
+                                    "[EXECUTIVE ACTION TRAPPED]:".bright_red().bold(),
                                     exec_res.output.red()
                                 );
                                 println!(
                                     "  {} {}",
-                                    "🔄 [CAUSAL KV ROLLBACK]:".bright_yellow().bold(),
+                                    "[CAUSAL KV ROLLBACK]:".bright_yellow().bold(),
                                     "Trapped attempt purged from KV cache (approx 350 tokens saved).".dimmed()
                                 );
 
@@ -344,7 +344,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
 
                                 println!(
                                     "  {} Learned Rule #{}: {}",
-                                    "💡 [DISTILLED CAUSAL LESSON]:".bright_green().bold(),
+                                    "[DISTILLED CAUSAL LESSON]:".bright_green().bold(),
                                     lesson.lesson_id,
                                     lesson.distillation_rule.bright_white()
                                 );
@@ -357,7 +357,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
 
                                 println!(
                                     "  {} Engaging fallback strategy: {}",
-                                    "⚡ [AUTONOMOUS PIVOT]:".bright_cyan().bold(),
+                                    "[AUTONOMOUS PIVOT]:".bright_cyan().bold(),
                                     next_plan_hint.bright_yellow()
                                 );
                                 println!();
@@ -373,20 +373,20 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                             } else {
                                 println!(
                                     "  {} {}",
-                                    "💀 [EPISTEMIC APOPTOSIS TRIGGERED]:".bright_red().bold(),
+                                    "[EPISTEMIC APOPTOSIS TRIGGERED]:".bright_red().bold(),
                                     "Generation 1 dead-end reached (3 traps). Purging rotten branch.".red()
                                 );
 
                                 let testament = supervisor.trigger_epistemic_apoptosis(&full_response);
                                 println!(
                                     "  {} Extracted {} raw testament tokens directly.",
-                                    "🧬 [ANCESTRAL TESTAMENT ACQUIRED]:".bright_purple().bold(),
+                                    "[ANCESTRAL TESTAMENT ACQUIRED]:".bright_purple().bold(),
                                     testament.testament_tokens_raw.len()
                                 );
 
                                 println!(
                                     "  {} Rebirthing fresh generation with ancestral epigenetic prefix...",
-                                    "✨ [EPIGENETIC CACHE REBIRTH]:".bright_cyan().bold()
+                                    "[EPIGENETIC CACHE REBIRTH]:".bright_cyan().bold()
                                 );
 
                                 conversation.clear();
@@ -422,7 +422,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                 }
                 Err(e) => {
                     pb.finish_and_clear();
-                    println!("{} Failed to connect to engine: {}", "  [✗]".red().bold(), e);
+                    println!("{} Failed to connect to engine: {}", "  [-]".red().bold(), e);
                     break;
                 }
             }
@@ -457,7 +457,7 @@ fn render_browser_lens_demo() {
         InteractiveElement {
             id: 2,
             target_type: ActionTargetType::Button,
-            label: "Filter: Top Rated (★ 4.5+)".to_string(),
+            label: "Filter: Top Rated (4.5+)".to_string(),
             selector: "#filter-rating".to_string(),
             current_value: None,
         },
@@ -544,10 +544,10 @@ fn handle_vfs_commit(vfs: &MemoryVfs) {
         if trimmed == "y" || trimmed == "yes" {
             match vfs.commit_to_host(true) {
                 Ok(count) => {
-                    println!("{}", format!("  [✓] Successfully committed {} file(s) to host disk.", count).green().bold());
+                    println!("{}", format!("  [+] Successfully committed {} file(s) to host disk.", count).green().bold());
                 }
                 Err(e) => {
-                    println!("{} {}", "  [✗] Commit failed:".red().bold(), e);
+                    println!("{} {}", "  [-] Commit failed:".red().bold(), e);
                 }
             }
         } else {

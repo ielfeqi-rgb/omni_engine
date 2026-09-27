@@ -292,7 +292,7 @@ impl NativeLlamaContext {
 
         let start_time = std::time::Instant::now();
         if is_term {
-            print!("     ⏳ Evaluating context ({} tokens)...", prompt_tokens.len());
+            print!("     [*] Evaluating context ({} tokens)...", prompt_tokens.len());
             let _ = io::stdout().flush();
         }
 
@@ -365,7 +365,7 @@ impl NativeLlamaContext {
             let final_speed = if total_time > 0.1 { (generated.len()) as f64 / total_time } else { 0.0 };
             print!("\r                                                                                         \r");
             println!(
-                "     ⚡ {} ({:.1}s, {:.1} chars/s, {} KV cells)",
+                "     [+] {} ({:.1}s, {:.1} chars/s, {} KV cells)",
                 "Generation pass complete".bright_green().bold(),
                 total_time,
                 final_speed,

@@ -647,19 +647,19 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
 
     pub fn prompt_user_for_dependency(dep: &str, _question: &str) -> DependencyChoice {
         println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
-        println!("  ⚠️  {}", format!("المكتبة أو الأداة المطلوبة غير متوفرة في النظام: '{}'", dep).bright_yellow().bold());
+        println!("  [!] {}", format!("المكتبة أو الأداة المطلوبة غير متوفرة في النظام: '{}'", dep).bright_yellow().bold());
         println!("  المفكر يستشيرك لاختيار مسار التنفيذ:");
         println!("     [1] تثبيت المكتبة تلقائياً عبر الطرفية ومواصلة المهمة (pip install {})", dep);
         println!("     [2] التحويل إلى بديل قياسي (مثل CSV أو مكتبات بايثون القياسية) دون تثبيت");
         println!("{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
 
         if !io::stdin().is_terminal() {
-            println!("  🤖 طرفية غير تفاعلية. الاختيار التلقائي: [1] محاولة التثبيت.");
+            println!("  [*] طرفية غير تفاعلية. الاختيار التلقائي: [1] محاولة التثبيت.");
             return DependencyChoice::InstallAndRetry;
         }
 
         loop {
-            print!("  👉 اختيارك [1/2، الافتراضي: 1]: ");
+            print!("  >> اختيارك [1/2، الافتراضي: 1]: ");
             let _ = io::stdout().flush();
             let mut input = String::new();
             match io::stdin().read_line(&mut input) {

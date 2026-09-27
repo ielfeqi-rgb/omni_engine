@@ -45,7 +45,7 @@ impl KeyManager {
                 key: format!("omni_sk_{}", Uuid::new_v4().to_string().replace("-", "")),
                 created_at: chrono_like_timestamp(),
             };
-            info!("🗝️  Generated Master API Key: {}", primary_key.key);
+            info!("[KEYS] Generated Master API Key: {}", primary_key.key);
             keys.push(primary_key);
             if let Err(e) = save_keys_to_disk(&config_path, &keys) {
                 error!("Failed to persist master key to disk: {}", e);

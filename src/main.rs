@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("============================================================");
-    println!("   🚀 OMNI AI ENGINE v{} (Sovereign Autonomous Runtime)", env!("CARGO_PKG_VERSION"));
+    println!("   :: OMNI AI ENGINE v{} (Sovereign Autonomous Runtime)", env!("CARGO_PKG_VERSION"));
     println!("   Core: Rust & Lua Sandbox | Causal KV-Cache | Local AI");
     println!("============================================================");
 
@@ -105,9 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr = format!("{}:{}", bind_host, port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
-    println!("🌐 Server Listening on: http://{}", bind_addr);
-    println!("💬 Web UI Dashboard:    http://{}:{}", bind_host, port);
-    println!("⚡ OpenAI Endpoint:     http://{}:{}/v1/chat/completions", bind_host, port);
+    println!("[+] Server Listening on: http://{}", bind_addr);
+    println!("[+] Web UI Dashboard:    http://{}:{}", bind_host, port);
+    println!("[+] OpenAI Endpoint:     http://{}:{}/v1/chat/completions", bind_host, port);
     println!("============================================================");
 
     tokio::select! {
@@ -117,9 +117,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         _ = tokio::signal::ctrl_c() => {
-            println!("\n🛑 Graceful shutdown signal received. Stopping background services...");
+            println!("\n[!] Graceful shutdown signal received. Stopping background services...");
             let _ = llama_manager.stop();
-            println!("👋 Omni Engine stopped cleanly.");
+            println!("[+] Omni Engine stopped cleanly.");
         }
     }
 
