@@ -398,24 +398,18 @@ impl SwarmCoordinator {
         let staged_diffs = self.vfs.generate_staged_diffs();
         if !staged_diffs.is_empty() {
             println!("  [HOST DISK COMMIT] Materializing VFS artifacts to host disk...");
-            match self.vfs.commit_to_host(true) {
+            let target_dir = self.config.output_dir.as_deref();
+            match self.vfs.commit_to_dir(target_dir, true) {
                 Ok(count) => {
                     for d in &staged_diffs {
-                        println!("   [SAVED TO DISK] {}", d.path.display().to_string().bright_white());
+                        let dest_path = if let Some(dir) = target_dir {
+                            dir.join(d.path.file_name().unwrap_or(d.path.as_os_str()))
+                        } else {
+                            d.path.clone()
+                        };
+                        println!("   [SAVED TO DISK] {}", dest_path.display().to_string().bright_white());
                     }
                     println!("   [COMMIT] Successfully committed {} file(s) to host machine.", count.to_string().bright_green());
-
-                    if let Some(ref out_dir) = self.config.output_dir {
-                        let _ = std::fs::create_dir_all(out_dir);
-                        for d in &staged_diffs {
-                            let file_name = d.path.file_name().unwrap_or_default();
-                            let dest = out_dir.join(file_name);
-                            if let Some(content) = self.vfs.read_file(&d.path) {
-                                let _ = std::fs::write(&dest, content);
-                                println!("   [OUTPUT DIRECTORY] Saved to: {}", dest.display().to_string().bright_cyan());
-                            }
-                        }
-                    }
                 }
                 Err(e) => {
                     warn!("Failed to commit VFS to host disk: {}", e);

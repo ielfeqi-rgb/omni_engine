@@ -763,7 +763,7 @@ EXAMPLES:
     let mut max_subgoals = 3;
     let mut max_steps = 5;
     let mut models_dir = base_dir.join("models");
-    let mut output_dir: Option<PathBuf> = None;
+    let mut output_dir: Option<PathBuf> = Some(PathBuf::from("./workspace"));
 
     let mut i = 0;
     while i < args.len() {
@@ -794,6 +794,10 @@ EXAMPLES:
             }
             "--output-dir" if i + 1 < args.len() => {
                 output_dir = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--goal" if i + 1 < args.len() => {
+                user_goal = args[i + 1].clone();
                 i += 2;
             }
             arg if !arg.starts_with("--") && user_goal.is_empty() => {

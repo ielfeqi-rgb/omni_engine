@@ -291,6 +291,11 @@ impl MemoryVfs {
 
     /// Commit staged diffs to actual host disk ONLY upon explicit user confirmation.
     pub fn commit_to_host(&self, user_authorized: bool) -> Result<usize, String> {
+        self.commit_to_dir(None, user_authorized)
+    }
+
+    /// Commit staged diffs to a specific directory on host (or original relative/absolute paths if target_dir is None).
+    pub fn commit_to_dir(&self, target_dir: Option<&Path>, user_authorized: bool) -> Result<usize, String> {
         if !user_authorized {
             return Err("Authorization Denied: Cannot commit sandbox VFS to host disk without user approval".to_string());
         }
@@ -299,7 +304,13 @@ impl MemoryVfs {
         let mut committed = 0;
 
         for diff in &diffs {
-            let target_path = Self::resolve_path(&diff.path);
+            let target_path = if diff.path.is_absolute() {
+                Self::resolve_path(&diff.path)
+            } else if let Some(base) = target_dir {
+                base.join(diff.path.file_name().unwrap_or(diff.path.as_os_str()))
+            } else {
+                Self::resolve_path(&diff.path)
+            };
             match diff.change_type {
                 FileChangeType::Created | FileChangeType::Modified => {
                     if let Some(parent) = target_path.parent() {
@@ -405,5 +416,22 @@ mod tests {
         assert!(vfs.delete_file(&path));
         assert!(!vfs.exists(&path));
         assert_eq!(vfs.file_size(&path), 0);
+    }
+
+    #[test]
+    fn test_commit_to_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("out_workspace");
+        let vfs = MemoryVfs::new();
+
+        let rel_file = PathBuf::from("calc.py");
+        vfs.write_file(&rel_file, b"print(42)\n");
+
+        let committed = vfs.commit_to_dir(Some(&target_dir), true).unwrap();
+        assert_eq!(committed, 1);
+
+        let written_file = target_dir.join("calc.py");
+        assert!(written_file.exists());
+        assert_eq!(std::fs::read_to_string(&written_file).unwrap(), "print(42)\n");
     }
 }
