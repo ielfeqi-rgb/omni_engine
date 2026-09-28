@@ -194,6 +194,7 @@ impl NativeLlamaModel {
             model: self.clone(),
             current_cursor: 0,
             n_ctx,
+            n_batch,
         })
     }
 
@@ -219,6 +220,7 @@ pub struct NativeLlamaContext {
     model: Arc<NativeLlamaModel>,
     current_cursor: usize,
     n_ctx: usize,
+    n_batch: usize,
 }
 
 unsafe impl Send for NativeLlamaContext {}
@@ -230,8 +232,8 @@ impl NativeLlamaContext {
             return Ok(());
         }
 
-        // Chunk by batch size (512) to respect llama.cpp cparams.n_batch limit
-        let chunk_size = 512;
+        // Chunk by batch size to respect llama.cpp cparams.n_batch limit
+        let chunk_size = self.n_batch.max(64);
         for chunk in tokens.chunks(chunk_size) {
             let res = unsafe {
                 omni_llama_eval_tokens(

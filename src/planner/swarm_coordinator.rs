@@ -452,7 +452,7 @@ impl SwarmCoordinator {
         subgoal: &SubGoal,
         previous_findings: &[WorkerFinding],
     ) -> Result<String, String> {
-        let mut ctx = self.orchestrator_model.create_context(2048, 256, 4)?;
+        let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
         let system_msg = "You are the System 2 Sovereign Thinker commanding an execution worker.\n\
 The user communicates ONLY with you. Workers are your executive hands.\n\
 Workers are localized, stateless code-generation engines with short-term context. They do not converse; they execute.\n\
