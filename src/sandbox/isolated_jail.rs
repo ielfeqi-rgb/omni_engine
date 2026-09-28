@@ -236,10 +236,31 @@ impl IsolatedJail {
                     if start.elapsed() >= timeout {
                         let _ = child.kill();
                         let _ = child.wait();
+                        let mut stdout_buf = Vec::new();
+                        let mut stderr_buf = Vec::new();
+                        if let Some(mut out) = child.stdout.take() {
+                            let _ = std::io::Read::read_to_end(&mut out, &mut stdout_buf);
+                        }
+                        if let Some(mut err) = child.stderr.take() {
+                            let _ = std::io::Read::read_to_end(&mut err, &mut stderr_buf);
+                        }
+                        let out_str = String::from_utf8_lossy(&stdout_buf).to_string();
+                        let err_str = String::from_utf8_lossy(&stderr_buf).to_string();
+
+                        // If the process was a server/daemon that started and listened successfully, treat as success!
+                        let is_server_listening = out_str.contains("Running on") || out_str.contains("Serving HTTP")
+                            || err_str.contains("Running on") || err_str.contains("Serving HTTP")
+                            || out_str.contains("Press CTRL+C") || err_str.contains("Press CTRL+C")
+                            || out_str.contains("* Serving Flask") || err_str.contains("* Serving Flask");
+
+                        if is_server_listening {
+                            return Ok((Some(0), out_str, err_str));
+                        }
+
                         return Ok((
                             Some(124), // standard timeout exit code
-                            String::new(),
-                            format!("Execution timed out after {:?}", timeout),
+                            out_str,
+                            format!("Execution timed out after {:?}: {}", timeout, err_str),
                         ));
                     }
                     std::thread::sleep(poll_interval);

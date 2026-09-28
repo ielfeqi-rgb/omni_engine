@@ -926,6 +926,14 @@ fn resolve_swarm_models(
         return None;
     }
 
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        let default_model = found[0].1.clone();
+        let o = orch_path.unwrap_or_else(|| default_model.clone());
+        let w = worker_path.unwrap_or_else(|| default_model);
+        return Some((o, w));
+    }
+
     use colored::*;
     println!("\n{}", "================================================================================".bright_cyan());
     println!("  :: {}", "SELECT MODELS FOR SOVEREIGN SWARM DUAL-ARCHITECTURE".bright_yellow().bold());
