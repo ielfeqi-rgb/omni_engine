@@ -1767,10 +1767,20 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     if subgoal.target_entity.ends_with(".py") {
                         let hex_encoded: String = code.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
                         let check_cmd = format!("python3 -c \"import ast; ast.parse(bytes.fromhex('{}').decode('utf-8'))\"", hex_encoded);
-                        if let Ok(res) = self.terminal.run_sync(&check_cmd, 5) {
-                            if res.contains("SyntaxError") || res.contains("Traceback") {
-                                let err_line = res.lines().find(|l| l.contains("SyntaxError")).unwrap_or("Python SyntaxError");
-                                syntax_error = Some(err_line.to_string());
+                        match self.terminal.run_sync(&check_cmd, 5) {
+                            Ok(res) => {
+                                if res.contains("SyntaxError") || res.contains("Traceback") {
+                                    let err_line = res.lines().find(|l| l.contains("SyntaxError")).unwrap_or("Python SyntaxError");
+                                    syntax_error = Some(err_line.to_string());
+                                }
+                            }
+                            Err(err) => {
+                                if err.contains("SyntaxError") || err.contains("Traceback") {
+                                    let err_line = err.lines().find(|l| l.contains("SyntaxError")).unwrap_or("Python SyntaxError");
+                                    syntax_error = Some(err_line.to_string());
+                                } else if !err.trim().is_empty() {
+                                    syntax_error = Some(err.lines().next().unwrap_or("Python verification error").to_string());
+                                }
                             }
                         }
                         if syntax_error.is_none() {
@@ -1793,9 +1803,16 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     } else if subgoal.target_entity.ends_with(".sh") {
                         let hex_encoded: String = code.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
                         let check_cmd = format!("bash -n <(python3 -c \"import sys; sys.stdout.buffer.write(bytes.fromhex('{}'))\")", hex_encoded);
-                        if let Ok(res) = self.terminal.run_sync(&check_cmd, 5) {
-                            if !res.trim().is_empty() && (res.contains("syntax error") || res.contains("error")) {
-                                syntax_error = Some(res.trim().to_string());
+                        match self.terminal.run_sync(&check_cmd, 5) {
+                            Ok(res) => {
+                                if !res.trim().is_empty() && (res.contains("syntax error") || res.contains("error")) {
+                                    syntax_error = Some(res.trim().to_string());
+                                }
+                            }
+                            Err(err) => {
+                                if !err.trim().is_empty() {
+                                    syntax_error = Some(err.lines().next().unwrap_or("Bash syntax error").to_string());
+                                }
                             }
                         }
                     } else if subgoal.target_entity.ends_with(".java") {
@@ -2043,10 +2060,17 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         }
 
         if final_finding.is_empty() {
-            final_finding = format!(
-                "FAILED: Worker #{} could not write target file '{}' to VFS after {} attempts.",
-                subgoal.id, subgoal.target_entity, max_attempts
-            );
+            final_finding = if subgoal.kind == TaskKind::Test {
+                format!(
+                    "FAILED: Worker #{} isolated sandbox test for '{}' failed after {} attempts.",
+                    subgoal.id, subgoal.target_entity, max_attempts
+                )
+            } else {
+                format!(
+                    "FAILED: Worker #{} could not write target file '{}' to VFS after {} attempts.",
+                    subgoal.id, subgoal.target_entity, max_attempts
+                )
+            };
         }
 
         Ok(WorkerFinding {
