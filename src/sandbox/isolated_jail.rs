@@ -144,6 +144,16 @@ impl IsolatedJail {
             bwrap.args(["--ro-bind", "/lib64", "/lib64"]);
         }
 
+        // Read-only user local packages (~/.local) so pip installs are accessible in sandbox
+        if let Ok(home) = std::env::var("HOME") {
+            let user_local = Path::new(&home).join(".local");
+            if user_local.exists() {
+                if let Some(user_local_str) = user_local.to_str() {
+                    bwrap.args(["--ro-bind", user_local_str, user_local_str]);
+                }
+            }
+        }
+
         // Ephemeral device & proc mounts
         bwrap.args(["--proc", "/proc"]);
         bwrap.args(["--dev", "/dev"]);
