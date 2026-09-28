@@ -842,6 +842,17 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("single program")
             || lower.contains("a tool")
             || lower.contains("utility")
+            || lower.contains("renderer")
+            || lower.contains("benchmark")
+            || lower.contains("generator")
+            || lower.contains("simulator")
+            || lower.contains("converter")
+            || lower.contains("scanner")
+            || lower.contains("crawler")
+            || lower.contains("solver")
+            || lower.contains("monitor")
+            || lower.contains("summarizer")
+            || lower.contains("evaluator")
             || lower.contains("برنامج")
             || lower.contains("اداة")
             || lower.contains("أداة")
@@ -852,7 +863,7 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("صفحه واحده")
             || lower.contains("في ملف")
             || lower.contains("فى ملف")
-            || (!lower.contains(" and ") && !lower.contains(" و ") && !lower.contains("separate") && !lower.contains("multiple")
+            || (!lower.contains("separate files") && !lower.contains("multiple files") && !lower.contains("frontend and backend") && !lower.contains("client and server")
                 && (lower.contains("python") || lower.contains("بايثون") || lower.contains("script") || lower.contains("سكربت")))
     }
 
@@ -1352,7 +1363,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 [SANDBOX TEST MANDATE]:\n\
                                 - Your role is to review and test the staged deliverable in the isolated sandbox.\n\
                                 - Output the command to test '{}', e.g.:\n\
-                                RUN: python3 {}\n\
+                                python3 {}\n\
                                 Execute test now:",
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
                                 subgoal.target_entity, subgoal.target_entity
@@ -1473,30 +1484,71 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                     SwarmAction::WriteFile { ref content, .. } => {
                         let lines: Vec<&str> = content.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
-                        let is_single_run_command = lines.len() <= 2 && lines.iter().any(|l| {
-                            let clean = Self::strip_command_prefix(l);
-                            clean.starts_with("python") || clean.starts_with("pytest") || clean.starts_with("bash") || clean.starts_with("sh ")
+
+                        // Check if any line contains a direct execution command
+                        let cmd_candidate = lines.iter().find_map(|l| {
+                            let mut clean = Self::strip_command_prefix(l);
+                            if (clean.starts_with("print(\"") && clean.ends_with("\")"))
+                                || (clean.starts_with("print('") && clean.ends_with("')"))
+                            {
+                                let inner = &clean[7..clean.len() - 2];
+                                clean = Self::strip_command_prefix(inner);
+                            }
+                            if clean.starts_with("python") || clean.starts_with("pytest") || clean.starts_with("bash") || clean.starts_with("sh ") {
+                                Some(clean)
+                            } else {
+                                None
+                            }
                         });
 
-                        if is_single_run_command {
-                            let cmd_line = lines.iter().find(|l| {
-                                let clean = Self::strip_command_prefix(l);
-                                clean.starts_with("python") || clean.starts_with("pytest") || clean.starts_with("bash") || clean.starts_with("sh ")
-                            }).unwrap_or(&lines[0]);
-                            let clean_cmd = Self::strip_command_prefix(cmd_line);
-                            SwarmAction::RunTerminal { command: clean_cmd }
-                        } else {
-                            // Actual test script generated! Write it to VFS first, then run it.
-                            let actual_filename = if subgoal.target_entity.is_empty() {
-                                "test_suite.py"
+                        let has_test_structure = content.contains("assert ")
+                            || content.contains("def test_")
+                            || content.contains("unittest")
+                            || content.contains("pytest")
+                            || content.contains("class Test");
+
+                        if let Some(cmd) = cmd_candidate {
+                            if !has_test_structure {
+                                SwarmAction::RunTerminal { command: cmd }
                             } else {
-                                &subgoal.target_entity
+                                // Full test suite with a command inside it: save as separate test file
+                                let test_filename = if subgoal.target_entity.starts_with("test_") {
+                                    subgoal.target_entity.clone()
+                                } else {
+                                    format!("test_{}", subgoal.target_entity)
+                                };
+                                self.vfs.write_file(&std::path::PathBuf::from(&test_filename), content.as_bytes());
+                                let run_cmd = if test_filename.ends_with(".py") {
+                                    format!("python3 {}", test_filename)
+                                } else {
+                                    format!("bash {}", test_filename)
+                                };
+                                SwarmAction::RunTerminal { command: run_cmd }
+                            }
+                        } else if !has_test_structure && lines.len() <= 4 {
+                            // Short snippet that didn't match an explicit command: run the target entity directly
+                            let default_cmd = if subgoal.target_entity.ends_with(".py") {
+                                format!("python3 {}", subgoal.target_entity)
+                            } else if subgoal.target_entity.ends_with(".sh") {
+                                format!("bash {}", subgoal.target_entity)
+                            } else {
+                                format!("test -f {}", subgoal.target_entity)
                             };
-                            self.vfs.write_file(&std::path::PathBuf::from(actual_filename), content.as_bytes());
-                            let run_cmd = if actual_filename.ends_with(".py") {
-                                format!("python3 {}", actual_filename)
+                            SwarmAction::RunTerminal { command: default_cmd }
+                        } else {
+                            // Actual test script generated! Write it to a distinct test file, NEVER overwrite deliverable!
+                            let test_filename = if subgoal.target_entity.is_empty() {
+                                "test_suite.py".to_string()
+                            } else if subgoal.target_entity.starts_with("test_") {
+                                subgoal.target_entity.clone()
                             } else {
-                                format!("bash {}", actual_filename)
+                                format!("test_{}", subgoal.target_entity)
+                            };
+                            self.vfs.write_file(&std::path::PathBuf::from(&test_filename), content.as_bytes());
+                            let run_cmd = if test_filename.ends_with(".py") {
+                                format!("python3 {}", test_filename)
+                            } else {
+                                format!("bash {}", test_filename)
                             };
                             SwarmAction::RunTerminal { command: run_cmd }
                         }
