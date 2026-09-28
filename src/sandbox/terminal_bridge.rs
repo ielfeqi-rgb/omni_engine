@@ -33,12 +33,12 @@ pub struct TerminalJob {
     pub finished_at: Option<Instant>,
 }
 
-/// Persistent Terminal Session Bridge.
-/// Provides an interactive PTY/IPC bridge for the AI agent to:
-/// - Dispatch commands to an active host shell environment.
-/// - Stream and buffer live logs into a volatile in-memory ring buffer.
-/// - Poll execution status and inspect exit codes without hanging the runtime.
-/// - Enforce safety guardrails against destructive commands.
+/// Host Command Execution Bridge.
+/// Provides an asynchronous job execution bridge for the AI agent to:
+/// - Dispatch shell commands (`sh -c`) to the host environment in dedicated background threads.
+/// - Stream and buffer real-time stdout and stderr into a volatile in-memory ring buffer.
+/// - Poll execution status and inspect exit codes without blocking the core runtime.
+/// - Enforce safety guardrails against dangerous patterns.
 #[derive(Clone)]
 pub struct TerminalSessionBridge {
     max_buffer_lines: usize,
@@ -56,13 +56,6 @@ impl TerminalSessionBridge {
             next_job_id: Arc::new(AtomicU64::new(1)),
         }
     }
-
-    pub fn arm_and_warmup(&self) -> bool {
-        let mut buf = self.log_buffer.lock();
-        buf.push_back("[TERMHOST]: Speculative pipe initialized & armed in background.".to_string());
-        true
-    }
-
 
     pub fn validate_safety(&self, command: &str) -> Result<(), String> {
         let trimmed = command.trim();

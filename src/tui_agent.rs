@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::llama_manager::LlamaManager;
 use crate::openai_api::{ChatCompletionRequest, ChatMessage};
 use crate::sandbox::{
-    ActionTargetType, BrowserTerminalLens, InteractiveElement, MemoryVfs, WasmPrimitiveSandbox,
+    ActionTargetType, BrowserTerminalLens, InteractiveElement, MemoryVfs,
 };
 
 pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
@@ -61,7 +61,6 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
     let vfs = std::sync::Arc::new(MemoryVfs::new());
     let terminal_bridge = std::sync::Arc::new(crate::sandbox::TerminalSessionBridge::new(1000));
     let supervisor = crate::planner::InternalSupervisorProbe::new();
-    let _wasm_sandbox = WasmPrimitiveSandbox::new();
 
     loop {
         // Aesthetic Prompt
@@ -118,11 +117,10 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
         let spec_target = crate::planner::PrePassTriage::probe_fast_intent(query);
         match spec_target {
             crate::planner::SpeculativeTarget::TermHost => {
-                terminal_bridge.arm_and_warmup();
                 println!(
                     "  {} {}",
-                    "[INTENT PROBE]:".bright_cyan().bold(),
-                    "PREDICTED -> TermHost [PTY Buffer Armed & Ready (0ms Latency)]".bright_green()
+                    "[INTENT ROUTER]:".bright_cyan().bold(),
+                    "TARGET -> Host Shell / Terminal Environment".bright_green()
                 );
             }
             crate::planner::SpeculativeTarget::WebBrowser => {

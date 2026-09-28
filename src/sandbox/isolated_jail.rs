@@ -294,33 +294,28 @@ impl IsolatedJail {
 
         // 4. Linux command not found
         if text.contains("command not found") || text.contains(": not found") {
+            const IGNORED_COMMANDS: &[&str] = &[
+                "run", "exec", "terminal", "sh", "bash", "cmd", "action", "command",
+                "python", "python3", "pytest", "sudo", "exit", "test", "true", "false",
+            ];
             for line in text.lines() {
-                if let Some(idx) = line.find("command not found:") {
-                    let candidate = line[idx + "command not found:".len()..].trim();
-                    if let Some(first_word) = candidate.split_whitespace().next() {
-                        return Some(
-                            first_word
-                                .trim_matches(|c| c == '\'' || c == '"' || c == ':')
-                                .to_string(),
-                        );
-                    }
+                let candidate = if let Some(idx) = line.find("command not found:") {
+                    let sub = line[idx + "command not found:".len()..].trim();
+                    sub.split_whitespace().next()
                 } else if let Some(idx) = line.find(": command not found") {
                     let prefix = line[..idx].trim();
-                    if let Some(last_word) = prefix.split_whitespace().last() {
-                        return Some(
-                            last_word
-                                .trim_matches(|c| c == '\'' || c == '"' || c == ':')
-                                .to_string(),
-                        );
-                    }
+                    prefix.split_whitespace().last()
                 } else if let Some(idx) = line.find(": not found") {
                     let prefix = line[..idx].trim();
-                    if let Some(last_word) = prefix.split_whitespace().last() {
-                        return Some(
-                            last_word
-                                .trim_matches(|c| c == '\'' || c == '"' || c == ':')
-                                .to_string(),
-                        );
+                    prefix.split_whitespace().last()
+                } else {
+                    None
+                };
+
+                if let Some(word) = candidate {
+                    let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string();
+                    if !clean.is_empty() && !IGNORED_COMMANDS.contains(&clean.to_lowercase().as_str()) {
+                        return Some(clean);
                     }
                 }
             }

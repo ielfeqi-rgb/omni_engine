@@ -1,9 +1,9 @@
 [package]
 name = "omni_engine"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 authors = ["Omni AI Team"]
-description = "Standalone Rust AI Engine wrapping llama.cpp with Web UI, Model Downloader, OpenAI API & API Key Auth"
+description = "Sovereign In-Process AI Engine with Causal KV-Cache Manipulation, Sandbox Isolation & Multi-Agent Swarm"
 
 [lib]
 name = "omni_engine"
@@ -27,7 +27,6 @@ rand = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mime_guess = "2.0"
-wasmi = "0.36"
 colored = "2.1"
 indicatif = "0.17"
 mlua = { version = "0.9", features = ["lua54", "vendored"] }

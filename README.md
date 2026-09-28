@@ -1,4 +1,4 @@
-# Omni Engine v2.0: Sovereign Autonomous Agent Runtime & Causal-DAG KV-Cache Pruning
+# Omni Engine v2.1: Sovereign Autonomous Agent Runtime & In-Process Causal KV-Cache Pruning
 
 [![Rust 1.75+](https://img.shields.io/badge/Rust-1.75%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![License: CC BY 4.0 / Apache 2.0](https://img.shields.io/badge/License-Dual%20Open%20Source-blue.svg?style=flat-square)](https://creativecommons.org/licenses/by/4.0/)
@@ -7,7 +7,7 @@
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ielfeqi--rgb%2Fomni__engine-181717?style=flat-square&logo=github)](https://github.com/ielfeqi-rgb/omni_engine)
 
 > **"Why should autonomous agency be the exclusive monopoly of multi-megawatt corporate data centers?"**  
-> **Omni Engine v2.0.0** is an independent, single-binary, zero-dependency autonomous AI execution engine written in pure Rust. It transforms compact open-weights language models (1.5B–3B parameters) into self-healing, deterministic execution agents operating on ordinary consumer laptops without cloud dependencies, API subscriptions, or external environment setup.
+> **Omni Engine v2.1.0** is an independent, single-binary, zero-dependency autonomous AI execution engine written in pure Rust. It transforms compact open-weights language models (1.5B–3B parameters) into self-healing, deterministic execution agents operating on ordinary consumer laptops without cloud dependencies, API subscriptions, or external environment setup.
 
 ---
 
@@ -220,25 +220,25 @@ cargo build --release
 ### 6.3 Direct In-Process KV-Cache Hardware Verification
 ```bash
 # Verify true in-process C FFI KV-cache manipulation (eval, causal rollback, seq fork, clear)
-./omni_engine kv-test qwen-0.5b.gguf
+./run.sh kv-test qwen-0.5b.gguf
 ```
 
 ### 6.4 Local Inference Daemon & CLI Controller
 ```bash
 # Inspect physical hardware specs and thread topology
-./omni_engine status
+./run.sh status
 
 # List available local GGUF models
-./omni_engine models
+./run.sh models
 
 # Start background local inference daemon
-./omni_engine start qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --port 8081 --ctx 2048
+./run.sh start qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --port 8081 --ctx 2048
 
 # Create secure Bearer API tokens
-./omni_engine keys new "Production-Key"
+./run.sh keys new "Production-Key"
 
 # Start Web UI Dashboard and OpenAI-compatible REST server (/v1/chat/completions)
-./omni_engine serve --port 8090
+./run.sh serve --port 8090
 ```
 
 ### 6.5 Isolated Host Sandbox & Pre-Commit Testing (Bubblewrap)

@@ -258,7 +258,6 @@ impl SwarmCoordinator {
         };
 
         let terminal = Arc::new(crate::sandbox::TerminalSessionBridge::new(1000));
-        terminal.arm_and_warmup();
 
         Ok(Self {
             config,
@@ -617,21 +616,28 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         // 3. Shell / Linux command not found:
         // "command not found: jq" or "jq: command not found" or "sh: line 1: jq: not found"
         if text.contains("command not found") || text.contains(": not found") {
+            const IGNORED_COMMANDS: &[&str] = &[
+                "run", "exec", "terminal", "sh", "bash", "cmd", "action", "command",
+                "python", "python3", "pytest", "sudo", "exit", "test", "true", "false",
+            ];
             for line in text.lines() {
-                if let Some(idx) = line.find("command not found:") {
-                    let candidate = line[idx + "command not found:".len()..].trim();
-                    if let Some(first_word) = candidate.split_whitespace().next() {
-                        return Some(first_word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string());
-                    }
+                let candidate = if let Some(idx) = line.find("command not found:") {
+                    let sub = line[idx + "command not found:".len()..].trim();
+                    sub.split_whitespace().next()
                 } else if let Some(idx) = line.find(": command not found") {
                     let prefix = line[..idx].trim();
-                    if let Some(last_word) = prefix.split_whitespace().last() {
-                        return Some(last_word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string());
-                    }
+                    prefix.split_whitespace().last()
                 } else if let Some(idx) = line.find(": not found") {
                     let prefix = line[..idx].trim();
-                    if let Some(last_word) = prefix.split_whitespace().last() {
-                        return Some(last_word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string());
+                    prefix.split_whitespace().last()
+                } else {
+                    None
+                };
+
+                if let Some(word) = candidate {
+                    let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string();
+                    if !clean.is_empty() && !IGNORED_COMMANDS.contains(&clean.to_lowercase().as_str()) {
+                        return Some(clean);
                     }
                 }
             }
@@ -1454,10 +1460,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             let parsed_action = Self::parse_action(&generated_text);
             let action = if subgoal.kind == TaskKind::Test {
                 match parsed_action {
-                    SwarmAction::RunTerminal { .. } => parsed_action,
+                    SwarmAction::RunTerminal { ref command } => {
+                        let clean_cmd = Self::strip_command_prefix(command);
+                        SwarmAction::RunTerminal { command: clean_cmd }
+                    }
                     SwarmAction::WriteFile { ref content, .. } if content.contains("python") || content.contains("pytest") || content.contains("bash") || content.contains("sh ") => {
                         let cmd = content.lines().find(|l| l.contains("python") || l.contains("bash") || l.contains("pytest")).unwrap_or(content).trim();
-                        SwarmAction::RunTerminal { command: cmd.to_string() }
+                        let clean_cmd = Self::strip_command_prefix(cmd);
+                        SwarmAction::RunTerminal { command: clean_cmd }
                     }
                     _ => {
                         let default_cmd = if subgoal.target_entity.ends_with(".py") {
@@ -1539,13 +1549,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                 }
                 SwarmAction::RunTerminal { ref command } => {
+                    let clean_cmd = Self::strip_command_prefix(command);
                     let bwrap_active = IsolatedJail::is_bwrap_available();
                     println!(
                         "  [EXECUTION] Isolated Sandbox exec (bwrap={}): '{}'...",
-                        bwrap_active, command
+                        bwrap_active, clean_cmd
                     );
                     let vfs_files = self.vfs.all_files();
-                    match IsolatedJail::run_in_jail(command, &vfs_files, std::time::Duration::from_secs(30)) {
+                    match IsolatedJail::run_in_jail(&clean_cmd, &vfs_files, std::time::Duration::from_secs(30)) {
                         Ok(jail_res) => {
                             let combined = format!("{}{}", jail_res.stdout, jail_res.stderr);
                             (jail_res.success, combined)
@@ -2012,6 +2023,49 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         Ok(report)
     }
 
+    /// Strip prefixes like RUN:, EXEC:, TERMINAL:, $, #, -, etc. from an execution command
+    pub fn strip_command_prefix(raw: &str) -> String {
+        let mut s = raw.trim();
+        loop {
+            let mut changed = false;
+            if let Some(rest) = s.strip_prefix("Assistant:") {
+                s = rest.trim();
+                changed = true;
+            }
+            if let Some(rest) = s.strip_prefix("- ")
+                .or_else(|| s.strip_prefix("* "))
+                .or_else(|| s.strip_prefix("1. "))
+                .or_else(|| s.strip_prefix("2. "))
+                .or_else(|| s.strip_prefix("$ "))
+                .or_else(|| s.strip_prefix("# "))
+            {
+                s = rest.trim();
+                changed = true;
+            }
+            let upper = s.to_uppercase();
+            if upper.starts_with("RUN:") {
+                s = s[4..].trim();
+                changed = true;
+            } else if upper.starts_with("EXEC:") {
+                s = s[5..].trim();
+                changed = true;
+            } else if upper.starts_with("TERMINAL:") {
+                s = s[9..].trim();
+                changed = true;
+            } else if upper.starts_with("ACTION:") {
+                s = s[7..].trim();
+                changed = true;
+            } else if upper.starts_with("COMMAND:") {
+                s = s[8..].trim();
+                changed = true;
+            }
+            if !changed {
+                break;
+            }
+        }
+        s.trim_matches('"').trim_matches('\'').trim().to_string()
+    }
+
     /// Parse raw text generated by the worker model into typed SwarmAction
     pub fn parse_action(text: &str) -> SwarmAction {
         let mut cleaned = text.trim();
@@ -2076,8 +2130,18 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
             if block.contains("vfs.") || (header.eq_ignore_ascii_case("lua") && block.contains("terminal.run")) {
                 return SwarmAction::RunLua { script: block.to_string() };
-            } else if !block.is_empty() {
-                return SwarmAction::WriteFile { filename: String::new(), content: block.to_string() };
+            } else {
+                let upper_block = block.to_uppercase();
+                if header.eq_ignore_ascii_case("bash") || header.eq_ignore_ascii_case("sh")
+                    || upper_block.starts_with("RUN:")
+                    || upper_block.starts_with("EXEC:")
+                    || upper_block.starts_with("TERMINAL:")
+                {
+                    let clean = Self::strip_command_prefix(block);
+                    return SwarmAction::RunTerminal { command: clean };
+                } else if !block.is_empty() {
+                    return SwarmAction::WriteFile { filename: String::new(), content: block.to_string() };
+                }
             }
         }
 
@@ -2145,8 +2209,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 return SwarmAction::PatchFile { filename, target, replacement };
             }
             if upper.starts_with("EXEC:") || upper.starts_with("RUN:") || upper.starts_with("TERMINAL:") {
-                let cmd = l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
-                return SwarmAction::RunTerminal { command: cmd.to_string() };
+                let clean = Self::strip_command_prefix(l);
+                return SwarmAction::RunTerminal { command: clean };
             }
             if upper.starts_with("SEARCH:") {
                 let q = l[7..].trim().trim_matches('"').trim_matches('\'');
@@ -2531,4 +2595,33 @@ mod tests {
         );
         assert_eq!(diag4, DiagnosticCode::MissingDependency("tkinter".to_string()));
     }
+
+    #[test]
+    fn test_strip_command_prefix_and_robust_parsing() {
+        assert_eq!(SwarmCoordinator::strip_command_prefix("RUN: python3 GameLoop.py"), "python3 GameLoop.py");
+        assert_eq!(SwarmCoordinator::strip_command_prefix("EXEC:   bash test.sh"), "bash test.sh");
+        assert_eq!(SwarmCoordinator::strip_command_prefix("- RUN: $ python3 foo.py"), "python3 foo.py");
+        assert_eq!(SwarmCoordinator::strip_command_prefix("Assistant: 1. RUN: pytest tests/"), "pytest tests/");
+
+        // Code block containing RUN:
+        let code_block = "```python\nRUN: python3 GameLoop.py\n```";
+        assert_eq!(
+            SwarmCoordinator::parse_action(code_block),
+            SwarmAction::RunTerminal { command: "python3 GameLoop.py".to_string() }
+        );
+
+        // Code block with bash header
+        let bash_block = "```bash\npython3 GameLoop.py\n```";
+        assert_eq!(
+            SwarmCoordinator::parse_action(bash_block),
+            SwarmAction::RunTerminal { command: "python3 GameLoop.py".to_string() }
+        );
+
+        // Command not found for procedural words should NOT extract missing dependency
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("sh: line 1: RUN:: not found"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("sh: line 1: RUN: command not found"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("sh: line 1: exec: not found"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("sh: line 1: python: command not found"), None);
+    }
 }
+
