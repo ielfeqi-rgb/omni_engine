@@ -996,6 +996,18 @@ fn is_build_task(text: &str) -> bool {
 
 pub fn infer_task_kind(text: &str) -> TaskKind {
     let lower = text.to_lowercase();
+    let trimmed = lower.trim();
+
+    // Priority 1: Explicit creation verbs take precedence
+    if trimmed.starts_with("implement") || trimmed.starts_with("create") || trimmed.starts_with("build")
+        || trimmed.starts_with("write") || trimmed.starts_with("generate") || trimmed.starts_with("code")
+        || trimmed.starts_with("add") || trimmed.starts_with("develop")
+        || trimmed.starts_with("انشئ") || trimmed.starts_with("أنشئ") || trimmed.starts_with("ابن")
+        || trimmed.starts_with("اكتب") || trimmed.starts_with("برمج") || trimmed.starts_with("طور")
+    {
+        return TaskKind::Create;
+    }
+
     if lower.contains("delete") || lower.contains("remove") || lower.contains("clean")
         || lower.contains("احذف") || lower.contains("امسح") || lower.contains("نظف") || lower.contains("إزالة") || lower.contains("ازالة")
     {
@@ -1004,8 +1016,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         || lower.contains("عدل") || lower.contains("صلح") || lower.contains("غير") || lower.contains("تعديل") || lower.contains("تصليح")
     {
         TaskKind::Modify
-    } else if lower.contains("test") || lower.contains("verify") || lower.contains("check")
-        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر") || lower.contains("تحقق")
+    } else if lower.contains("test") || lower.contains("smoke test") || lower.contains("unit test")
+        || trimmed.starts_with("run ") || trimmed.starts_with("execute ")
+        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر")
     {
         TaskKind::Test
     } else {
@@ -1458,10 +1471,35 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         let clean_cmd = Self::strip_command_prefix(command);
                         SwarmAction::RunTerminal { command: clean_cmd }
                     }
-                    SwarmAction::WriteFile { ref content, .. } if content.contains("python") || content.contains("pytest") || content.contains("bash") || content.contains("sh ") => {
-                        let cmd = content.lines().find(|l| l.contains("python") || l.contains("bash") || l.contains("pytest")).unwrap_or(content).trim();
-                        let clean_cmd = Self::strip_command_prefix(cmd);
-                        SwarmAction::RunTerminal { command: clean_cmd }
+                    SwarmAction::WriteFile { ref content, .. } => {
+                        let lines: Vec<&str> = content.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+                        let is_single_run_command = lines.len() <= 2 && lines.iter().any(|l| {
+                            let clean = Self::strip_command_prefix(l);
+                            clean.starts_with("python") || clean.starts_with("pytest") || clean.starts_with("bash") || clean.starts_with("sh ")
+                        });
+
+                        if is_single_run_command {
+                            let cmd_line = lines.iter().find(|l| {
+                                let clean = Self::strip_command_prefix(l);
+                                clean.starts_with("python") || clean.starts_with("pytest") || clean.starts_with("bash") || clean.starts_with("sh ")
+                            }).unwrap_or(&lines[0]);
+                            let clean_cmd = Self::strip_command_prefix(cmd_line);
+                            SwarmAction::RunTerminal { command: clean_cmd }
+                        } else {
+                            // Actual test script generated! Write it to VFS first, then run it.
+                            let actual_filename = if subgoal.target_entity.is_empty() {
+                                "test_suite.py"
+                            } else {
+                                &subgoal.target_entity
+                            };
+                            self.vfs.write_file(&std::path::PathBuf::from(actual_filename), content.as_bytes());
+                            let run_cmd = if actual_filename.ends_with(".py") {
+                                format!("python3 {}", actual_filename)
+                            } else {
+                                format!("bash {}", actual_filename)
+                            };
+                            SwarmAction::RunTerminal { command: run_cmd }
+                        }
                     }
                     _ => {
                         let default_cmd = if subgoal.target_entity.ends_with(".py") {
@@ -2527,6 +2565,7 @@ mod tests {
         assert_eq!(SwarmCoordinator::infer_task_kind("عدل الكود وصلح الخطأ"), TaskKind::Modify);
         assert_eq!(SwarmCoordinator::infer_task_kind("Delete redundant files from workspace"), TaskKind::Delete);
         assert_eq!(SwarmCoordinator::infer_task_kind("احذف الملف القديم"), TaskKind::Delete);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Implement a lightweight HTTP JSON health check server using Flask"), TaskKind::Create);
         assert_eq!(SwarmCoordinator::infer_task_kind("Test the unit test suite and verify output"), TaskKind::Test);
         assert_eq!(SwarmCoordinator::infer_task_kind("اختبر الكود وافحص النتيجة"), TaskKind::Test);
     }
