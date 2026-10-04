@@ -223,10 +223,11 @@ impl CausalGraph {
         self.evict_step_with_context(step_id, text_payload, None, None).unwrap_or(false)
     }
 
-    /// Evict a step from active memory with optional physical KV cache excision and shifting.
-    /// - If suffix: excises directly via `kv_cache_seq_rm`.
-    /// - If middle step: excises and shifts subsequent tokens via `kv_cache_seq_rm_and_shift`,
-    ///   adjusting token ranges of all subsequent steps to maintain continuous positional RoPE.
+    /// Evict a step from active memory using strict tail-rollback.
+    /// When step `step_id` is evicted with context, the KV cache is truncated exactly at that
+    /// step's start position `p0` via `kv_cache_seq_rm(0, p0, -1)`, preventing RoPE phase corruption
+    /// and attention contamination. Any trailing steps whose tokens resided >= p0 are pruned from
+    /// the DAG, and the context length/cursor is reset to `p0` to preserve sequence consistency.
     pub fn evict_step_with_context(
         &mut self,
         step_id: usize,
@@ -234,42 +235,62 @@ impl CausalGraph {
         token_ids: Option<&[i32]>,
         mut ctx: Option<&mut crate::native_llama::NativeLlamaContext>,
     ) -> Result<bool, String> {
-        let (p0, p1) = {
+        let p0 = {
             let node = self.nodes.get_mut(&step_id).ok_or_else(|| format!("Step {} not found", step_id))?;
+            if node.is_evicted && node.token_range == (0, 0) {
+                return Ok(true);
+            }
             node.is_evicted = true;
-            node.token_range
+            node.token_range.0
         };
 
         self.store.store_step(step_id, text_payload, token_ids);
 
         if let Some(c) = ctx.as_mut() {
-            if self.is_active_suffix(step_id) {
-                let ok = c.kv_cache_seq_rm(0, p0 as i32, -1)?;
-                if !ok {
-                    return Err("Failed to excise suffix in kv_cache_seq_rm".to_string());
-                }
-                self.current_token_cursor = p0;
-                if let Some(n) = self.nodes.get_mut(&step_id) {
-                    n.token_range = (0, 0);
-                }
+            // Strict tail-rollback: truncate KV cache from p0 to end (-1)
+            let ok = c.kv_cache_seq_rm(0, p0 as i32, -1)?;
+            if !ok {
+                return Err(format!(
+                    "Failed to truncate KV cache at step {} start position {}",
+                    step_id, p0
+                ));
+            }
+
+            // Invalidate the evicted step's token range
+            if let Some(n) = self.nodes.get_mut(&step_id) {
+                n.token_range = (0, 0);
+            }
+
+            // Prune trailing steps beyond p0 from DAG
+            let trailing_steps: Vec<usize> = if let Some(pos) = self.execution_order.iter().position(|&id| id == step_id) {
+                self.execution_order[pos + 1..].to_vec()
             } else {
-                // Middle step excision with automatic position shift
-                let ok = c.kv_cache_seq_rm_and_shift(0, p0 as i32, p1 as i32)?;
-                if !ok {
-                    return Err("Failed to excise and shift middle KV cells".to_string());
-                }
-                let shift = p1 - p0;
-                self.current_token_cursor = self.current_token_cursor.saturating_sub(shift);
-                if let Some(n) = self.nodes.get_mut(&step_id) {
-                    n.token_range = (0, 0);
-                }
-                for other in self.nodes.values_mut() {
-                    if other.step_id != step_id && other.token_range.0 >= p1 {
-                        other.token_range.0 -= shift;
-                        other.token_range.1 -= shift;
-                    }
+                self.nodes.values()
+                    .filter(|n| n.step_id != step_id && n.token_range.0 >= p0)
+                    .map(|n| n.step_id)
+                    .collect()
+            };
+
+            for trailing_id in trailing_steps.into_iter().rev() {
+                let _ = self.prune_step_graph_state(trailing_id);
+            }
+
+            // Invalidate any remaining nodes recorded >= p0
+            for other in self.nodes.values_mut() {
+                if other.step_id != step_id && other.token_range.0 >= p0 {
+                    other.token_range = (0, 0);
+                    other.is_evicted = true;
                 }
             }
+
+            // Truncate execution order up to the evicted step
+            if let Some(pos) = self.execution_order.iter().position(|&id| id == step_id) {
+                self.execution_order.truncate(pos);
+            }
+
+            // Reset current context tokens cursor to p0 to preserve sequence consistency
+            self.current_token_cursor = p0;
+            c.sync_cursor(p0);
         }
         Ok(true)
     }
@@ -580,6 +601,11 @@ impl CausalGraph {
         self.current_token_cursor
     }
 
+    /// Alias for current_token_cursor returning active context token count
+    pub fn current_context_tokens(&self) -> usize {
+        self.current_token_cursor
+    }
+
     pub fn contains_step(&self, step_id: usize) -> bool {
         self.nodes.contains_key(&step_id)
     }
@@ -768,4 +794,21 @@ mod tests {
         assert!(!graph.nodes.get(&1).unwrap().is_evicted);
         assert_eq!(graph.current_token_cursor(), 50);
     }
+
+    #[test]
+    fn test_causal_dag_evict_step_exact_tail_rollback_contract() {
+        let mut graph = CausalGraph::new();
+        graph.record_step(1, "Step 1", &[], &["A"], 30);
+        assert_eq!(graph.current_context_tokens(), 30);
+        assert_eq!(graph.current_token_cursor(), 30);
+
+        // Logical eviction
+        let ok = graph.evict_step(1, "Step 1 payload");
+        assert!(ok);
+        assert_eq!(graph.is_step_evicted(1), Some(true));
+        // Evicting already evicted step is idempotent
+        let ok2 = graph.evict_step(1, "Step 1 payload");
+        assert!(ok2);
+    }
 }
+

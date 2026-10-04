@@ -226,3 +226,247 @@ int omni_llama_kv_cache_seq_pos_max(struct llama_context * ctx, int seq_id) {
     if (!ctx) return -1;
     return (int)llama_kv_cache_seq_pos_max(ctx, (llama_seq_id)seq_id);
 }
+
+// ---------------------------------------------------------------------------
+// Advanced Sampler Chain API
+// ---------------------------------------------------------------------------
+
+struct omni_llama_sampler {
+    struct llama_sampler * chain;
+};
+
+struct omni_llama_sampler * omni_llama_sampler_init_chain(void) {
+    struct llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
+    sparams.no_perf = true;
+    struct llama_sampler * chain = llama_sampler_chain_init(sparams);
+    if (!chain) {
+        return NULL;
+    }
+
+    struct omni_llama_sampler * omni_smpl = (struct omni_llama_sampler *)malloc(sizeof(struct omni_llama_sampler));
+    if (!omni_smpl) {
+        llama_sampler_free(chain);
+        return NULL;
+    }
+    omni_smpl->chain = chain;
+    return omni_smpl;
+}
+
+void omni_llama_sampler_add_penalties(
+    struct omni_llama_sampler * chain,
+    int32_t n_vocab,
+    int32_t penalty_last_n,
+    float penalty_repeat,
+    float penalty_freq,
+    float penalty_present
+) {
+    (void)n_vocab;
+    if (!chain || !chain->chain) {
+        return;
+    }
+
+    // Skip if all penalties are inactive
+    if (penalty_last_n == 0 || (penalty_repeat == 1.0f && penalty_freq == 0.0f && penalty_present == 0.0f)) {
+        return;
+    }
+
+    int32_t last_n = penalty_last_n;
+    if (last_n <= 0 && last_n != -1) {
+        last_n = 64;
+    }
+
+    struct llama_sampler * smpl = llama_sampler_init_penalties(
+        last_n,
+        penalty_repeat,
+        penalty_freq,
+        penalty_present
+    );
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+void omni_llama_sampler_add_top_k(struct omni_llama_sampler * chain, int32_t k) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+    if (k <= 0) {
+        return;
+    }
+
+    struct llama_sampler * smpl = llama_sampler_init_top_k(k);
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+void omni_llama_sampler_add_top_p(struct omni_llama_sampler * chain, float p, size_t min_keep) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+    if (p <= 0.0f || p >= 1.0f) {
+        return;
+    }
+
+    size_t keep = (min_keep > 0) ? min_keep : 1;
+    struct llama_sampler * smpl = llama_sampler_init_top_p(p, keep);
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+void omni_llama_sampler_add_min_p(struct omni_llama_sampler * chain, float p, size_t min_keep) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+    if (p <= 0.0f || p >= 1.0f) {
+        return;
+    }
+
+    size_t keep = (min_keep > 0) ? min_keep : 1;
+    struct llama_sampler * smpl = llama_sampler_init_min_p(p, keep);
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+void omni_llama_sampler_add_temp(struct omni_llama_sampler * chain, float temp) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+    if (temp < 0.0f) {
+        temp = 0.0f;
+    }
+
+    struct llama_sampler * smpl = llama_sampler_init_temp(temp);
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+void omni_llama_sampler_add_dist(struct omni_llama_sampler * chain, uint32_t seed) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+
+    uint32_t s = (seed != 0) ? seed : LLAMA_DEFAULT_SEED;
+    struct llama_sampler * smpl = llama_sampler_init_dist(s);
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+void omni_llama_sampler_add_greedy(struct omni_llama_sampler * chain) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+
+    struct llama_sampler * smpl = llama_sampler_init_greedy();
+    if (!smpl) {
+        return;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+}
+
+int32_t omni_llama_sampler_sample(
+    struct omni_llama_sampler * chain,
+    struct llama_context * ctx,
+    int32_t idx
+) {
+    if (!chain || !chain->chain || !ctx) {
+        return -1;
+    }
+
+    // Defensive check: verify that logits are actually available for this context.
+    // If llama_decode hasn't been called or idx is invalid, llama_get_logits_ith will return NULL,
+    // which would cause an unhandled SIGSEGV inside libllama's llama_sampler_sample.
+    float * logits = llama_get_logits_ith(ctx, idx);
+    if (!logits) {
+        logits = llama_get_logits(ctx);
+    }
+    if (!logits) {
+        return -1;
+    }
+
+    llama_token token = llama_sampler_sample(chain->chain, ctx, idx);
+    return (int32_t)token;
+}
+
+void omni_llama_sampler_accept(struct omni_llama_sampler * chain, int32_t token) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+    if (token < 0) {
+        return;
+    }
+    llama_sampler_accept(chain->chain, (llama_token)token);
+}
+
+void omni_llama_sampler_reset(struct omni_llama_sampler * chain) {
+    if (!chain || !chain->chain) {
+        return;
+    }
+    llama_sampler_reset(chain->chain);
+}
+
+void omni_llama_sampler_free(struct omni_llama_sampler * chain) {
+    if (!chain) {
+        return;
+    }
+    if (chain->chain) {
+        llama_sampler_free(chain->chain);
+        chain->chain = NULL;
+    }
+    free(chain);
+}
+
+struct omni_llama_sampler * omni_llama_sampler_create(
+    float temp,
+    float top_p,
+    int32_t top_k,
+    float penalty_repeat,
+    float penalty_freq,
+    float penalty_present,
+    int32_t penalty_last_n,
+    uint32_t seed
+) {
+    struct omni_llama_sampler * chain = omni_llama_sampler_init_chain();
+    if (!chain) {
+        return NULL;
+    }
+
+    if (penalty_last_n > 0 || penalty_repeat != 1.0f || penalty_freq != 0.0f || penalty_present != 0.0f) {
+        omni_llama_sampler_add_penalties(chain, 0, penalty_last_n, penalty_repeat, penalty_freq, penalty_present);
+    }
+
+    if (top_k > 0) {
+        omni_llama_sampler_add_top_k(chain, top_k);
+    }
+
+    if (top_p > 0.0f && top_p < 1.0f) {
+        omni_llama_sampler_add_top_p(chain, top_p, 1);
+    }
+
+    if (temp <= 0.0f) {
+        omni_llama_sampler_add_greedy(chain);
+    } else {
+        omni_llama_sampler_add_temp(chain, temp);
+        omni_llama_sampler_add_dist(chain, seed);
+    }
+
+    return chain;
+}
+

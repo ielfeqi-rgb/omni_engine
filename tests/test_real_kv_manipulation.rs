@@ -37,7 +37,7 @@ fn test_end_to_end_real_kv_cache_manipulation() {
     println!("After Decode KV Cache: used_cells={}, token_count={}", after_eval_cells, after_eval_tokens);
     assert_eq!(after_eval_cells, tokens.len(), "KV cells must match evaluated token count");
 
-    println!("\n=== [5] Executing Surgical Causal KV Rollback (O(1) memory excise) ===");
+    println!("\n=== [5] Executing Surgical Causal KV Rollback (In-place suffix excision) ===");
     // Remove the last 5 tokens from KV cache
     let n_tokens = tokens.len() as i32;
     let rollback_start = n_tokens - 5;

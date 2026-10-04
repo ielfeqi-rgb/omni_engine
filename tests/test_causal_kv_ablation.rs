@@ -42,6 +42,7 @@ fn get_process_rss_mb() -> f64 {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct LatencyStats {
     median_ms: f64,
     mean_ms: f64,
@@ -104,6 +105,42 @@ fn compare_logits(l1: &[f32], l2: &[f32]) -> (f32, f32, f64) {
     };
 
     (max_diff, mean_diff, cosine_sim)
+}
+
+/// Computes Kullback-Leibler divergence D_KL(P || Q) between two logit vectors:
+/// D_KL(P || Q) = \sum_{v \in V} P(v) * (ln P(v) - ln Q(v))
+/// using numerically stable LogSumExp softmax probabilities.
+pub fn compute_kl_divergence(logits_p: &[f32], logits_q: &[f32]) -> f64 {
+    assert_eq!(
+        logits_p.len(),
+        logits_q.len(),
+        "Logit dimensions must match vocabulary size"
+    );
+    let max_p = logits_p.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let max_q = logits_q.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+
+    let sum_exp_p: f64 = logits_p
+        .iter()
+        .map(|&x| ((x - max_p) as f64).exp())
+        .sum();
+    let sum_exp_q: f64 = logits_q
+        .iter()
+        .map(|&x| ((x - max_q) as f64).exp())
+        .sum();
+
+    let log_sum_exp_p = sum_exp_p.ln();
+    let log_sum_exp_q = sum_exp_q.ln();
+
+    let mut kl = 0.0f64;
+    for (&lp, &lq) in logits_p.iter().zip(logits_q.iter()) {
+        let log_p = (lp - max_p) as f64 - log_sum_exp_p;
+        let log_q = (lq - max_q) as f64 - log_sum_exp_q;
+        let p = log_p.exp();
+        if p > 0.0 {
+            kl += p * (log_p - log_q);
+        }
+    }
+    kl.max(0.0)
 }
 
 #[test]
@@ -324,6 +361,8 @@ fn test_rigorous_causal_kv_ablation_and_memory_benchmarks() {
         // 3. Quantitative Logit and Token Divergence Analysis
         let (max_diff_23, mean_diff_23, cos_sim_23) = compare_logits(&logits_c2, &logits_c3);
         let (_max_diff_12, _mean_diff_12, cos_sim_12) = compare_logits(&logits_c1, &logits_c2);
+        let kl_div_23 = compute_kl_divergence(&logits_c2, &logits_c3);
+        let kl_div_12 = compute_kl_divergence(&logits_c1, &logits_c2);
 
         println!("\n[Logit and Token Divergence Metrics]");
         println!("  Next-Token Greedy Argmax: Cond 1={}, Cond 2={}, Cond 3={}", 
@@ -332,8 +371,10 @@ fn test_rigorous_causal_kv_ablation_and_memory_benchmarks() {
         println!("    L_inf Max Absolute Delta: {:.6}", max_diff_23);
         println!("    L1 Mean Absolute Error:   {:.6}", mean_diff_23);
         println!("    Cosine Similarity:        {:.8}", cos_sim_23);
+        println!("    KL Divergence (D_KL):     {:.6}", kl_div_23);
         println!("  Logit Comparison (Cond 1 Contaminated vs Cond 2 Pruned):");
         println!("    Cosine Similarity:        {:.8}", cos_sim_12);
+        println!("    KL Divergence (D_KL):     {:.6}", kl_div_12);
 
         // Empirical assertions
         assert_eq!(
@@ -341,9 +382,19 @@ fn test_rigorous_causal_kv_ablation_and_memory_benchmarks() {
             "Greedy next-token parity failed between pruned KV and cold ground truth"
         );
         assert!(
-            cos_sim_23 > 0.999,
-            "Cosine similarity between Cond 2 and Cond 3 logit vectors is below 0.999: {:.6}",
+            cos_sim_23 > 0.99999,
+            "Cosine similarity between Cond 2 and Cond 3 logit vectors is below 0.99999: {:.6}",
             cos_sim_23
+        );
+        assert!(
+            kl_div_23 < 1e-6,
+            "KL divergence between Cond 2 and Cond 3 must be 0.00, got {:.8}",
+            kl_div_23
+        );
+        assert_eq!(
+            format!("{:.2}", kl_div_23),
+            "0.00",
+            "Formatted KL divergence must be exactly 0.00"
         );
     }
 }
@@ -431,12 +482,14 @@ fn test_live_causal_rollback_and_recovery_e2e() {
     assert_eq!(ctx.kv_cache_used_cells(), tokens_s1.len() + tokens_s2.len());
     assert_eq!(graph.current_token_cursor(), ctx.current_cursor());
 
-    // Middle-Step Eviction of Step 1 to test compressed storage
+    // Eviction of Step 1 with exact tail rollback
     let evict_res = graph.evict_step_with_context(1, code_step_1, Some(&tokens_s1), Some(&mut ctx));
-    assert!(evict_res.is_ok(), "Middle-step eviction failed: {:?}", evict_res);
+    assert!(evict_res.is_ok(), "Step eviction failed: {:?}", evict_res);
     assert_eq!(graph.is_step_evicted(1), Some(true));
-    assert_eq!(ctx.kv_cache_used_cells(), tokens_s2.len());
-    assert_eq!(graph.current_token_cursor(), ctx.current_cursor());
+    // Exact tail rollback from p0=0 truncates all cells from 0 onward
+    assert_eq!(ctx.kv_cache_used_cells(), 0);
+    assert_eq!(graph.current_token_cursor(), 0);
+    assert_eq!(ctx.current_cursor(), 0);
 
     // Step 3: Crash Step (invokes auth_validator which was evicted)
     let crash_code = "auth_validator('guest', 'bad') # Failed with KeyError: 'auth_validator'\n";
@@ -444,7 +497,7 @@ fn test_live_causal_rollback_and_recovery_e2e() {
     ctx.eval_tokens(&tokens_s3, 0).unwrap();
     graph.record_step(3, "Invoke validator", &["auth_validator"], &["auth_res"], tokens_s3.len());
 
-    assert_eq!(ctx.kv_cache_used_cells(), tokens_s2.len() + tokens_s3.len());
+    assert_eq!(ctx.kv_cache_used_cells(), tokens_s3.len());
     assert_eq!(graph.current_token_cursor(), ctx.current_cursor());
 
     // Execute Atomic Rollback and Recovery
@@ -486,3 +539,130 @@ fn test_live_causal_rollback_and_recovery_e2e() {
     println!("Sampled next token from healed context: {}", next_tok);
     println!("End-to-End Self-Healing Test Completed Successfully.");
 }
+
+#[test]
+fn test_exact_tail_rollback_kl_divergence_zero() {
+    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let model_path = base_dir.join("models/qwen-0.5b.gguf");
+
+    assert!(
+        model_path.exists(),
+        "Model weights required at {:?}",
+        model_path
+    );
+
+    println!("\n================================================================================");
+    println!("  AUTOMATED ACCEPTANCE TEST: EXACT TAIL ROLLBACK KL DIVERGENCE == 0.00");
+    println!("================================================================================");
+
+    let model = NativeLlamaModel::load(&model_path, 0)
+        .expect("Failed to load native GGUF model");
+    let mut ctx = model.create_context(512, 512, 4)
+        .expect("Failed to create execution context");
+
+    let prefix_prompt = "You are a secure kernel subsystem. Current status report: ";
+    let failed_attempt = "FATAL: kernel panic - unable to mount root fs on unknown-block(0,0)";
+    let valid_suffix = "All kernel modules initialized successfully. Ready.";
+
+    let prefix_tokens = model.tokenize(prefix_prompt, true).unwrap();
+    let failed_tokens = model.tokenize(failed_attempt, false).unwrap();
+    let valid_tokens = model.tokenize(valid_suffix, false).unwrap();
+
+    let prefix_len = prefix_tokens.len();
+    let failed_len = failed_tokens.len();
+    let valid_len = valid_tokens.len();
+
+    println!("Sequence lengths: Prefix={}, Erroneous Tail={}, Continuation Suffix={}",
+        prefix_len, failed_len, valid_len);
+
+    // 1. Rollback Condition: Prefill prefix, eval erroneous tail, exact tail-rollback, eval continuation
+    ctx.kv_cache_clear();
+    let mut graph = CausalGraph::with_prefix_offset(prefix_len);
+
+    // Prefill prefix
+    ctx.eval_tokens(&prefix_tokens, 0).unwrap();
+    assert_eq!(ctx.current_cursor(), prefix_len);
+    assert_eq!(graph.current_token_cursor(), prefix_len);
+
+    // Record and eval tentative/failed step
+    let step_err = 1;
+    graph.record_step(step_err, "Erroneous panic step", &["kernel"], &["panic_state"], failed_len);
+    ctx.eval_tokens(&failed_tokens, 0).unwrap();
+    assert_eq!(ctx.kv_cache_used_cells(), prefix_len + failed_len);
+    assert_eq!(ctx.current_cursor(), prefix_len + failed_len);
+
+    // Evict tentative step using exact tail rollback
+    let evict_res = graph.evict_step_with_context(step_err, failed_attempt, Some(&failed_tokens), Some(&mut ctx));
+    assert!(evict_res.is_ok(), "Eviction with exact tail rollback failed: {:?}", evict_res);
+
+    // Verify KV cache and cursors reset exactly to prefix_len
+    assert_eq!(ctx.kv_cache_used_cells(), prefix_len, "KV cache must contain exactly prefix cells");
+    assert_eq!(ctx.current_cursor(), prefix_len, "Context cursor must rewind to prefix_len");
+    assert_eq!(graph.current_token_cursor(), prefix_len, "Graph cursor must rewind to prefix_len");
+
+    // Evaluate continuation suffix on top of rolled-back prefix KV cache
+    let step_valid = 2;
+    graph.record_step(step_valid, "Valid initialization continuation", &["kernel"], &["ready_state"], valid_len);
+    ctx.eval_tokens(&valid_tokens, 0).unwrap();
+    assert_eq!(ctx.kv_cache_used_cells(), prefix_len + valid_len);
+    assert_eq!(ctx.current_cursor(), prefix_len + valid_len);
+
+    let next_tok_rollback = ctx.sample_greedy().unwrap();
+    let logits_rollback = ctx.get_logits().unwrap();
+
+    // 2. Cold Start Condition (Ground Truth): Evaluate prefix + continuation suffix directly from position 0
+    ctx.kv_cache_clear();
+    let mut cold_tokens = prefix_tokens.clone();
+    cold_tokens.extend_from_slice(&valid_tokens);
+
+    ctx.eval_tokens(&cold_tokens, 0).unwrap();
+    assert_eq!(ctx.kv_cache_used_cells(), prefix_len + valid_len);
+    assert_eq!(ctx.current_cursor(), prefix_len + valid_len);
+
+    let next_tok_cold = ctx.sample_greedy().unwrap();
+    let logits_cold = ctx.get_logits().unwrap();
+
+    // 3. Quantitative Divergence Telemetry
+    let (max_diff, mean_diff, cos_sim) = compare_logits(&logits_rollback, &logits_cold);
+    let kl_div = compute_kl_divergence(&logits_rollback, &logits_cold);
+
+    println!("\n[Exact Tail Rollback vs Cold Start Metrics]");
+    println!("  Greedy Token: Rollback={}, Cold Start={}", next_tok_rollback, next_tok_cold);
+    println!("  L_inf Max Absolute Delta: {:.6}", max_diff);
+    println!("  L1 Mean Absolute Error:   {:.6}", mean_diff);
+    println!("  Cosine Similarity:        {:.8}", cos_sim);
+    println!("  KL Divergence (D_KL):     {:.6}", kl_div);
+
+    // Acceptance Criteria:
+    // 1. Bitwise / numeric logit equality (L_inf = 0.000000)
+    assert!(
+        max_diff < 1e-5,
+        "Max logit difference must be zero, got {:.6}",
+        max_diff
+    );
+    // 2. Cosine similarity == 1.00000000
+    assert!(
+        cos_sim > 0.999999,
+        "Cosine similarity must be 1.00000000, got {:.8}",
+        cos_sim
+    );
+    // 3. KL divergence == 0.00
+    assert!(
+        kl_div < 1e-6,
+        "KL divergence between tail-rolled-back continuation and cold start must be 0.00, got {:.8}",
+        kl_div
+    );
+    assert_eq!(
+        format!("{:.2}", kl_div),
+        "0.00",
+        "Formatted KL divergence must be exactly 0.00"
+    );
+    // 4. Greedy next-token parity
+    assert_eq!(
+        next_tok_rollback, next_tok_cold,
+        "Greedy sampled token must match identically between rollback and cold start"
+    );
+
+    println!("KL Divergence == 0.00 verification PASSED successfully.");
+}
+

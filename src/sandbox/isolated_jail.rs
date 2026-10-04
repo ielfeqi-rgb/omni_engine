@@ -177,6 +177,7 @@ impl IsolatedJail {
         bwrap.stdout(Stdio::piped());
         bwrap.stderr(Stdio::piped());
 
+        bwrap.stdin(std::process::Stdio::null());
         let mut child = bwrap
             .spawn()
             .map_err(|e| format!("Failed to spawn bwrap: {}", e))?;
@@ -199,6 +200,7 @@ impl IsolatedJail {
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 
+        process.stdin(std::process::Stdio::null());
         let mut child = process
             .spawn()
             .map_err(|e| format!("Failed to spawn shell fallback: {}", e))?;

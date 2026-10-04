@@ -21,8 +21,9 @@ pub struct LlamaEngineStatus {
 pub struct LlamaManager {
     base_dir: PathBuf,
     models_dir: PathBuf,
-    process: Arc<Mutex<Option<Child>>>,
-    active_model: Arc<Mutex<Option<String>>>,
+    pub process: Arc<Mutex<Option<Child>>>,
+    pub active_model: Arc<Mutex<Option<String>>>,
+    pub native_model: Arc<std::sync::Mutex<Option<std::sync::Arc<crate::native_llama::NativeLlamaModel>>>>,
 }
 
 impl LlamaManager {
@@ -37,6 +38,7 @@ impl LlamaManager {
             models_dir,
             process: Arc::new(Mutex::new(None)),
             active_model: Arc::new(Mutex::new(None)),
+            native_model: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -171,76 +173,36 @@ impl LlamaManager {
         }
     }
 
-    pub fn start(&self, model_name: String, port: u16, threads: usize, ctx_size: usize) -> Result<u32, String> {
+    pub fn start(&self, model_name: String, port: u16, threads: usize, _ctx_size: usize) -> Result<u32, String> {
         let mut proc_guard = self.process.lock();
         if proc_guard.is_some() {
             return Err("llama-server engine is already running".to_string());
         }
-
-        let binary = self.locate_binary()
-            .ok_or_else(|| "llama-server binary not found on system. Please download/compile llama.cpp binary.".to_string())?;
 
         let model_path = self.models_dir.join(&model_name);
         if !model_path.exists() {
             return Err(format!("Model file {:?} not found.", model_path));
         }
 
-        let num_threads = if threads == 0 {
+        let _num_threads = if threads == 0 {
             std::thread::available_parallelism().map(|n| (n.get() / 2).max(1)).unwrap_or(2)
         } else {
             threads
         };
-
-        let bin_dir = binary.parent().unwrap_or(&self.base_dir);
-        let existing_ld = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
-        let new_ld = format!("{}:{}:{}", bin_dir.display(), self.base_dir.display(), existing_ld);
+        
+        let loaded_model = crate::native_llama::NativeLlamaModel::load(&model_path, 0)?;
 
         let config_dir = self.base_dir.join("config");
         let _ = fs::create_dir_all(&config_dir);
-        let log_path = config_dir.join("llama_server.log");
-        let log_file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&log_path)
-            .map_err(|e| format!("Failed to open log file: {}", e))?;
-        let err_file = log_file.try_clone().map_err(|e| format!("Failed to clone log file handle: {}", e))?;
-
-        let mut cmd = Command::new(&binary);
-        cmd.env("LD_LIBRARY_PATH", new_ld)
-            .arg("-m")
-            .arg(&model_path)
-            .arg("-c")
-            .arg(ctx_size.to_string())
-            .arg("-t")
-            .arg(num_threads.to_string())
-            .arg("--host")
-            .arg("127.0.0.1")
-            .arg("--port")
-            .arg(port.to_string())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::from(log_file))
-            .stderr(std::process::Stdio::from(err_file));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
+        let _ = fs::write(config_dir.join("active_model.txt"), &model_name);
+        
+        if let Ok(mut lock) = self.native_model.lock() {
+            *lock = Some(loaded_model);
         }
 
-        match cmd.spawn() {
-            Ok(child) => {
-                let id = child.id();
-                let _ = fs::write(config_dir.join("llama_server.pid"), id.to_string());
-                let _ = fs::write(config_dir.join("active_model.txt"), &model_name);
-
-                *proc_guard = Some(child);
-                *self.active_model.lock() = Some(model_name.clone());
-                info!("Started llama-server PID {} with model {}", id, model_name);
-                Ok(id)
-            }
-            Err(e) => Err(format!("Failed to spawn llama-server: {}", e)),
-        }
+        *self.active_model.lock() = Some(model_name.clone());
+        info!("Started NativeLlamaModel with model {}", model_name);
+        Ok(std::process::id()) // Return current pid as a placeholder
     }
 
     pub fn stop(&self) -> Result<(), String> {
@@ -264,6 +226,9 @@ impl LlamaManager {
 
         let _ = fs::remove_file(self.base_dir.join("config").join("active_model.txt"));
         *self.active_model.lock() = None;
+        if let Ok(mut lock) = self.native_model.lock() {
+            *lock = None;
+        }
         Ok(())
     }
 }

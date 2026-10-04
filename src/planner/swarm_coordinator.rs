@@ -1443,9 +1443,30 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             let mut in_code_block = false;
             let max_gen_tokens = if is_build { 1536 } else { 256 };
 
+            let mut sampler = crate::native_llama::NativeLlamaSampler::new(&crate::native_llama::SamplingConfig {
+                temperature: 0.7,
+                top_p: 0.9,
+                top_k: 40,
+                repetition_penalty: 1.1,
+                penalty_last_n: 64,
+                seed: 42,
+            }).map_err(|e| e.to_string())?;
+            let mut recent_tokens: std::collections::VecDeque<i32> = std::collections::VecDeque::with_capacity(64);
+
             for _ in 0..max_gen_tokens {
-                let tok = worker_ctx.sample_greedy()?;
+                let tok = worker_ctx.sample(&mut sampler)?;
                 let piece = self.worker_model.token_to_piece(tok)?;
+                
+                recent_tokens.push_back(tok);
+                if recent_tokens.len() >= 16 {
+                    let half = recent_tokens.len() / 2;
+                    let first_half = recent_tokens.iter().take(half);
+                    let second_half = recent_tokens.iter().skip(half);
+                    if first_half.eq(second_half) {
+                        break;
+                    }
+                }
+
 
                 if piece.contains("<|im_end|>")
                     || piece.contains("<|endoftext|>")

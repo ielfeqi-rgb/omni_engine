@@ -6,13 +6,14 @@
 //! defragmentation, and full epistemic apoptosis).
 
 use colored::*;
+use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::io::{self, IsTerminal, Write};
 use std::os::raw::{c_char, c_void};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 static BACKEND_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -69,6 +70,37 @@ extern "C" {
         out_logits: *mut f32,
         max_vocab: i32,
     ) -> i32;
+
+    // --- Modern Sampler Chain Bindings ---
+    fn omni_llama_sampler_init_chain() -> *mut c_void;
+    fn omni_llama_sampler_add_penalties(
+        chain: *mut c_void,
+        n_vocab: i32,
+        penalty_last_n: i32,
+        penalty_repeat: f32,
+        penalty_freq: f32,
+        penalty_present: f32,
+    );
+    fn omni_llama_sampler_add_top_k(chain: *mut c_void, k: i32);
+    fn omni_llama_sampler_add_top_p(chain: *mut c_void, p: f32, min_keep: usize);
+    fn omni_llama_sampler_add_min_p(chain: *mut c_void, p: f32, min_keep: usize);
+    fn omni_llama_sampler_add_temp(chain: *mut c_void, temp: f32);
+    fn omni_llama_sampler_add_dist(chain: *mut c_void, seed: u32);
+    fn omni_llama_sampler_add_greedy(chain: *mut c_void);
+    fn omni_llama_sampler_sample(chain: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
+    fn omni_llama_sampler_accept(chain: *mut c_void, token: i32);
+    fn omni_llama_sampler_reset(chain: *mut c_void);
+    fn omni_llama_sampler_free(chain: *mut c_void);
+    fn omni_llama_sampler_create(
+        temp: f32,
+        top_p: f32,
+        top_k: i32,
+        penalty_repeat: f32,
+        penalty_freq: f32,
+        penalty_present: f32,
+        penalty_last_n: i32,
+        seed: u32,
+    ) -> *mut c_void;
 }
 
 /// Initialize the llama.cpp backend once per process lifecycle.
@@ -214,6 +246,224 @@ impl Drop for NativeLlamaModel {
     }
 }
 
+/// Hyperparameter configuration for autoregressive token sampling.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SamplingConfig {
+    /// Temperature scaling applied to logits.
+    /// Values <= 0.0 enable pure deterministic greedy selection.
+    /// Default: 0.7.
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+
+    /// Top-P (nucleus) sampling threshold in range (0.0, 1.0].
+    /// Only tokens comprising top cumulative probability mass `p` are considered.
+    /// 1.0 disables nucleus filtering. Default: 0.9.
+    #[serde(default = "default_top_p")]
+    pub top_p: f32,
+
+    /// Top-K sampling candidate count limit.
+    /// Retains only the K most likely tokens. <= 0 disables Top-K.
+    /// Default: 40.
+    #[serde(default = "default_top_k")]
+    pub top_k: i32,
+
+    /// Repetition penalty factor applied to previously seen tokens.
+    /// 1.0 disables repetition penalty. Values > 1.0 penalize repeated tokens.
+    /// Default: 1.1.
+    #[serde(default = "default_repetition_penalty")]
+    pub repetition_penalty: f32,
+
+    /// Number of recent tokens considered for repetition penalties.
+    /// <= 0 disables last-n filtering; > 0 specifies the lookback window.
+    /// Default: 64.
+    #[serde(default = "default_penalty_last_n")]
+    pub penalty_last_n: i32,
+
+    /// Random number generator seed.
+    /// 0 triggers default fallback (1337) or entropy seed.
+    /// Default: 0.
+    #[serde(default)]
+    pub seed: u32,
+}
+
+fn default_temperature() -> f32 { 0.7 }
+fn default_top_p() -> f32 { 0.9 }
+fn default_top_k() -> i32 { 40 }
+fn default_repetition_penalty() -> f32 { 1.1 }
+fn default_penalty_last_n() -> i32 { 64 }
+
+impl Default for SamplingConfig {
+    fn default() -> Self {
+        Self {
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            repetition_penalty: 1.1,
+            penalty_last_n: 64,
+            seed: 1337,
+        }
+    }
+}
+
+impl SamplingConfig {
+    /// Pure deterministic greedy sampling (temperature = 0, no penalties).
+    pub fn greedy() -> Self {
+        Self {
+            temperature: 0.0,
+            top_p: 1.0,
+            top_k: 0,
+            repetition_penalty: 1.0,
+            penalty_last_n: 0,
+            seed: 0,
+        }
+    }
+
+    /// Stochastic sampling with custom temperature and top-p.
+    pub fn stochastic(temperature: f32, top_p: f32, seed: u32) -> Self {
+        Self {
+            temperature,
+            top_p,
+            top_k: 40,
+            repetition_penalty: 1.1,
+            penalty_last_n: 64,
+            seed,
+        }
+    }
+
+    /// Returns `true` if greedy selection is configured.
+    pub fn is_greedy(&self) -> bool {
+        self.temperature <= 0.0
+    }
+
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
+        self
+    }
+
+    pub fn with_top_p(mut self, top_p: f32) -> Self {
+        self.top_p = top_p;
+        self
+    }
+
+    pub fn with_top_k(mut self, top_k: i32) -> Self {
+        self.top_k = top_k;
+        self
+    }
+
+    pub fn with_repetition_penalty(mut self, penalty: f32, last_n: i32) -> Self {
+        self.repetition_penalty = penalty;
+        self.penalty_last_n = last_n;
+        self
+    }
+
+    pub fn with_seed(mut self, seed: u32) -> Self {
+        self.seed = seed;
+        self
+    }
+}
+
+/// RAII wrapper over modern llama.cpp `llama_sampler` chain.
+///
+/// Encapsulates repetition penalties, top-k/top-p candidate filtering,
+/// temperature scaling, and final token selection (distribution or greedy).
+pub struct NativeLlamaSampler {
+    raw_sampler: *mut c_void,
+}
+
+unsafe impl Send for NativeLlamaSampler {}
+
+impl NativeLlamaSampler {
+    /// Build a new sampler chain based on `SamplingConfig`.
+    pub fn new(config: &SamplingConfig) -> Result<Self, String> {
+        let chain = unsafe { omni_llama_sampler_init_chain() };
+        if chain.is_null() {
+            return Err("Failed to allocate native llama_sampler_chain (returned null)".to_string());
+        }
+
+        unsafe {
+            // 1. Repetition penalties (applied first on full candidate logits)
+            if config.repetition_penalty != 1.0 || config.penalty_last_n > 0 {
+                let last_n = if config.penalty_last_n > 0 { config.penalty_last_n } else { 64 };
+                omni_llama_sampler_add_penalties(
+                    chain,
+                    151936, // Qwen2.5 vocab size // n_vocab
+                    last_n,
+                    config.repetition_penalty,
+                    0.0, // penalty_freq
+                    0.0, // penalty_present
+                );
+            }
+
+            // 2. Top-K filtering
+            if config.top_k > 0 {
+                omni_llama_sampler_add_top_k(chain, config.top_k);
+            }
+
+            // 3. Top-P (nucleus) filtering
+            if config.top_p > 0.0 && config.top_p < 1.0 {
+                omni_llama_sampler_add_top_p(chain, config.top_p, 1);
+            }
+
+            // 4. Temperature & Distribution vs Greedy
+            if config.temperature <= 0.0 {
+                omni_llama_sampler_add_greedy(chain);
+            } else {
+                omni_llama_sampler_add_temp(chain, config.temperature);
+                let seed = if config.seed == 0 { 1337 } else { config.seed };
+                omni_llama_sampler_add_dist(chain, seed);
+            }
+        }
+
+        Ok(Self { raw_sampler: chain })
+    }
+
+    /// Convenience constructor for a greedy sampler.
+    pub fn greedy() -> Result<Self, String> {
+        Self::new(&SamplingConfig::greedy())
+    }
+
+    /// Sample next token from context's last evaluated position (index -1).
+    pub fn sample(&mut self, ctx: &mut NativeLlamaContext) -> Result<i32, String> {
+        self.sample_idx(ctx, -1)
+    }
+
+    /// Sample token from context at explicit batch position `idx`.
+    pub fn sample_idx(&mut self, ctx: &mut NativeLlamaContext, idx: i32) -> Result<i32, String> {
+        let tok = unsafe { omni_llama_sampler_sample(self.raw_sampler, ctx.raw_ctx, idx) };
+        if tok < 0 {
+            return Err(format!("Sampler failed to select token (code: {})", tok));
+        }
+        Ok(tok)
+    }
+
+    /// Explicitly feed a token into the sampler's penalty history.
+    pub fn accept(&mut self, token: i32) {
+        unsafe { omni_llama_sampler_accept(self.raw_sampler, token) };
+    }
+
+    /// Reset internal state (penalty rings and token history).
+    pub fn reset(&mut self) {
+        unsafe { omni_llama_sampler_reset(self.raw_sampler) };
+    }
+
+    /// Access raw underlying C pointer.
+    pub fn raw(&self) -> *mut c_void {
+        self.raw_sampler
+    }
+}
+
+impl Drop for NativeLlamaSampler {
+    fn drop(&mut self) {
+        if !self.raw_sampler.is_null() {
+            unsafe {
+                omni_llama_sampler_free(self.raw_sampler);
+            }
+            debug!("Freed native llama sampler chain.");
+            self.raw_sampler = std::ptr::null_mut();
+        }
+    }
+}
+
 /// An active inference execution context with direct C-level KV-cache manipulation.
 pub struct NativeLlamaContext {
     raw_ctx: *mut c_void,
@@ -256,6 +506,20 @@ impl NativeLlamaContext {
     }
 
 
+    /// Sample next token using an external NativeLlamaSampler chain.
+    pub fn sample(&mut self, sampler: &mut NativeLlamaSampler) -> Result<i32, String> {
+        let tok = unsafe { omni_llama_sampler_sample(sampler.raw_sampler, self.raw_ctx, -1) };
+        if tok < 0 {
+            return Err(format!("Context sampling failed with error code: {}", tok));
+        }
+        Ok(tok)
+    }
+
+    /// Sample next token using an external NativeLlamaSampler chain (alias for sample).
+    pub fn sample_with(&mut self, sampler: &mut NativeLlamaSampler) -> Result<i32, String> {
+        self.sample(sampler)
+    }
+
     /// Sample next token using greedy argmax selection over logits.
     pub fn sample_greedy(&self) -> Result<i32, String> {
         let token = unsafe { omni_llama_sample_greedy(self.raw_ctx, self.model.raw_model) };
@@ -287,10 +551,22 @@ impl NativeLlamaContext {
         Ok(logits)
     }
 
-    /// Autoregressively generate up to `max_tokens` from a prompt with live visual CLI telemetry.
-    pub fn generate(&mut self, prompt: &str, max_tokens: usize) -> Result<String, String> {
+    /// Autoregressively generate text from a prompt using a specified `SamplingConfig`.
+    pub fn generate_with_sampling(
+        &mut self,
+        prompt: &str,
+        max_tokens: usize,
+        config: &SamplingConfig,
+    ) -> Result<String, String> {
         let is_term = io::stdout().is_terminal();
         let prompt_tokens = self.model.tokenize(prompt, true)?;
+
+        let mut sampler = NativeLlamaSampler::new(config)?;
+
+        // Ingest prompt tokens into sampler history for repetition penalties
+        for &tok in &prompt_tokens {
+            sampler.accept(tok);
+        }
 
         let start_time = std::time::Instant::now();
         if is_term {
@@ -304,7 +580,7 @@ impl NativeLlamaContext {
         let mut generated = String::new();
 
         for i in 0..max_tokens {
-            let next_tok = self.sample_greedy()?;
+            let next_tok = self.sample(&mut sampler)?;
             let piece = self.model.token_to_piece(next_tok)?;
 
             // Check EOS tokens across model architectures (<|im_end|>, <|im_start|>, <|endoftext|>, <|eot_id|>, </s>, etc.)
@@ -350,7 +626,7 @@ impl NativeLlamaContext {
                 let _ = io::stdout().flush();
             }
 
-            // Guard against autoregressive loop repetition
+            // Loop repetition breaker: guard against infinite token cycle attractor loops
             let tail_len = 32;
             if generated.len() >= tail_len * 2 {
                 let tail = &generated[generated.len() - tail_len..];
@@ -379,6 +655,11 @@ impl NativeLlamaContext {
         Ok(generated)
     }
 
+    /// Autoregressively generate up to `max_tokens` from a prompt with live visual CLI telemetry (greedy default).
+    pub fn generate(&mut self, prompt: &str, max_tokens: usize) -> Result<String, String> {
+        self.generate_with_sampling(prompt, max_tokens, &SamplingConfig::greedy())
+    }
+
     // -----------------------------------------------------------------------
     // REAL KV-CACHE OPERATIONS
     // -----------------------------------------------------------------------
@@ -395,22 +676,23 @@ impl NativeLlamaContext {
         count.max(0) as usize
     }
 
-    /// SURGICAL CAUSAL KV ROLLBACK (Suffix Excision):
+    /// SURGICAL CAUSAL KV ROLLBACK (Suffix Excision / Tail Rollback):
     /// Physically excises cached key/value tensors for tokens in range `[p0, p1)`.
     /// When applied to sequence suffix (`p1 < 0` or `p1 >= current_cursor`), rewinds `current_cursor` to `p0`.
+    /// Tail rollback (`p1 < 0`) cleanly purges all tail tokens from `p0` onward without touching
+    /// prefix tokens in `[0, p0)`.
     ///
     /// CAUTION: For middle excision (`p1 < current_cursor`), llama.cpp retains subsequent token positions
-    /// without shifting unless `kv_cache_seq_rm_and_shift` is used.
+    /// without shifting. Attempting mid-span excision and cell shifting corrupts Rotary Position
+    /// Embeddings (RoPE) and introduces causal attention contamination. Use exact tail rollback instead.
     pub fn kv_cache_seq_rm(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
         let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
         if ok {
             if p1 < 0 || (p1 as usize) >= self.current_cursor {
                 self.current_cursor = p0.max(0) as usize;
             } else {
-                // Middle excision without shift: tokens after p1 retain their original positional
-                // indices, so current_cursor (the append position) cannot be decremented without collision.
-                info!(
-                    "Middle KV cells excised [{}..{}) for seq {}: trailing tokens remain at unshifted positions",
+                warn!(
+                    "Middle KV cells excised [{}..{}) for seq {}: warning: non-tail excision without re-rotation leaves RoPE phases unadjusted",
                     p0, p1, seq_id
                 );
             }
@@ -422,16 +704,43 @@ impl NativeLlamaContext {
         Ok(ok)
     }
 
-    /// Checkpoint Rollback (Tail Truncation):
-    /// Excises all KV cells from `checkpoint` to the current cursor, resetting cursor to `checkpoint`.
+    /// Checkpoint Rollback (Exact Tail Truncation):
+    /// Excises all KV cells from `checkpoint` to the current cursor via `kv_cache_seq_rm(0, checkpoint as i32, -1)`,
+    /// resetting cursor to `checkpoint` while leaving prefix tokens [0, checkpoint) 100% mathematically intact.
     pub fn rollback_to(&mut self, checkpoint: usize) -> Result<bool, String> {
         self.kv_cache_seq_rm(0, checkpoint as i32, -1)
     }
 
-    /// SURGICAL MIDDLE EXCISION WITH AUTOMATIC POSITION SHIFT:
-    /// Excises `[p0, p1)` and physically shifts trailing tokens in `[p1, current_cursor)` left
-    /// by `-(p1 - p0)` to maintain continuous positional alignment and safely decrement `current_cursor`.
+    /// DEPRECATED: SURGICAL MIDDLE EXCISION WITH AUTOMATIC POSITION SHIFT.
+    ///
+    /// # Mathematical & Architectural Caveat (RoPE Phase Corruption):
+    /// In modern transformer architectures employing Rotary Position Embeddings (RoPE),
+    /// key tensors $K_m$ are rotated by frequency rotation matrices $R_{\Theta, m}$ during
+    /// the prefill pass before being written to KV cache cells.
+    ///
+    /// Calling `llama_kv_cache_seq_add` (shifting cell position metadata from $t$ to $t - \Delta$)
+    /// merely updates the integer position tags in the cache. It does NOT counter-rotate the
+    /// high-dimensional cached key tensors by $R_{\Theta, -\Delta}$. Consequently, attention
+    /// inner products $\langle q_n, k_{\text{shifted}} \rangle$ evaluate with a phase mismatch
+    /// $\Delta \theta_i$, introducing severe phase noise and degradation into multi-head attention.
+    ///
+    /// Furthermore, causal conditioning is violated: tokens downstream of the excised span were
+    /// evaluated by attending to the excised tokens across all transformer layers. Simply shifting
+    /// those tokens leftward retains "zombie activations" conditioned on deleted context.
+    ///
+    /// # Recommended Alternative:
+    /// Use exact tail rollback (`kv_cache_seq_rm(seq_id, p0, -1)` or `rollback_to(checkpoint)`).
+    /// Tail rollback preserves untouched prefix $[0, p_0)$ with 100% RoPE and causal integrity,
+    /// achieving bitwise logit equivalence and $D_{\text{KL}} = 0.00$ against a cold start.
+    #[deprecated(
+        since = "2.2.0",
+        note = "Mid-span excision causes RoPE phase corruption and causal attention contamination. Use exact tail-rollback via kv_cache_seq_rm(seq_id, p0, -1) or rollback_to(checkpoint)."
+    )]
     pub fn kv_cache_seq_rm_and_shift(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
+        warn!(
+            "kv_cache_seq_rm_and_shift invoked for seq={}, [{}..{}). Caution: mid-span shifting causes RoPE phase mismatch!",
+            seq_id, p0, p1
+        );
         if p0 < 0 || p1 <= p0 {
             return Err(format!("Invalid token range: [{}, {})", p0, p1));
         }

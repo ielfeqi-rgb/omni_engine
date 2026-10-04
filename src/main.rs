@@ -1,7 +1,6 @@
 // [GUIDANCE] Remove this line after Phase 0 stabilization.
 // It hides ALL dead-code warnings. Remove it, then fix each warning individually.
 // Functions truly kept for future use can get per-item #[allow(dead_code)].
-#![allow(dead_code)]
 
 mod auth;
 mod causal_memory;
