@@ -1,0 +1,361 @@
+use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobStatus {
+    Running,
+    Completed { exit_code: i32 },
+    Failed { error: String },
+    Blocked { reason: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticReport {
+    pub job_id: u64,
+    pub status: JobStatus,
+    pub stdout_lines: Vec<String>,
+    pub stderr_lines: Vec<String>,
+    pub compiler_errors: Vec<String>,
+    pub is_success: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalJob {
+    pub job_id: u64,
+    pub command: String,
+    pub status: JobStatus,
+    pub started_at: Instant,
+    pub finished_at: Option<Instant>,
+}
+
+/// Host Command Execution Bridge.
+/// Provides an asynchronous job execution bridge for the AI agent to:
+/// - Dispatch shell commands (`sh -c`) to the host environment in dedicated background threads.
+/// - Stream and buffer real-time stdout and stderr into a volatile in-memory ring buffer.
+/// - Poll execution status and inspect exit codes without blocking the core runtime.
+/// - Enforce safety guardrails against dangerous patterns.
+#[derive(Clone)]
+pub struct TerminalSessionBridge {
+    max_buffer_lines: usize,
+    log_buffer: Arc<Mutex<VecDeque<String>>>,
+    jobs: Arc<Mutex<Vec<TerminalJob>>>,
+    next_job_id: Arc<AtomicU64>,
+}
+
+impl TerminalSessionBridge {
+    pub fn new(max_buffer_lines: usize) -> Self {
+        Self {
+            max_buffer_lines: if max_buffer_lines == 0 { 1000 } else { max_buffer_lines },
+            log_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            jobs: Arc::new(Mutex::new(Vec::new())),
+            next_job_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    pub fn validate_safety(&self, command: &str) -> Result<(), String> {
+        let trimmed = command.trim();
+        let lower = trimmed.to_lowercase();
+
+        let forbidden_patterns = [
+            "rm -rf /",
+            "rm -rf /*",
+            "mkfs",
+            "dd if=/dev/zero",
+            "dd if=/dev/random",
+            ":(){ :|:& };:",
+            "> /dev/sda",
+            "> /dev/nvme",
+            "chmod -r 777 /",
+            "shutdown",
+            "reboot",
+            "init 0",
+        ];
+
+        for pattern in forbidden_patterns {
+            if lower.contains(pattern) {
+                return Err(format!("Command rejected by safety gate: contains dangerous pattern '{}'", pattern));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute a command in the background, stream its logs into the ring buffer,
+    /// and track its lifecycle.
+    pub fn execute(&self, command: &str) -> (u64, JobStatus) {
+        let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
+
+        // 1. Safety validation
+        if let Err(reason) = self.validate_safety(command) {
+            let job = TerminalJob {
+                job_id,
+                command: command.to_string(),
+                status: JobStatus::Blocked { reason: reason.clone() },
+                started_at: Instant::now(),
+                finished_at: Some(Instant::now()),
+            };
+            self.jobs.lock().push(job);
+            self.append_log(format!("[SECURITY] Job #{}: {}", job_id, reason));
+            return (job_id, JobStatus::Blocked { reason });
+        }
+
+        self.append_log(format!("[TERMINAL] >>> Job #{}: Executing '{}'", job_id, command));
+
+        let initial_job = TerminalJob {
+            job_id,
+            command: command.to_string(),
+            status: JobStatus::Running,
+            started_at: Instant::now(),
+            finished_at: None,
+        };
+        self.jobs.lock().push(initial_job);
+
+        // 2. Spawn execution worker thread
+        let log_buffer_clone = self.log_buffer.clone();
+        let max_lines = self.max_buffer_lines;
+        let jobs_clone = self.jobs.clone();
+        let cmd_string = command.to_string();
+
+        std::thread::spawn(move || {
+            let mut child = match Command::new("sh")
+                .arg("-c")
+                .arg(&cmd_string)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(err) => {
+                    let mut jobs = jobs_clone.lock();
+                    if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+                        j.status = JobStatus::Failed { error: err.to_string() };
+                        j.finished_at = Some(Instant::now());
+                    }
+                    let mut buf = log_buffer_clone.lock();
+                    buf.push_back(format!("[ERROR] Job #{}: Failed to spawn process: {}", job_id, err));
+                    if buf.len() > max_lines {
+                        buf.pop_front();
+                    }
+                    return;
+                }
+            };
+
+            // Stream stdout in real-time
+            if let Some(stdout) = child.stdout.take() {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().flatten() {
+                    let mut buf = log_buffer_clone.lock();
+                    buf.push_back(format!("[Job #{}] {}", job_id, line));
+                    if buf.len() > max_lines {
+                        buf.pop_front();
+                    }
+                }
+            }
+
+            // Stream stderr in real-time
+            if let Some(stderr) = child.stderr.take() {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().flatten() {
+                    let mut buf = log_buffer_clone.lock();
+                    buf.push_back(format!("[Job #{} STDERR] {}", job_id, line));
+                    if buf.len() > max_lines {
+                        buf.pop_front();
+                    }
+                }
+            }
+
+            let status_res = child.wait();
+            let mut jobs = jobs_clone.lock();
+            if let Some(j) = jobs.iter_mut().find(|j| j.job_id == job_id) {
+                j.finished_at = Some(Instant::now());
+                match status_res {
+                    Ok(exit_status) => {
+                        let code = exit_status.code().unwrap_or(-1);
+                        j.status = JobStatus::Completed { exit_code: code };
+                        let mut buf = log_buffer_clone.lock();
+                        buf.push_back(format!("[TERMINAL] Job #{}: Process exited with status code {}", job_id, code));
+                        if buf.len() > max_lines {
+                            buf.pop_front();
+                        }
+                    }
+                    Err(e) => {
+                        j.status = JobStatus::Failed { error: e.to_string() };
+                        let mut buf = log_buffer_clone.lock();
+                        buf.push_back(format!("[TERMINAL] Job #{}: Process wait error: {}", job_id, e));
+                        if buf.len() > max_lines {
+                            buf.pop_front();
+                        }
+                    }
+                }
+            }
+        });
+
+        (job_id, JobStatus::Running)
+    }
+
+    /// Read the latest N lines from the circular log buffer
+    pub fn get_logs(&self, tail_lines: usize) -> Vec<String> {
+        let buf = self.log_buffer.lock();
+        let count = if tail_lines == 0 { buf.len() } else { tail_lines.min(buf.len()) };
+        buf.iter().rev().take(count).rev().cloned().collect()
+    }
+
+    /// Clear in-memory log buffer
+    pub fn clear_logs(&self) {
+        let mut buf = self.log_buffer.lock();
+        buf.clear();
+    }
+
+    /// Poll status of a specific job
+    pub fn poll_status(&self, job_id: u64) -> Option<JobStatus> {
+        let jobs = self.jobs.lock();
+        jobs.iter().find(|j| j.job_id == job_id).map(|j| j.status.clone())
+    }
+
+    /// Autonomously monitor a job until completion or timeout, extracting structured diagnostics.
+    pub fn wait_and_inspect(&self, job_id: u64, timeout: std::time::Duration) -> Result<DiagnosticReport, String> {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = self.poll_status(job_id) {
+                match status {
+                    JobStatus::Running => {
+                        if start.elapsed() >= timeout {
+                            return Err(format!("Timeout after {:?} waiting for Job #{}", timeout, job_id));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(30));
+                    }
+                    _ => {
+                        // Small grace period for pipe flushing
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        let buf = self.log_buffer.lock();
+                        let job_tag = format!("[Job #{}]", job_id);
+                        let job_err_tag = format!("[Job #{} STDERR]", job_id);
+
+                        let mut stdout_lines = Vec::new();
+                        let mut stderr_lines = Vec::new();
+                        let mut compiler_errors = Vec::new();
+
+                        for line in buf.iter() {
+                            if line.contains(&job_err_tag) {
+                                let clean = line.replace(&job_err_tag, "").trim().to_string();
+                                if clean.contains("error[E") || clean.contains("error:") || clean.contains("panic") || clean.contains("Traceback") || clean.contains("assert") {
+                                    compiler_errors.push(clean.clone());
+                                }
+                                stderr_lines.push(clean);
+                            } else if line.contains(&job_tag) {
+                                let clean = line.replace(&job_tag, "").trim().to_string();
+                                stdout_lines.push(clean);
+                            }
+                        }
+
+                        let is_success = matches!(status, JobStatus::Completed { exit_code: 0 });
+
+                        return Ok(DiagnosticReport {
+                            job_id,
+                            status,
+                            stdout_lines,
+                            stderr_lines,
+                            compiler_errors,
+                            is_success,
+                        });
+                    }
+                }
+            } else {
+                return Err(format!("Job #{} not found", job_id));
+            }
+        }
+    }
+
+    /// Execute a command synchronously with a safety timeout and return the trimmed output string.
+    pub fn run_sync(&self, command: &str, timeout_secs: u64) -> Result<String, String> {
+        let (job_id, status) = self.execute(command);
+        if let JobStatus::Blocked { reason } = status {
+            return Err(reason);
+        }
+        let report = self.wait_and_inspect(job_id, std::time::Duration::from_secs(timeout_secs))?;
+        if report.is_success {
+            Ok(report.stdout_lines.join("\n").trim().to_string())
+        } else {
+            let err = if !report.compiler_errors.is_empty() {
+                report.compiler_errors.join("\n")
+            } else if !report.stderr_lines.is_empty() {
+                report.stderr_lines.join("\n")
+            } else if !report.stdout_lines.is_empty() {
+                report.stdout_lines.join("\n")
+            } else {
+                format!("Command failed with status: {:?}", report.status)
+            };
+            Err(err.trim().to_string())
+        }
+    }
+
+    fn append_log(&self, line: String) {
+        let mut buf = self.log_buffer.lock();
+        buf.push_back(line);
+        if buf.len() > self.max_buffer_lines {
+            buf.pop_front();
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    #[test]
+    fn test_terminal_bridge_echo_execution() {
+        let bridge = TerminalSessionBridge::new(100);
+        let (job_id, initial_status) = bridge.execute("echo 'HELLO_OMNI_TERMINAL'");
+        assert_eq!(job_id, 1);
+        assert_eq!(initial_status, JobStatus::Running);
+
+        // Wait up to 1 second for thread to execute and flush logs
+        for _ in 0..20 {
+            if let Some(JobStatus::Completed { exit_code }) = bridge.poll_status(1) {
+                assert_eq!(exit_code, 0);
+                break;
+            }
+            sleep(Duration::from_millis(50));
+        }
+
+        let logs = bridge.get_logs(10);
+        assert!(logs.iter().any(|l| l.contains("HELLO_OMNI_TERMINAL")), "Logs must capture echo output");
+    }
+
+    #[test]
+    fn test_terminal_bridge_blocks_dangerous_command() {
+        let bridge = TerminalSessionBridge::new(100);
+        let (_job_id, status) = bridge.execute("rm -rf / --no-preserve-root");
+        match status {
+            JobStatus::Blocked { reason } => {
+                assert!(reason.contains("dangerous pattern"));
+            }
+            _ => panic!("Dangerous command must be blocked!"),
+        }
+    }
+
+    #[test]
+    fn test_terminal_bridge_captures_stderr() {
+        let bridge = TerminalSessionBridge::new(100);
+        let (job_id, _) = bridge.execute("sh -c 'echo \"AN_ERROR_MESSAGE\" >&2; exit 42'");
+
+        for _ in 0..20 {
+            if let Some(JobStatus::Completed { exit_code }) = bridge.poll_status(job_id) {
+                assert_eq!(exit_code, 42);
+                break;
+            }
+            sleep(Duration::from_millis(50));
+        }
+
+        let logs = bridge.get_logs(10);
+        assert!(logs.iter().any(|l| l.contains("AN_ERROR_MESSAGE")), "Logs must capture stderr output");
+    }
+}

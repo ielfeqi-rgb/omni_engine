@@ -1,3 +1,5 @@
+// [GUIDANCE] No tests exist for any HTTP handler. Add integration tests.
+// The shutdown handler (line ~129) does not catch SIGTERM/SIGINT -- orphan processes result.
 use crate::auth::KeyManager;
 use crate::downloader::ModelDownloader;
 use crate::llama_manager::LlamaManager;
@@ -166,7 +168,8 @@ async fn handle_revoke_key(
 
 fn check_auth(headers: &HeaderMap, key_manager: &KeyManager) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if let Some(auth_header) = headers.get("Authorization") {
-        if let Ok(token_str) = auth_header.to_str() {
+        if let Ok(raw_token) = auth_header.to_str() {
+            let token_str = raw_token.strip_prefix("Bearer ").unwrap_or(raw_token);
             if key_manager.validate_key(token_str) {
                 return Ok(());
             }
@@ -201,7 +204,23 @@ async fn handle_v1_chat_completions(
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     check_auth(&headers, &state.key_manager)?;
     state.log_buffer.push(format!("OpenAI API Request: /v1/chat/completions (messages={})", payload.messages.len()));
-    let status = state.llama_manager.status();
-    let port = status.port;
-    openai_api::proxy_chat_completion(payload, port).await
+    
+    let model_opt = {
+        let lock = state.llama_manager.native_model.lock().unwrap();
+        lock.clone()
+    };
+    
+    if let Some(model) = model_opt {
+        openai_api::native_chat_completion(payload, model).await
+    } else {
+        Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": {
+                    "message": "No model loaded. Call /api/engine/start first.",
+                    "type": "model_not_loaded"
+                }
+            }))
+        ))
+    }
 }

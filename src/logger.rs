@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct LogBuffer {
@@ -14,7 +15,7 @@ impl LogBuffer {
     }
 
     pub fn push(&self, msg: String) {
-        let mut guard = self.logs.lock().unwrap();
+        let mut guard = self.logs.lock();
         if guard.len() >= 500 {
             guard.pop_front();
         }
@@ -23,10 +24,11 @@ impl LogBuffer {
     }
 
     pub fn get_logs(&self) -> Vec<String> {
-        let guard = self.logs.lock().unwrap();
+        let guard = self.logs.lock();
         guard.iter().cloned().collect()
     }
 }
+
 
 fn chrono_timestamp() -> String {
     let now = std::time::SystemTime::now();

@@ -74,11 +74,11 @@ impl BrowserTerminalLens {
             }
 
             let type_symbol = match el.target_type {
-                ActionTargetType::Button => "🔘 [BTN]",
-                ActionTargetType::Input => "📝 [INPUT]",
-                ActionTargetType::Link => "🔗 [LINK]",
-                ActionTargetType::SelectableRow => "📧 [ROW]",
-                ActionTargetType::Custom => "🔹 [ITEM]",
+                ActionTargetType::Button => "[BTN]",
+                ActionTargetType::Input => "[INPUT]",
+                ActionTargetType::Link => "[LINK]",
+                ActionTargetType::SelectableRow => "[ROW]",
+                ActionTargetType::Custom => "[ITEM]",
             };
 
             let line_str = match &el.current_value {

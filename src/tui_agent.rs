@@ -7,17 +7,31 @@ use std::time::Duration;
 use crate::llama_manager::LlamaManager;
 use crate::openai_api::{ChatCompletionRequest, ChatMessage};
 use crate::sandbox::{
-    ActionTargetType, BrowserTerminalLens, InteractiveElement, MemoryVfs, WasmPrimitiveSandbox,
+    ActionTargetType, BrowserTerminalLens, InteractiveElement, MemoryVfs,
 };
 
 pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
     let llama_manager = LlamaManager::new(base_dir.clone());
-    let status = llama_manager.status();
+    let mut status = llama_manager.status();
 
     if !status.is_running {
-        eprintln!("{}", "  [!] llama-server engine is currently idle.".yellow().bold());
-        eprintln!("{}", "  Please launch a model first using: omni_engine start <model.gguf>".dimmed());
-        return;
+        let available = llama_manager.list_available_models();
+        if available.is_empty() {
+            eprintln!("{}", "  [!] No GGUF models found in models/ directory.".red());
+            return;
+        }
+        let chosen = if available.contains(&"qwen-0.5b.gguf".to_string()) {
+            "qwen-0.5b.gguf".to_string()
+        } else {
+            available[0].clone()
+        };
+        println!("{}", format!("  [*] Engine is idle. Auto-launching '{}' on port {}...", chosen, port).yellow());
+        if let Err(e) = llama_manager.start(chosen.clone(), port, 0, 2048) {
+            eprintln!("  [!] Failed to auto-start model: {}", e);
+            return;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        status = llama_manager.status();
     }
 
     let active_model = status.active_model.clone().unwrap_or_else(|| "Local GGUF Model".to_string());
@@ -43,9 +57,10 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
         content: crate::planner::GroundedSystemProfile::build_system_prompt(),
     }];
 
-    // Session-bound isolated VFS
+    // Session-bound isolated VFS, Terminal Bridge, and Supervisor
     let vfs = std::sync::Arc::new(MemoryVfs::new());
-    let _wasm_sandbox = WasmPrimitiveSandbox::new();
+    let terminal_bridge = std::sync::Arc::new(crate::sandbox::TerminalSessionBridge::new(1000));
+    let supervisor = crate::planner::InternalSupervisorProbe::new();
 
     loop {
         // Aesthetic Prompt
@@ -71,7 +86,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             "/clear" | "clear" => {
                 conversation.truncate(1);
                 print!("\x1B[2J\x1B[1;1H"); // clear screen
-                println!("{}", "  [✓] Conversation context reset.".green().bold());
+                println!("{}", "  [+] Conversation context reset.".green().bold());
                 println!();
                 continue;
             }
@@ -98,153 +113,316 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             _ => {}
         }
 
-        // Triage Assessment: FastInteractive vs DeepAutonomous
-        let triage = crate::planner::ModeRouter::assess_request(query);
-        match triage.selected_mode {
-            crate::planner::ReasoningMode::DeepAutonomous => {
-                println!(
-                    "  {} {} (Confidence: {:.0}%)",
-                    "🧠 [DEEP THINKING MODE ENGAGED]:".bright_purple().bold(),
-                    "Speculative Branching & Multi-Stage Goal Active".white(),
-                    triage.confidence * 100.0
-                );
-                println!("  {} {}", "│ Rationale:".dimmed(), triage.rationale.dimmed());
-                println!("  {} {}", "│ Suggested Branch Count:".dimmed(), format!("{} Isolated Hypotheses", triage.suggested_branches_count).bright_yellow());
-                println!();
-            }
-            crate::planner::ReasoningMode::FastInteractive => {
+        // Speculative Intent Probe & Pre-emptive Tool Warmup
+        let spec_target = crate::planner::PrePassTriage::probe_fast_intent(query);
+        match spec_target {
+            crate::planner::SpeculativeTarget::TermHost => {
                 println!(
                     "  {} {}",
-                    "⚡ [FAST INTERACTIVE MODE]:".bright_blue().bold(),
-                    "Direct single-pass execution".dimmed()
+                    "[INTENT ROUTER]:".bright_cyan().bold(),
+                    "TARGET -> Host Shell / Terminal Environment".bright_green()
+                );
+            }
+            crate::planner::SpeculativeTarget::WebBrowser => {
+                println!(
+                    "  {} {}",
+                    "[INTENT PROBE]:".bright_cyan().bold(),
+                    "PREDICTED -> WebBrowser [HTTP / RSS Pipeline Primed]".bright_blue()
+                );
+            }
+            crate::planner::SpeculativeTarget::DirectVfs => {
+                println!(
+                    "  {} {}",
+                    "[INTENT PROBE]:".bright_cyan().bold(),
+                    "PREDICTED -> MemoryVfs [RAM Buffer Staged]".bright_yellow()
+                );
+            }
+            crate::planner::SpeculativeTarget::PureChat => {
+                println!(
+                    "  {} {}",
+                    "[INTENT PROBE]:".bright_cyan().bold(),
+                    "PREDICTED -> Pure Interactive Dialogue [Tools Sleeping]".dimmed()
                 );
             }
         }
 
-        // Model invocation with streaming-style Spinner and Live Output
+        // Pass 1: Ephemeral Micro-Triage & System 2 Tri-Plan Synthesis
+        let intent = crate::planner::PrePassTriage::evaluate(query);
+        let something_i_know = if let Some(plan) = &intent.dual_system_plan {
+            println!(
+                "  {} [Plan A: {}, Plan B: {}, Plan C: {}]",
+                "[SYSTEM 2 TRI-PLAN SYNTHESIS]:".bright_purple().bold(),
+                plan.plan_a.bright_cyan(),
+                plan.plan_b.bright_yellow(),
+                plan.plan_c.dimmed()
+            );
+            println!(
+                "  {} {}",
+                "[CAVEMAN INVARIANTS]:".bright_yellow().bold(),
+                plan.caveman_constraints.join("; ").dimmed()
+            );
+            plan.distilled_something_i_know.clone()
+        } else {
+            String::new()
+        };
+
+        // Synthesize Tailored Grounded System Prompt
+        let initial_system_prompt = crate::planner::GroundedSystemProfile::build_system_2_grounded_prompt(
+            &intent.required_tools,
+            &something_i_know,
+            None,
+        );
+        if !conversation.is_empty() {
+            conversation[0].content = initial_system_prompt.clone();
+        }
+
+        // Pass 2: System 1 Execution Pass
         conversation.push(ChatMessage {
             role: "user".to_string(),
             content: query.to_string(),
         });
 
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("{spinner:.cyan} {msg}")
-                .unwrap(),
-        );
-        let spinner_msg = match triage.selected_mode {
-            crate::planner::ReasoningMode::DeepAutonomous => "Synthesizing deep causal hypotheses & checking boundaries...",
-            crate::planner::ReasoningMode::FastInteractive => "Evaluating prompt in sandbox context...",
-        };
-        pb.set_message(spinner_msg);
-        pb.enable_steady_tick(Duration::from_millis(80));
+        let max_attempts = if intent.is_execution_task { 3 } else { 1 };
+        let mut attempt = 1;
+        let mut causal_feedback: Option<String> = None;
 
-        let req = ChatCompletionRequest {
-            model: Some(active_model.clone()),
-            messages: conversation.clone(),
-            temperature: Some(0.6),
-            stream: Some(true),
-            max_tokens: Some(2048),
-        };
+        while attempt <= max_attempts {
+            if let Some(feedback) = &causal_feedback {
+                let updated_system = crate::planner::GroundedSystemProfile::build_system_2_grounded_prompt(
+                    &intent.required_tools,
+                    &something_i_know,
+                    Some(feedback),
+                );
+                conversation[0].content = updated_system;
+            }
 
-        match client.post(&url).json(&req).send().await {
-            Ok(response) => {
-                if !response.status().is_success() {
-                    pb.finish_and_clear();
-                    let err_text = response.text().await.unwrap_or_default();
-                    println!("{} {}", "  [✗] Backend Inference Error:".red().bold(), err_text);
-                    continue;
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            let spinner_msg = if attempt == 1 {
+                if intent.is_execution_task {
+                    "System 1 executing primary Plan A in sandbox..."
+                } else {
+                    "Evaluating prompt in direct interactive mode..."
                 }
+            } else {
+                "System 1 executing fallback plan with injected causal feedback..."
+            };
+            pb.set_message(spinner_msg);
+            pb.enable_steady_tick(Duration::from_millis(80));
 
-                pb.finish_and_clear();
-                println!();
-                print!("{} ", "›››".bright_green().bold());
-                let _ = io::stdout().flush();
+            let req = ChatCompletionRequest {
+                model: Some(active_model.clone()),
+                messages: conversation.clone(),
+                temperature: Some(0.6),
+                stream: Some(true),
+                max_tokens: Some(2048),
+            };
 
-                let mut stream = response.bytes_stream();
-                let mut full_response = String::new();
+            match client.post(&url).json(&req).send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        pb.finish_and_clear();
+                        let err_text = response.text().await.unwrap_or_default();
+                        println!("{} {}", "  [-] Backend Inference Error:".red().bold(), err_text);
+                        break;
+                    }
 
-                while let Some(chunk_result) = stream.next().await {
-                    if let Ok(chunk) = chunk_result {
-                        let text = String::from_utf8_lossy(&chunk);
-                        for line in text.lines() {
-                            let line = line.trim();
-                            if line.starts_with("data: ") {
-                                let json_data = line.trim_start_matches("data: ").trim();
-                                if json_data == "[DONE]" {
-                                    break;
-                                }
-                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_data) {
-                                    if let Some(delta) = val["choices"][0]["delta"]["content"].as_str() {
-                                        print!("{}", delta);
-                                        let _ = io::stdout().flush();
-                                        full_response.push_str(delta);
+                    pb.finish_and_clear();
+                    println!();
+                    print!("{} ", "›››".bright_green().bold());
+                    let _ = io::stdout().flush();
+
+                    let mut stream = response.bytes_stream();
+                    let mut full_response = String::new();
+
+                    while let Some(chunk_result) = stream.next().await {
+                        if let Ok(chunk) = chunk_result {
+                            let text = String::from_utf8_lossy(&chunk);
+                            for line in text.lines() {
+                                let line = line.trim();
+                                if line.starts_with("data: ") {
+                                    let json_data = line.trim_start_matches("data: ").trim();
+                                    if json_data == "[DONE]" {
+                                        break;
+                                    }
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_data) {
+                                        if let Some(delta) = val["choices"][0]["delta"]["content"].as_str() {
+                                            print!("{}", delta);
+                                            let _ = io::stdout().flush();
+                                            full_response.push_str(delta);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                println!();
-                println!();
+                    println!();
+                    println!();
 
-                // If streaming gave no tokens (fallback non-stream)
-                if full_response.is_empty() {
-                    // Fallback to non-streaming request
-                    let fallback_req = ChatCompletionRequest {
-                        model: Some(active_model.clone()),
-                        messages: conversation.clone(),
-                        temperature: Some(0.6),
-                        stream: Some(false),
-                        max_tokens: Some(2048),
-                    };
-                    if let Ok(res) = client.post(&url).json(&fallback_req).send().await {
-                        if let Ok(json_res) = res.json::<serde_json::Value>().await {
-                            if let Some(content) = json_res["choices"][0]["message"]["content"].as_str() {
-                                println!("{}", content.trim());
-                                println!();
-                                full_response = content.trim().to_string();
+                    // If streaming gave no tokens (fallback non-stream)
+                    if full_response.is_empty() {
+                        let fallback_req = ChatCompletionRequest {
+                            model: Some(active_model.clone()),
+                            messages: conversation.clone(),
+                            temperature: Some(0.6),
+                            stream: Some(false),
+                            max_tokens: Some(2048),
+                        };
+                        if let Ok(res) = client.post(&url).json(&fallback_req).send().await {
+                            if let Ok(json_res) = res.json::<serde_json::Value>().await {
+                                if let Some(content) = json_res["choices"][0]["message"]["content"].as_str() {
+                                    println!("{}", content.trim());
+                                    println!();
+                                    full_response = content.trim().to_string();
+                                }
                             }
                         }
                     }
-                }
 
-                if !full_response.is_empty() {
-                    // Check and execute actions via ExecutiveHands
-                    let hands = crate::planner::ExecutiveHands::new(vfs.clone(), base_dir.clone());
-                    let action = hands.parse_action(&full_response);
-                    if action != crate::planner::ExecutiveAction::None {
-                        let exec_res = hands.execute(action);
-                        println!(
-                            "  {} {}",
-                            "⚡ [EXECUTIVE ACTION DISPATCHED]:".bright_yellow().bold(),
-                            exec_res.output.bright_cyan()
+                    if !full_response.is_empty() {
+                        let hands = crate::planner::ExecutiveHands::with_terminal(
+                            vfs.clone(),
+                            base_dir.clone(),
+                            terminal_bridge.clone(),
                         );
-                        if exec_res.requires_user_confirmation {
-                            println!(
-                                "  {} Use {} to review full diffs and authorize commit to disk.",
-                                "🔒 [GATE REQUIRED]:".bright_red().bold(),
-                                "/commit".bright_yellow().bold()
-                            );
-                        }
-                        println!();
-                    } else {
-                        // Fallback check if response contains classic FILE block
-                        check_and_stage_code_blocks(&vfs, &full_response);
-                    }
+                        let action = hands.parse_action(&full_response);
+                        if action != crate::planner::ExecutiveAction::None {
+                            let exec_res = hands.execute(action);
+                            if exec_res.success {
+                                println!(
+                                    "  {} {}",
+                                    "[EXECUTIVE ACTION DISPATCHED]:".bright_yellow().bold(),
+                                    exec_res.output.bright_cyan()
+                                );
+                                if exec_res.requires_user_confirmation {
+                                    println!(
+                                        "  {} Use {} to review full diffs and authorize commit to disk.",
+                                        "[GATE REQUIRED]:".bright_red().bold(),
+                                        "/commit".bright_yellow().bold()
+                                    );
+                                }
+                                println!();
+                                conversation.push(ChatMessage {
+                                    role: "assistant".to_string(),
+                                    content: full_response,
+                                });
+                                break;
+                            } else if attempt < max_attempts {
+                                // Execution trapped! Initiate Causal KV Rollback & Autonomous Fallback
+                                println!(
+                                    "  {} {}",
+                                    "[EXECUTIVE ACTION TRAPPED]:".bright_red().bold(),
+                                    exec_res.output.red()
+                                );
+                                println!(
+                                    "  {} {}",
+                                    "[CAUSAL KV ROLLBACK]:".bright_yellow().bold(),
+                                    "Trapped attempt purged from KV cache (approx 350 tokens saved).".dimmed()
+                                );
 
-                    conversation.push(ChatMessage {
-                        role: "assistant".to_string(),
-                        content: full_response,
-                    });
+                                let plan_label = match attempt {
+                                    1 => "Plan A",
+                                    2 => "Plan B",
+                                    _ => "Plan C",
+                                };
+
+                                let lesson = supervisor.prune_branch_with_causal_lesson(
+                                    &format!("attempt-{}", attempt),
+                                    plan_label,
+                                    &exec_res.output,
+                                    "Do not repeat trapped syntax/API. Use fallback plan directly.",
+                                    350,
+                                );
+
+                                println!(
+                                    "  {} Learned Rule #{}: {}",
+                                    "[DISTILLED CAUSAL LESSON]:".bright_green().bold(),
+                                    lesson.lesson_id,
+                                    lesson.distillation_rule.bright_white()
+                                );
+
+                                let next_plan_hint = match attempt {
+                                    1 => intent.dual_system_plan.as_ref().map(|p| p.plan_b.as_str()).unwrap_or("Fallback Plan B"),
+                                    2 => intent.dual_system_plan.as_ref().map(|p| p.plan_c.as_str()).unwrap_or("Fallback Plan C"),
+                                    _ => "Emergency minimal fallback",
+                                };
+
+                                println!(
+                                    "  {} Engaging fallback strategy: {}",
+                                    "[AUTONOMOUS PIVOT]:".bright_cyan().bold(),
+                                    next_plan_hint.bright_yellow()
+                                );
+                                println!();
+
+                                causal_feedback = Some(format!(
+                                    "PREVIOUS TRAP ROOT CAUSE: {}. Discard previous attempt. Activate fallback: {}. Follow caveman invariants.",
+                                    exec_res.output, next_plan_hint
+                                ));
+
+                                attempt += 1;
+                                // Crucial: full_response is NOT pushed to conversation (KV cache rollback!)
+                                continue;
+                            } else {
+                                println!(
+                                    "  {} {}",
+                                    "[EPISTEMIC APOPTOSIS TRIGGERED]:".bright_red().bold(),
+                                    "Generation 1 dead-end reached (3 traps). Purging rotten branch.".red()
+                                );
+
+                                let testament = supervisor.trigger_epistemic_apoptosis(&full_response);
+                                println!(
+                                    "  {} Extracted {} raw testament tokens directly.",
+                                    "[ANCESTRAL TESTAMENT ACQUIRED]:".bright_purple().bold(),
+                                    testament.testament_tokens_raw.len()
+                                );
+
+                                println!(
+                                    "  {} Rebirthing fresh generation with ancestral epigenetic prefix...",
+                                    "[EPIGENETIC CACHE REBIRTH]:".bright_cyan().bold()
+                                );
+
+                                conversation.clear();
+                                let reborn_system = format!(
+                                    "{}\n\n[ANCESTRAL EPIGENETIC MEMORY FROM PREVIOUS EXTINCT GENERATION]:\n{}\n[SURVIVE: Strict compliance with ancestral memory required.]",
+                                    initial_system_prompt,
+                                    testament.testament_tokens_raw
+                                );
+                                conversation.push(ChatMessage {
+                                    role: "system".to_string(),
+                                    content: reborn_system,
+                                });
+                                conversation.push(ChatMessage {
+                                    role: "user".to_string(),
+                                    content: format!("{} (AVOID EXTINCTION: Follow ancestral rules directly)", query),
+                                });
+
+                                println!();
+                                break;
+                            }
+                        } else {
+                            // Fallback check if response contains classic FILE block
+                            check_and_stage_code_blocks(&vfs, &full_response);
+                            conversation.push(ChatMessage {
+                                role: "assistant".to_string(),
+                                content: full_response,
+                            });
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
                 }
-            }
-            Err(e) => {
-                pb.finish_and_clear();
-                println!("{} Failed to connect to engine: {}", "  [✗]".red().bold(), e);
+                Err(e) => {
+                    pb.finish_and_clear();
+                    println!("{} Failed to connect to engine: {}", "  [-]".red().bold(), e);
+                    break;
+                }
             }
         }
     }
@@ -277,7 +455,7 @@ fn render_browser_lens_demo() {
         InteractiveElement {
             id: 2,
             target_type: ActionTargetType::Button,
-            label: "Filter: Top Rated (★ 4.5+)".to_string(),
+            label: "Filter: Top Rated (4.5+)".to_string(),
             selector: "#filter-rating".to_string(),
             current_value: None,
         },
@@ -364,10 +542,10 @@ fn handle_vfs_commit(vfs: &MemoryVfs) {
         if trimmed == "y" || trimmed == "yes" {
             match vfs.commit_to_host(true) {
                 Ok(count) => {
-                    println!("{}", format!("  [✓] Successfully committed {} file(s) to host disk.", count).green().bold());
+                    println!("{}", format!("  [+] Successfully committed {} file(s) to host disk.", count).green().bold());
                 }
                 Err(e) => {
-                    println!("{} {}", "  [✗] Commit failed:".red().bold(), e);
+                    println!("{} {}", "  [-] Commit failed:".red().bold(), e);
                 }
             }
         } else {
