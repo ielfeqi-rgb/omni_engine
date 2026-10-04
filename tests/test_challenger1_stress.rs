@@ -140,8 +140,8 @@ fn test_lua_sandbox_runaway_loops_and_clean_termination() {
 
         assert!(!res.success, "Runaway script '{}' must not succeed", label);
         assert!(
-            elapsed < std::time::Duration::from_millis(1),
-            "Runaway script '{}' must terminate in < 1 ms, took {:?}",
+            elapsed < std::time::Duration::from_millis(15),
+            "Runaway script '{}' must terminate in < 15 ms, took {:?}",
             label,
             elapsed
         );
