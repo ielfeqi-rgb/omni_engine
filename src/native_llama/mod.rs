@@ -22,7 +22,10 @@ static BACKEND_INITIALIZED: AtomicBool = AtomicBool::new(false);
 #[link(name = "ggml")]
 #[link(name = "ggml-base")]
 #[link(name = "ggml-cpu")]
+
 extern "C" {
+    fn omni_llama_disable_logs();
+
     fn omni_llama_backend_init();
     fn omni_llama_backend_free();
     fn omni_llama_load_model(path: *const c_char, n_gpu_layers: i32) -> *mut c_void;
@@ -176,6 +179,10 @@ impl NativeLlamaModel {
     }
 
     /// Convert a token ID back into its UTF-8 text piece.
+    pub fn disable_logs() {
+        unsafe { omni_llama_disable_logs(); }
+    }
+
     pub fn token_to_piece(&self, token: i32) -> Result<String, String> {
         let mut buf = vec![0u8; 256];
         let len = unsafe {

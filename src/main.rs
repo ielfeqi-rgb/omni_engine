@@ -15,6 +15,7 @@ mod sandbox;
 mod system_info;
 mod tui_agent;
 mod web_server;
+mod tui;
 
 use auth::KeyManager;
 use downloader::ModelDownloader;
@@ -39,9 +40,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     };
 
+    // TUI Opt-in Layer
+    if args.contains(&"--tui".to_string()) {
+        return tui::run_tui().await;
+    }
+
     // If CLI command is provided and handled, exit cleanly
     if args.len() > 1 && args[1] != "serve" {
-        if cli::handle_cli(&args, &base_dir).await? {
+        let mut cli_args = args.clone();
+        cli_args.retain(|a| a != "--tui"); // just in case
+        if cli::handle_cli(&cli_args, &base_dir).await? {
             return Ok(());
         }
     }

@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+
+
 #include <stdbool.h>
 #include <math.h>
 
@@ -470,3 +473,17 @@ struct omni_llama_sampler * omni_llama_sampler_create(
     return chain;
 }
 
+
+
+// ---------------------------------------------------------------------------
+// LOGGING API
+// ---------------------------------------------------------------------------
+static void dummy_log_callback(enum ggml_log_level level, const char * text, void * user_data) {
+    (void)level;
+    (void)text;
+    (void)user_data;
+}
+
+void omni_llama_disable_logs(void) {
+    llama_log_set(dummy_log_callback, NULL);
+}
