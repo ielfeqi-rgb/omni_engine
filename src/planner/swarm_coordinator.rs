@@ -3486,35 +3486,69 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         trimmed.to_string()
     }
 
-fn infer_target_entity(goal: &str) -> String {
-    let lower = goal.to_lowercase();
-    if lower.contains(".java") || lower.contains("java") || lower.contains("جافا") {
-        "Main.java".to_string()
-    } else if lower.contains(".py") || lower.contains("python") || lower.contains("بايثون") {
-        if lower.contains("speed") || lower.contains("سرعة") || lower.contains("سرعه") {
-            "measure_speed.py".to_string()
-        } else {
-            "main.py".to_string()
+    /// Extract explicit deliverable filenames directly referenced in goal prompt
+    pub fn extract_explicit_deliverables(goal: &str) -> Vec<String> {
+        let mut files = Vec::new();
+        let valid_exts = [".py", ".html", ".js", ".css", ".java", ".rs", ".sh", ".json", ".md", ".csv", ".txt"];
+
+        for token in goal.split(|c: char| {
+            c.is_whitespace() || c == '"' || c == '\'' || c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == ',' || c == ':' || c == ';'
+        }) {
+            let trimmed = token.trim().trim_matches(|c: char| c == '.' || c == '/' || c == '\\');
+            for ext in &valid_exts {
+                if trimmed.ends_with(ext) && trimmed.len() > ext.len() {
+                    let fname = trimmed.to_string();
+                    if !fname.contains('/') && !fname.contains('\\') && !files.contains(&fname) {
+                        files.push(fname);
+                    }
+                }
+            }
         }
-    } else if lower.contains(".pdf") || lower.contains("pdf") {
-        "document.pdf".to_string()
-    } else if lower.contains(".sh") || lower.contains("bash") || lower.contains("shell") || lower.contains("باش") {
-        "script.sh".to_string()
-    } else if lower.contains(".json") || lower.contains("json") {
-        "data.json".to_string()
-    } else if lower.contains(".csv") || lower.contains("csv") || lower.contains("جدول")
-        || lower.contains("excel") || lower.contains("xlsx") || lower.contains("xls")
-        || lower.contains("اكسل") || lower.contains("إكسل")
-    {
-        "data.csv".to_string()
-    } else if lower.contains(".md") || lower.contains("markdown") || lower.contains("تقرير") || lower.contains("report") {
-        "report.md".to_string()
-    } else if lower.contains(".html") || lower.contains("html") || lower.contains("صفحة") || lower.contains("صفحه") || lower.contains("موقع") || lower.contains("web") {
-        "index.html".to_string()
-    } else {
-        "output.txt".to_string()
+        files
     }
-}
+
+    pub fn infer_target_entity(goal: &str) -> String {
+        let explicit = Self::extract_explicit_deliverables(goal);
+        if let Some(first) = explicit.into_iter().next() {
+            return first;
+        }
+
+        let lower = goal.to_lowercase();
+        let is_java = (lower.contains(".java") || lower.contains("جافا") || lower.contains("java"))
+            && !lower.contains("javascript")
+            && !lower.contains("js");
+
+        if is_java {
+            "Main.java".to_string()
+        } else if lower.contains(".html") || lower.contains("html") || lower.contains("webapp") || lower.contains("web app") || lower.contains("frontend") || lower.contains("javascript") || lower.contains("css") || lower.contains("صفحة") || lower.contains("صفحه") || lower.contains("موقع") || lower.contains("web") {
+            if lower.contains(".py") || lower.contains("python") || lower.contains("server") || lower.contains("backend") {
+                "app.py".to_string()
+            } else {
+                "index.html".to_string()
+            }
+        } else if lower.contains(".py") || lower.contains("python") || lower.contains("بايثون") {
+            if lower.contains("speed") || lower.contains("سرعة") || lower.contains("سرعه") {
+                "measure_speed.py".to_string()
+            } else {
+                "main.py".to_string()
+            }
+        } else if lower.contains(".pdf") || lower.contains("pdf") {
+            "document.pdf".to_string()
+        } else if lower.contains(".sh") || lower.contains("bash") || lower.contains("shell") || lower.contains("باش") {
+            "script.sh".to_string()
+        } else if lower.contains(".json") || lower.contains("json") {
+            "data.json".to_string()
+        } else if lower.contains(".csv") || lower.contains("csv") || lower.contains("جدول")
+            || lower.contains("excel") || lower.contains("xlsx") || lower.contains("xls")
+            || lower.contains("اكسل") || lower.contains("إكسل")
+        {
+            "data.csv".to_string()
+        } else if lower.contains(".md") || lower.contains("markdown") || lower.contains("تقرير") || lower.contains("report") {
+            "report.md".to_string()
+        } else {
+            "output.txt".to_string()
+        }
+    }
 
 fn is_build_task(text: &str) -> bool {
     let lower = text.to_lowercase();
@@ -3727,6 +3761,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 SUBGOAL: Implement client frontend interface and network calls | ENTITY: client.py | READ_SET: server.py | WRITE_SET: client.py | DEPENDS_ON: server.py\n\
                 Spreadsheet / tabular deliverable:\n\
                 SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv | READ_SET: none | WRITE_SET: data.csv | DEPENDS_ON: none\n\
+                Full-stack web application with backend server and UI:\n\
+                SUBGOAL: Implement backend API server and HTTP endpoints | ENTITY: app.py | READ_SET: none | WRITE_SET: app.py | DEPENDS_ON: none\n\
+                SUBGOAL: Implement interactive frontend HTML with dark mode CSS and JavaScript | ENTITY: index.html | READ_SET: app.py | WRITE_SET: index.html | DEPENDS_ON: app.py\n\
                 Multi-file web deliverable:\n\
                 SUBGOAL: Write the HTML structure and markup | ENTITY: index.html | READ_SET: none | WRITE_SET: index.html | DEPENDS_ON: none\n\
                 SUBGOAL: Write the external CSS styling | ENTITY: styles.css | READ_SET: index.html | WRITE_SET: styles.css | DEPENDS_ON: index.html\n\n\
@@ -3751,7 +3788,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let user_msg = format!("Goal: {}", goal);
         let prompt = Self::format_prompt(&self.orchestrator_model, &system_msg, &user_msg);
 
-        let output = ctx.generate(&prompt, 512)?;
+        let output = ctx.generate(&prompt, 1024)?;
         println!("  [THINKER PLAN RAW OUTPUT]\n{}\n  [END THINKER PLAN RAW OUTPUT]", output.trim());
         let mut subgoals = Vec::new();
         let mut seen_entities = std::collections::HashSet::new();
@@ -3943,23 +3980,53 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         // Fallback if model output did not match format exactly
         if subgoals.is_empty() {
             if is_build {
-                let inferred = Self::infer_target_entity(goal);
-                if !planned_files.contains(&inferred) {
-                    planned_files.push(inferred.clone());
+                let explicit_files = Self::extract_explicit_deliverables(goal);
+                if !explicit_files.is_empty() {
+                    for (idx, file) in explicit_files.iter().enumerate() {
+                        let target_path = PathBuf::from(file);
+                        let mut read_set = Vec::new();
+                        let mut depends_on = Vec::new();
+                        if idx > 0 {
+                            depends_on.push(explicit_files[idx - 1].clone());
+                            read_set.push(PathBuf::from(&explicit_files[idx - 1]));
+                        }
+                        read_set.push(target_path.clone());
+
+                        if !planned_files.contains(file) {
+                            planned_files.push(file.clone());
+                        }
+
+                        subgoals.push(SubGoal {
+                            id: idx + 1,
+                            description: format!("Create and write complete standalone implementation for deliverable '{}'", file),
+                            target_entity: file.clone(),
+                            kind: TaskKind::Create,
+                            guidance: None,
+                            depends_on,
+                            read_set,
+                            write_set: vec![target_path],
+                            max_tokens: 4096,
+                        });
+                    }
+                } else {
+                    let inferred = Self::infer_target_entity(goal);
+                    if !planned_files.contains(&inferred) {
+                        planned_files.push(inferred.clone());
+                    }
+                    let task_kind = Self::infer_task_kind(goal);
+                    let target_path = PathBuf::from(&inferred);
+                    subgoals.push(SubGoal {
+                        id: 1,
+                        description: format!("Create and write complete standalone implementation for: {}", goal),
+                        target_entity: inferred.clone(),
+                        kind: task_kind,
+                        guidance: None,
+                        depends_on: vec![],
+                        read_set: vec![target_path.clone()],
+                        write_set: vec![target_path],
+                        max_tokens: 4096,
+                    });
                 }
-                let task_kind = Self::infer_task_kind(goal);
-                let target_path = PathBuf::from(&inferred);
-                subgoals.push(SubGoal {
-                    id: 1,
-                    description: format!("Create and write complete standalone implementation for: {}", goal),
-                    target_entity: inferred.clone(),
-                    kind: task_kind,
-                    guidance: None,
-                    depends_on: vec![],
-                    read_set: vec![target_path.clone()],
-                    write_set: vec![target_path],
-                    max_tokens: 4096,
-                });
             } else {
                 subgoals.push(SubGoal {
                     id: 1,
@@ -7365,6 +7432,22 @@ class DataProcessor:
         assert_eq!(injected_count, 3);
         assert!(breaker_tripped);
         assert_eq!(*delta_retry_counts.get(&target).unwrap(), 4);
+    }
+
+    #[test]
+    fn test_extract_explicit_deliverables_multi_file_webapp() {
+        let goal = "Build a modern Task Manager with app.py for backend and index.html for UI styling in style.css";
+        let files = SwarmCoordinator::extract_explicit_deliverables(goal);
+        assert_eq!(files, vec!["app.py", "index.html", "style.css"]);
+    }
+
+    #[test]
+    fn test_infer_target_entity_no_javascript_java_collision() {
+        let js_goal = "Build a modern interactive frontend using JavaScript and CSS";
+        assert_eq!(SwarmCoordinator::infer_target_entity(js_goal), "index.html");
+
+        let java_goal = "Build a complete Java application with GameLoop class";
+        assert_eq!(SwarmCoordinator::infer_target_entity(java_goal), "Main.java");
     }
 }
 
