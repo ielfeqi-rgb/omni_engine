@@ -356,6 +356,60 @@ impl UniversalCleanroom {
             }
         }
 
+        // Semantic UI & Web Contract Verification for frontend artifacts
+        let is_ui_artifact = base_name.ends_with(".html")
+            || base_name.ends_with(".js")
+            || base_name.ends_with("test_steps.json");
+
+        if overall_success && is_ui_artifact {
+            // Find HTML content
+            let html_bytes = staged_files
+                .iter()
+                .find(|(p, _)| p.to_string_lossy().ends_with(".html"))
+                .map(|(_, b)| b.as_slice());
+
+            if let Some(h_bytes) = html_bytes {
+                let html_str = String::from_utf8_lossy(h_bytes);
+
+                // Find external JS content
+                let js_str = staged_files
+                    .iter()
+                    .find(|(p, _)| {
+                        let s = p.to_string_lossy();
+                        s.ends_with(".js") && !s.ends_with("tester.js") && !s.ends_with("inspector.js")
+                    })
+                    .map(|(_, b)| String::from_utf8_lossy(b).to_string());
+
+                // Find test_steps.json
+                let steps_str = staged_files
+                    .iter()
+                    .find(|(p, _)| p.to_string_lossy().ends_with("test_steps.json"))
+                    .map(|(_, b)| String::from_utf8_lossy(b).to_string());
+
+                // Find Python backend
+                let py_str = staged_files
+                    .iter()
+                    .find(|(p, _)| {
+                        let s = p.to_string_lossy();
+                        s.ends_with(".py") && !s.contains("test_")
+                    })
+                    .map(|(_, b)| String::from_utf8_lossy(b).to_string());
+
+                let report = crate::sandbox::ui_verifier::UiContractVerifier::verify_ui_artifact(
+                    &html_str,
+                    js_str.as_deref(),
+                    steps_str.as_deref(),
+                    py_str.as_deref(),
+                );
+
+                if !report.passed {
+                    overall_success = false;
+                    final_exit_code = Some(1);
+                    combined = report.to_model_feedback();
+                }
+            }
+        }
+
         let error_line = if !overall_success {
             SwarmCoordinator::extract_error_line_number(&combined, filename)
         } else {

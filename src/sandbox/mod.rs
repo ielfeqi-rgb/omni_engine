@@ -16,6 +16,7 @@ pub mod terminal_bridge;
 pub mod web_lens;
 pub mod isolated_jail;
 pub mod cleanroom;
+pub mod ui_verifier;
 
 pub use vfs::{MemoryVfs, FileChangeType, VfsBoundaryError};
 pub use browser_lens::{BrowserTerminalLens, InteractiveElement, ActionTargetType};
@@ -23,5 +24,6 @@ pub use terminal_bridge::{TerminalSessionBridge, JobStatus};
 pub use web_lens::{WebLens, SearchResult};
 pub use isolated_jail::{IsolatedJail, JailExecutionResult};
 pub use cleanroom::{UniversalCleanroom, WrittenAnalysisReport, CodeAnalysisReport, InteractiveExecutionReport, AcceptanceDeltaReport, TestSheet};
+pub use ui_verifier::{UiContractVerifier, UiTestStep, UiInspectionReport};
 
 
