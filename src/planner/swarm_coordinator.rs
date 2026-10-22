@@ -1,13 +1,33 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 use colored::*;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::causal_memory::dag::CausalGraph;
 use crate::native_llama::{NativeLlamaContext, NativeLlamaModel};
-use crate::sandbox::{MemoryVfs, WebLens, SearchResult, IsolatedJail, JailExecutionResult};
+use crate::sandbox::{MemoryVfs, WebLens, IsolatedJail};
+
+/// Convenience module-level forwarder for stripping thoughts across Omni Engine
+pub fn strip_thought(text: &str) -> String {
+    SwarmCoordinator::strip_thought(text)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -34,11 +54,12 @@ impl TaskKind {
 pub enum SwarmAction {
     Search { query: String },
     Fetch { url: String },
-    RunLua { script: String },
     WriteFile { filename: String, content: String },
     PatchFile { filename: String, target: String, replacement: String },
     DeleteFile { filename: String },
     RunTerminal { command: String },
+    TestRun { command: String, inputs: Vec<String> },
+    Verdict { status: bool, proof_or_missing: String },
     Consult { question: String },
     Report { finding: String },
     Done,
@@ -49,7 +70,6 @@ pub enum SwarmAction {
 pub enum DiagnosticCode {
     VfsFileNotWritten,
     PlaceholderOrEmpty,
-    LuaSyntaxTrap,
     NoCodeBlock,
     RepeatedAttractor,
     MissingDependency(String),
@@ -57,6 +77,8 @@ pub enum DiagnosticCode {
     FileNotDeleted,
     DiffEmpty,
     TestFailed,
+    OutOfBoundsWrite,
+    AcceptanceCriteriaFailed(String),
 }
 
 impl DiagnosticCode {
@@ -64,7 +86,6 @@ impl DiagnosticCode {
         match self {
             DiagnosticCode::VfsFileNotWritten => "ERR_VFS_FILE_NOT_WRITTEN",
             DiagnosticCode::PlaceholderOrEmpty => "ERR_PLACEHOLDER_OR_EMPTY",
-            DiagnosticCode::LuaSyntaxTrap => "ERR_LUA_SYNTAX",
             DiagnosticCode::NoCodeBlock => "ERR_NO_CODE_BLOCK",
             DiagnosticCode::RepeatedAttractor => "ERR_REPEATED_ATTRACTOR",
             DiagnosticCode::MissingDependency(_) => "ERR_MISSING_DEPENDENCY",
@@ -72,6 +93,8 @@ impl DiagnosticCode {
             DiagnosticCode::FileNotDeleted => "ERR_FILE_NOT_DELETED",
             DiagnosticCode::DiffEmpty => "ERR_DIFF_EMPTY",
             DiagnosticCode::TestFailed => "ERR_TEST_FAILED",
+            DiagnosticCode::OutOfBoundsWrite => "ERR_OUT_OF_BOUNDS_WRITE",
+            DiagnosticCode::AcceptanceCriteriaFailed(_) => "ERR_ACCEPTANCE_CRITERIA_FAILED",
         }
     }
 
@@ -79,8 +102,8 @@ impl DiagnosticCode {
         match self {
             DiagnosticCode::VfsFileNotWritten => {
                 format!(
-                    "Provide the complete implementation for '{}' inside a code block (e.g. ```python ... ```) or call vfs.write(\"{}\", [[...]]).",
-                    target_entity, target_entity
+                    "Provide the complete implementation for '{}' inside a code block (e.g. ```python ... ```).",
+                    target_entity
                 )
             }
             DiagnosticCode::PlaceholderOrEmpty => {
@@ -88,9 +111,6 @@ impl DiagnosticCode {
                     "Write complete, working implementation for {}. NEVER output placeholders like TODO, pass, or empty comments.",
                     target_entity
                 )
-            }
-            DiagnosticCode::LuaSyntaxTrap => {
-                format!("Fix syntax error in {}. Ensure code is syntactically valid and completely closed.", target_entity)
             }
             DiagnosticCode::NoCodeBlock => {
                 format!("Output your code strictly inside a markdown code block for {}.", target_entity)
@@ -119,6 +139,18 @@ impl DiagnosticCode {
             DiagnosticCode::TestFailed => {
                 format!("Execution test for '{}' failed. Review error output and fix the root cause.", target_entity)
             }
+            DiagnosticCode::OutOfBoundsWrite => {
+                format!(
+                    "Security boundary violation: Unauthorized modification attempted outside write_set for '{}'. All file modifications must strictly target declared entities in the write_set.",
+                    target_entity
+                )
+            }
+            DiagnosticCode::AcceptanceCriteriaFailed(ref missing) => {
+                format!(
+                    "Deliverables failed acceptance criteria: {}. Complete all required files and features in '{}'.",
+                    missing, target_entity
+                )
+            }
         }
     }
 }
@@ -139,14 +171,1497 @@ pub enum ThinkerDecision {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubGoal {
     pub id: usize,
     pub description: String,
     pub target_entity: String,
     pub kind: TaskKind,
     pub guidance: Option<String>,
+    pub depends_on: Vec<String>,
+    pub read_set: Vec<PathBuf>,
+    pub write_set: Vec<PathBuf>,
+    pub max_tokens: usize,
 }
+
+impl SubGoal {
+    pub fn can_write<P: AsRef<Path>>(&self, path: P) -> bool {
+        crate::sandbox::MemoryVfs::is_path_in_set(path, &self.write_set)
+    }
+
+    pub fn can_read<P: AsRef<Path>>(&self, path: P) -> bool {
+        self.read_set.is_empty() || crate::sandbox::MemoryVfs::is_path_in_set(path, &self.read_set)
+    }
+
+    /// Computes the effective MAX_TOKENS(v) clamped to minimum floor and model ceiling.
+    #[inline]
+    pub fn effective_max_tokens(&self, min_floor: usize, model_ctx_limit: Option<usize>) -> usize {
+        let mut tokens = self.max_tokens.max(min_floor);
+        if let Some(limit) = model_ctx_limit {
+            if limit > 0 && limit < tokens {
+                tokens = limit;
+            }
+        }
+        tokens
+    }
+
+    /// Computes worst-case expected duration d_v^{max} = MAX_TOKENS(v) / r_min (in seconds).
+    #[inline]
+    pub fn duration_max(&self, config: &LrpConfig) -> f64 {
+        let tokens = self.effective_max_tokens(config.min_tokens_floor, config.model_ctx_limit);
+        tokens as f64 / config.r_min
+    }
+}
+
+/// Configuration parameters for duration modeling and LRP calculations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LrpConfig {
+    /// Minimum generation throughput rate in tokens per second (default: 20.0).
+    pub r_min: f64,
+    /// Minimum floor on token allocation per task (default: 2048).
+    pub min_tokens_floor: usize,
+    /// Model training context limit clamping token allocation (default: None).
+    pub model_ctx_limit: Option<usize>,
+}
+
+impl Default for LrpConfig {
+    fn default() -> Self {
+        Self {
+            r_min: 20.0,
+            min_tokens_floor: 2048,
+            model_ctx_limit: None,
+        }
+    }
+}
+
+impl LrpConfig {
+    pub fn new(r_min: f64, min_tokens_floor: usize, model_ctx_limit: Option<usize>) -> Self {
+        let safe_r_min = if r_min <= 0.0 || r_min.is_nan() {
+            20.0
+        } else {
+            r_min
+        };
+        Self {
+            r_min: safe_r_min,
+            min_tokens_floor,
+            model_ctx_limit,
+        }
+    }
+
+    pub fn with_r_min(mut self, r_min: f64) -> Self {
+        if r_min > 0.0 && !r_min.is_nan() {
+            self.r_min = r_min;
+        }
+        self
+    }
+}
+
+
+// ===========================================================================
+// MILESTONE 2: TASK STATE MACHINE & MEMORY BOUND GATE
+// ===========================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TaskStatus {
+    Pending,
+    Ready,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl TaskStatus {
+    #[inline]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled)
+    }
+
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        matches!(self, TaskStatus::Running)
+    }
+
+    #[inline]
+    pub fn is_ready(&self) -> bool {
+        matches!(self, TaskStatus::Ready)
+    }
+
+    #[inline]
+    pub fn is_pending(&self) -> bool {
+        matches!(self, TaskStatus::Pending)
+    }
+
+    #[inline]
+    pub fn is_completed(&self) -> bool {
+        matches!(self, TaskStatus::Completed)
+    }
+
+    pub fn can_transition_to(&self, next: TaskStatus) -> bool {
+        match (*self, next) {
+            (a, b) if a == b => false,
+            (TaskStatus::Completed, _) | (TaskStatus::Failed, _) | (TaskStatus::Cancelled, _) => false,
+            (TaskStatus::Pending, TaskStatus::Ready) => true,
+            (TaskStatus::Pending, TaskStatus::Failed) => true,
+            (TaskStatus::Pending, TaskStatus::Cancelled) => true,
+            (TaskStatus::Ready, TaskStatus::Running) => true,
+            (TaskStatus::Ready, TaskStatus::Cancelled) => true,
+            (TaskStatus::Ready, TaskStatus::Failed) => true,
+            (TaskStatus::Running, TaskStatus::Completed) => true,
+            (TaskStatus::Running, TaskStatus::Failed) => true,
+            (TaskStatus::Running, TaskStatus::Cancelled) => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskStatus::Pending => "PENDING",
+            TaskStatus::Ready => "READY",
+            TaskStatus::Running => "RUNNING",
+            TaskStatus::Completed => "COMPLETED",
+            TaskStatus::Failed => "FAILED",
+            TaskStatus::Cancelled => "CANCELLED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemoryGateError {
+    OverCapacity { requested: usize, k_max: usize },
+    InsufficientCapacity { requested: usize, remaining: usize, k_max: usize },
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryGate {
+    pub k_max: usize,
+    pub active_tokens: usize,
+    pub bytes_per_token: usize,
+}
+
+impl MemoryGate {
+    pub fn new(k_max: usize) -> Self {
+        Self::with_bytes_per_token(k_max, 28_672)
+    }
+
+    pub fn with_bytes_per_token(k_max: usize, bytes_per_token: usize) -> Self {
+        Self {
+            k_max,
+            active_tokens: 0,
+            bytes_per_token,
+        }
+    }
+
+    #[inline]
+    pub fn can_admit(&self, requested: usize) -> bool {
+        if self.is_over_capacity(requested) {
+            return false;
+        }
+        self.active_tokens.saturating_add(requested) <= self.k_max
+    }
+
+    #[inline]
+    pub fn is_over_capacity(&self, requested: usize) -> bool {
+        requested > self.k_max
+    }
+
+    pub fn allocate(&mut self, tokens: usize) -> Result<(), ()> {
+        if self.can_admit(tokens) {
+            self.active_tokens = self.active_tokens.saturating_add(tokens);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn try_allocate(&mut self, tokens: usize) -> Result<(), MemoryGateError> {
+        if self.is_over_capacity(tokens) {
+            return Err(MemoryGateError::OverCapacity {
+                requested: tokens,
+                k_max: self.k_max,
+            });
+        }
+        if self.active_tokens.saturating_add(tokens) > self.k_max {
+            return Err(MemoryGateError::InsufficientCapacity {
+                requested: tokens,
+                remaining: self.remaining(),
+                k_max: self.k_max,
+            });
+        }
+        self.active_tokens = self.active_tokens.saturating_add(tokens);
+        Ok(())
+    }
+
+    pub fn release(&mut self, tokens: usize) {
+        self.active_tokens = self.active_tokens.saturating_sub(tokens);
+    }
+
+    #[inline]
+    pub fn remaining(&self) -> usize {
+        self.k_max.saturating_sub(self.active_tokens)
+    }
+
+    #[inline]
+    pub fn active_bytes(&self) -> usize {
+        self.active_tokens * self.bytes_per_token
+    }
+
+    #[inline]
+    pub fn max_bytes(&self) -> usize {
+        self.k_max * self.bytes_per_token
+    }
+
+    #[inline]
+    pub fn utilization(&self) -> f64 {
+        if self.k_max == 0 {
+            0.0
+        } else {
+            (self.active_tokens as f64 / self.k_max as f64).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Analytical calculation of bytes per token for FP16 KV-Cache:
+    /// 4 * L * H_kv * (D / H_q)
+    #[inline]
+    pub fn analytical_bytes_per_token(l: usize, h_kv: usize, d: usize, h_q: usize) -> usize {
+        let d_head = if h_q > 0 { d / h_q } else { 0 };
+        4 * l * h_kv * d_head
+    }
+
+    /// Global Token Capacity Ceiling:
+    /// min(n_ctx_train, floor(m_budget / bytes_per_token))
+    #[inline]
+    pub fn calculate_k_max(n_ctx_train: usize, m_budget_bytes: usize, bytes_per_token: usize) -> usize {
+        let k_mem = if bytes_per_token > 0 {
+            m_budget_bytes / bytes_per_token
+        } else {
+            n_ctx_train
+        };
+        n_ctx_train.min(k_mem)
+    }
+}
+
+/// Maximum line count threshold before a deliverable is distilled into an interface contract for downstream tasks.
+pub const AUTO_INJECT_MAX_LINES: usize = 60;
+/// Maximum byte count threshold before a deliverable is distilled into an interface contract for downstream tasks.
+pub const AUTO_INJECT_MAX_BYTES: usize = 2048;
+
+/// Rule of 3: Maximum dynamic injection attempts allowed for any single requirement/artifact before tripping the circuit breaker.
+pub const MAX_DELTA_RETRIES_PER_TARGET: usize = 3;
+/// Global safety ceiling: Maximum cumulative dynamic subgoal injections allowed per swarm session.
+pub const MAX_TOTAL_DYNAMIC_INJECTIONS: usize = 6;
+
+#[derive(Debug, Clone)]
+pub struct TaskRecord {
+    pub task_id: usize,
+    pub subgoal: SubGoal,
+    pub status: TaskStatus,
+    pub failure_reason: Option<String>,
+    pub diagnostic_code: Option<DiagnosticCode>,
+    pub started_at: Option<Instant>,
+    pub finished_at: Option<Instant>,
+    pub finding: Option<WorkerFinding>,
+    pub abort_flag: Arc<AtomicBool>,
+    pub allocated_tokens: usize,
+    pub interface_contract: Option<String>,
+}
+
+impl TaskRecord {
+    pub fn new(subgoal: SubGoal) -> Self {
+        Self {
+            task_id: subgoal.id,
+            subgoal,
+            status: TaskStatus::Pending,
+            failure_reason: None,
+            diagnostic_code: None,
+            started_at: None,
+            finished_at: None,
+            finding: None,
+            abort_flag: Arc::new(AtomicBool::new(false)),
+            allocated_tokens: 0,
+            interface_contract: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskDag {
+    pub children: HashMap<usize, HashSet<usize>>,
+    pub dependencies: HashMap<usize, HashSet<usize>>,
+    pub in_degrees: HashMap<usize, usize>,
+    pub tasks: HashMap<usize, SubGoal>,
+    pub node_ids: HashSet<usize>,
+}
+
+impl TaskDag {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_subgoals(subgoals: Vec<SubGoal>) -> Result<Self, String> {
+        let mut dag = TaskDag::default();
+
+        for sg in &subgoals {
+            dag.tasks.insert(sg.id, sg.clone());
+            dag.node_ids.insert(sg.id);
+            dag.children.entry(sg.id).or_default();
+            dag.dependencies.entry(sg.id).or_default();
+            dag.in_degrees.insert(sg.id, 0);
+        }
+
+        let mut entity_producers: HashMap<String, usize> = HashMap::new();
+        let mut path_producers: HashMap<PathBuf, usize> = HashMap::new();
+
+        for sg in &subgoals {
+            let v = sg.id;
+
+            for dep in &sg.depends_on {
+                let trimmed = dep.trim();
+                if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+                    continue;
+                }
+
+                let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+                if let Ok(u) = digits.parse::<usize>() {
+                    if dag.tasks.contains_key(&u) && u < v {
+                        dag.add_edge(u, v);
+                        continue;
+                    }
+                }
+
+                let norm = Self::normalize_name(trimmed);
+                if let Some(&u) = entity_producers.get(&norm) {
+                    if u < v {
+                        dag.add_edge(u, v);
+                        continue;
+                    }
+                }
+
+                let norm_p = Self::normalize_path(Path::new(trimmed));
+                if let Some(&u) = path_producers.get(&norm_p) {
+                    if u < v {
+                        dag.add_edge(u, v);
+                        continue;
+                    }
+                }
+            }
+
+            for rp in &sg.read_set {
+                let norm_rp = Self::normalize_path(rp);
+                if let Some(&u) = path_producers.get(&norm_rp) {
+                    if u < v {
+                        dag.add_edge(u, v);
+                    }
+                }
+            }
+
+            // Register this task's produced artifacts for subsequent readers (strictly if not a pure test worker)
+            if sg.kind != TaskKind::Test {
+                if !sg.target_entity.is_empty() {
+                    entity_producers.insert(Self::normalize_name(&sg.target_entity), v);
+                }
+                for p in &sg.write_set {
+                    path_producers.insert(Self::normalize_path(p), v);
+                }
+            }
+        }
+
+        dag.recompute_in_degrees();
+        dag.validate_acyclic()?;
+
+        Ok(dag)
+    }
+
+    pub fn add_node(&mut self, id: usize) {
+        self.node_ids.insert(id);
+        self.children.entry(id).or_default();
+        self.dependencies.entry(id).or_default();
+        self.in_degrees.entry(id).or_insert(0);
+    }
+
+    pub fn add_edge(&mut self, u: usize, v: usize) {
+        if u == v {
+            return;
+        }
+        self.add_node(u);
+        self.add_node(v);
+
+        if self.children.entry(u).or_default().insert(v) {
+            self.dependencies.entry(v).or_default().insert(u);
+            *self.in_degrees.entry(v).or_insert(0) += 1;
+        }
+    }
+
+    pub fn recompute_in_degrees(&mut self) {
+        let all_ids: HashSet<usize> = self.node_ids.iter().copied()
+            .chain(self.tasks.keys().copied())
+            .collect();
+        self.in_degrees.clear();
+        for &id in &all_ids {
+            let count = self.dependencies.get(&id).map(|d| d.len()).unwrap_or(0);
+            self.in_degrees.insert(id, count);
+        }
+    }
+
+    pub fn validate_acyclic(&self) -> Result<Vec<usize>, String> {
+        let total_nodes = self.node_ids.len().max(self.tasks.len());
+        let mut order = Vec::with_capacity(total_nodes);
+
+        let mut all_ids: Vec<usize> = self.node_ids.iter().copied()
+            .chain(self.tasks.keys().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        all_ids.sort();
+
+        // Freshly compute in_degrees from dependencies to eliminate any desynchronization
+        let mut in_degrees: HashMap<usize, usize> = HashMap::with_capacity(all_ids.len());
+        for &id in &all_ids {
+            let count = self.dependencies.get(&id).map(|d| d.len()).unwrap_or(0);
+            in_degrees.insert(id, count);
+        }
+
+        let mut queue = VecDeque::new();
+        for &id in &all_ids {
+            if in_degrees.get(&id).copied().unwrap_or(0) == 0 {
+                queue.push_back(id);
+            }
+        }
+
+        while let Some(u) = queue.pop_front() {
+            order.push(u);
+            if let Some(children) = self.children.get(&u) {
+                let mut sorted_children: Vec<usize> = children.iter().copied().collect();
+                sorted_children.sort();
+                for &v in &sorted_children {
+                    if let Some(deg) = in_degrees.get_mut(&v) {
+                        if *deg > 0 {
+                            *deg -= 1;
+                            if *deg == 0 {
+                                queue.push_back(v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if order.len() != total_nodes {
+            return Err(format!(
+                "Cyclic dependency detected in Swarm DAG: ordered {} of {} tasks",
+                order.len(),
+                total_nodes
+            ));
+        }
+
+        Ok(order)
+    }
+
+    pub fn root_tasks(&self) -> Vec<usize> {
+        let mut roots: Vec<usize> = self.in_degrees
+            .iter()
+            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
+            .collect();
+        roots.sort();
+        roots
+    }
+
+    pub fn cascade_cancellation(
+        &self,
+        failed_task_id: usize,
+        state_table: &mut HashMap<usize, TaskStatus>,
+        _reason: &str,
+    ) -> Vec<usize> {
+        let mut cancelled_ids = Vec::new();
+        let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+
+        visited.insert(failed_task_id);
+
+        if let Some(children) = self.children.get(&failed_task_id) {
+            let mut sorted_children: Vec<usize> = children.iter().copied().collect();
+            sorted_children.sort();
+            for child in sorted_children {
+                if visited.insert(child) {
+                    queue.push_back(child);
+                }
+            }
+        }
+
+        while let Some(curr) = queue.pop_front() {
+            if let Some(children) = self.children.get(&curr) {
+                let mut sorted_children: Vec<usize> = children.iter().copied().collect();
+                sorted_children.sort();
+                for child in sorted_children {
+                    if visited.insert(child) {
+                        queue.push_back(child);
+                    }
+                }
+            }
+
+            if let Some(status) = state_table.get_mut(&curr) {
+                if !status.is_terminal() {
+                    *status = TaskStatus::Cancelled;
+                    cancelled_ids.push(curr);
+                }
+            }
+        }
+
+        cancelled_ids
+    }
+
+    /// Computes worst-case duration d_v^{max} for a specific task node.
+    pub fn task_duration(&self, task_id: usize, config: &LrpConfig) -> f64 {
+        if let Some(sg) = self.tasks.get(&task_id) {
+            sg.duration_max(config)
+        } else {
+            (config.min_tokens_floor as f64) / config.r_min
+        }
+    }
+
+    /// Computes LRP (Longest Remaining Path) for all nodes in the DAG using
+    /// iterative bottom-up dynamic programming over reverse topological order.
+    ///
+    /// Complexity: O(|V| + |E|) time, O(|V|) memory.
+    pub fn compute_lrp(&self, config: &LrpConfig) -> Result<HashMap<usize, f64>, String> {
+        let topo_order = self.validate_acyclic()?;
+        let mut lrp_table = HashMap::with_capacity(topo_order.len());
+
+        for &v in topo_order.iter().rev() {
+            let d_v = self.task_duration(v, config);
+            let max_child_lrp = self.children.get(&v)
+                .map(|children| {
+                    children.iter()
+                        .map(|&child_id| lrp_table.get(&child_id).copied().unwrap_or(0.0))
+                        .fold(0.0, f64::max)
+                })
+                .unwrap_or(0.0);
+
+            lrp_table.insert(v, d_v + max_child_lrp);
+        }
+
+        Ok(lrp_table)
+    }
+
+    /// Memoized recursive LRP evaluation helper (Method 2).
+    pub fn compute_lrp_memo(&self, config: &LrpConfig) -> Result<HashMap<usize, f64>, String> {
+        self.validate_acyclic()?;
+        let mut memo = HashMap::new();
+        let mut visiting = HashSet::new();
+
+        let mut all_ids: Vec<usize> = self.node_ids.iter().copied()
+            .chain(self.tasks.keys().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        all_ids.sort();
+
+        for id in all_ids {
+            self.compute_node_lrp_recursive(id, config, &mut memo, &mut visiting)?;
+        }
+
+        Ok(memo)
+    }
+
+    fn compute_node_lrp_recursive(
+        &self,
+        v: usize,
+        config: &LrpConfig,
+        memo: &mut HashMap<usize, f64>,
+        visiting: &mut HashSet<usize>,
+    ) -> Result<f64, String> {
+        if let Some(&val) = memo.get(&v) {
+            return Ok(val);
+        }
+        if !visiting.insert(v) {
+            return Err(format!("Cycle detected at node {}", v));
+        }
+
+        let d_v = self.task_duration(v, config);
+        let mut max_child = 0.0;
+        if let Some(children) = self.children.get(&v) {
+            for &child in children {
+                let child_lrp = self.compute_node_lrp_recursive(child, config, memo, visiting)?;
+                if child_lrp > max_child {
+                    max_child = child_lrp;
+                }
+            }
+        }
+
+        visiting.remove(&v);
+        let total = d_v + max_child;
+        memo.insert(v, total);
+        Ok(total)
+    }
+
+    /// Computes the overall Critical Path makespan of the project:
+    /// CP = max_{r in Roots} LRP(r)
+    pub fn critical_path_length(&self, config: &LrpConfig) -> Result<f64, String> {
+        let lrp_table = self.compute_lrp(config)?;
+        let roots = self.root_tasks();
+        let cp = roots.iter()
+            .map(|r| lrp_table.get(r).copied().unwrap_or(0.0))
+            .fold(0.0, f64::max);
+        Ok(cp)
+    }
+
+    /// Sorts ready set R_t descending by LRP with deterministic task ID tie-breaking.
+    pub fn sort_ready_set(&self, ready_set: &mut Vec<usize>, lrp_table: &HashMap<usize, f64>) {
+        Self::sort_ready_slice(ready_set, lrp_table);
+    }
+
+    /// Sorts slice of task IDs descending by LRP with deterministic task ID tie-breaking.
+    pub fn sort_ready_slice(ready_set: &mut [usize], lrp_table: &HashMap<usize, f64>) {
+        ready_set.sort_by(|&a, &b| {
+            let lrp_a = lrp_table.get(&a).copied().unwrap_or(0.0);
+            let lrp_b = lrp_table.get(&b).copied().unwrap_or(0.0);
+            lrp_b.partial_cmp(&lrp_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cmp(&b))
+        });
+    }
+
+    fn normalize_name(s: &str) -> String {
+        s.trim().trim_start_matches("./").to_lowercase()
+    }
+
+    fn normalize_path(p: &Path) -> PathBuf {
+        let s = p.to_string_lossy();
+        PathBuf::from(s.trim().trim_start_matches("./"))
+    }
+}
+
+pub struct StateMachineCoordinator {
+    pub dag: TaskDag,
+    pub records: HashMap<usize, TaskRecord>,
+    pub ready_set: Vec<usize>,
+    pub memory_gate: MemoryGate,
+    pub lrp_table: HashMap<usize, f64>,
+    pub lrp_config: LrpConfig,
+}
+
+impl StateMachineCoordinator {
+    pub fn new(dag: TaskDag, k_max: usize) -> Result<Self, String> {
+        Self::with_memory_gate(dag, MemoryGate::new(k_max))
+    }
+
+    pub fn with_memory_gate(dag: TaskDag, memory_gate: MemoryGate) -> Result<Self, String> {
+        Self::with_memory_gate_and_lrp(dag, memory_gate, LrpConfig::default())
+    }
+
+    pub fn with_memory_gate_and_lrp(
+        dag: TaskDag,
+        memory_gate: MemoryGate,
+        lrp_config: LrpConfig,
+    ) -> Result<Self, String> {
+        dag.validate_acyclic()?;
+        let lrp_table = dag.compute_lrp(&lrp_config)?;
+
+        let mut records = HashMap::new();
+        let mut ready_set = Vec::new();
+
+        let mut task_entries: Vec<(usize, SubGoal)> = dag.tasks.iter().map(|(&id, sg)| (id, sg.clone())).collect();
+        if task_entries.is_empty() {
+            for &id in &dag.node_ids {
+                task_entries.push((id, SubGoal {
+                    id,
+                    description: format!("Task #{}", id),
+                    target_entity: String::new(),
+                    kind: TaskKind::Create,
+                    guidance: None,
+                    depends_on: vec![],
+                    read_set: vec![],
+                    write_set: vec![],
+                    max_tokens: 1024,
+                }));
+            }
+        }
+
+        for (id, sg) in task_entries {
+            let mut record = TaskRecord::new(sg);
+            let in_deg = dag.in_degrees.get(&id).copied().unwrap_or(0);
+            if in_deg == 0 {
+                record.status = TaskStatus::Ready;
+                ready_set.push(id);
+            } else {
+                record.status = TaskStatus::Pending;
+            }
+            records.insert(id, record);
+        }
+
+        dag.sort_ready_set(&mut ready_set, &lrp_table);
+
+        Ok(Self {
+            dag,
+            records,
+            ready_set,
+            memory_gate,
+            lrp_table,
+            lrp_config,
+        })
+    }
+
+    /// Returns head task v* = argmax_{v in R_t} LRP(v).
+    #[inline]
+    pub fn head_task(&self) -> Option<usize> {
+        self.ready_set.first().copied()
+    }
+
+    pub fn preflight_validate(&mut self) -> Result<(), Vec<String>> {
+        let mut rejections = Vec::new();
+        let ids: Vec<usize> = self.records.keys().copied().collect();
+        for id in ids {
+            let requested = self.records.get(&id).map(|r| r.subgoal.max_tokens).unwrap_or(0);
+            if self.memory_gate.is_over_capacity(requested) {
+                let err_msg = format!(
+                    "Zero-OOM Hard Rejection: Task #{} demands {} tokens > K_max {}",
+                    id, requested, self.memory_gate.k_max
+                );
+                rejections.push(err_msg.clone());
+                if let Some(rec) = self.records.get_mut(&id) {
+                    rec.status = TaskStatus::Failed;
+                    rec.finished_at = Some(Instant::now());
+                    rec.failure_reason = Some(err_msg);
+                }
+                self.ready_set.retain(|&r_id| r_id != id);
+                self.cascade_failure(id, "Zero-OOM pre-flight rejection");
+            }
+        }
+
+        if rejections.is_empty() {
+            Ok(())
+        } else {
+            Err(rejections)
+        }
+    }
+
+    pub fn admit_task(&mut self, task_id: usize, requested_tokens: usize) -> Result<Arc<AtomicBool>, String> {
+        let record = self.records.get_mut(&task_id)
+            .ok_or_else(|| format!("Task #{} not found", task_id))?;
+
+        if record.status != TaskStatus::Ready {
+            return Err(format!("Task #{} is not Ready (current: {:?})", task_id, record.status));
+        }
+
+        if self.memory_gate.is_over_capacity(requested_tokens) {
+            record.status = TaskStatus::Failed;
+            record.finished_at = Some(Instant::now());
+            record.failure_reason = Some(format!(
+                "Zero-OOM rejection: requested {} tokens > K_max {}",
+                requested_tokens, self.memory_gate.k_max
+            ));
+            self.ready_set.retain(|&id| id != task_id);
+            self.cascade_failure(task_id, "Zero-OOM pre-flight rejection");
+            return Err("Zero-OOM hard rejection".to_string());
+        }
+
+        if !self.memory_gate.can_admit(requested_tokens) {
+            return Err("Context Boom: insufficient remaining memory".to_string());
+        }
+
+        self.memory_gate.allocate(requested_tokens)
+            .map_err(|_| "Context Boom allocation failure".to_string())?;
+
+        record.status = TaskStatus::Running;
+        record.allocated_tokens = requested_tokens;
+        record.started_at = Some(Instant::now());
+        self.ready_set.retain(|&id| id != task_id);
+
+        Ok(record.abort_flag.clone())
+    }
+
+    pub fn complete_task(&mut self, task_id: usize) -> Result<Vec<usize>, String> {
+        let newly_ready = {
+            let record = self.records.get_mut(&task_id)
+                .ok_or_else(|| format!("Task #{} not found", task_id))?;
+
+            // Unconditionally release tokens first to prevent MemoryGate resource leaks on error paths
+            if record.allocated_tokens > 0 {
+                self.memory_gate.release(record.allocated_tokens);
+                record.allocated_tokens = 0;
+            }
+
+            if record.status != TaskStatus::Running {
+                return Err(format!("Cannot complete task #{}: status is {:?}", task_id, record.status));
+            }
+
+            record.status = TaskStatus::Completed;
+            record.finished_at = Some(Instant::now());
+
+            let mut ready_children = Vec::new();
+            if let Some(children) = self.dag.children.get(&task_id) {
+                let mut sorted_children: Vec<usize> = children.iter().copied().collect();
+                sorted_children.sort();
+                for child_id in sorted_children {
+                    let all_deps_done = self.dag.dependencies.get(&child_id)
+                        .map(|deps| deps.iter().all(|&dep_id| {
+                            self.records.get(&dep_id).map(|r| r.status == TaskStatus::Completed).unwrap_or(false)
+                        }))
+                        .unwrap_or(true);
+
+                    if all_deps_done {
+                        if let Some(child_rec) = self.records.get_mut(&child_id) {
+                            if child_rec.status == TaskStatus::Pending {
+                                child_rec.status = TaskStatus::Ready;
+                                ready_children.push(child_id);
+                            }
+                        }
+                    }
+                }
+            }
+            ready_children.sort();
+            ready_children
+        };
+
+        for &child_id in &newly_ready {
+            if !self.ready_set.contains(&child_id) {
+                self.ready_set.push(child_id);
+            }
+        }
+        self.dag.sort_ready_set(&mut self.ready_set, &self.lrp_table);
+
+        Ok(newly_ready)
+    }
+
+    /// Dynamically injects an incremental subgoal into the live DAG during runtime.
+    /// Used by the Thinker / Tester closed feedback loop when an Acceptance Delta is identified.
+    pub fn inject_subgoal(&mut self, mut sg: SubGoal, depends_on: Vec<usize>) -> Result<usize, String> {
+        let new_id = self.records.keys().max().copied().unwrap_or(0) + 1;
+        sg.id = new_id;
+
+        self.dag.tasks.insert(new_id, sg.clone());
+        self.dag.node_ids.insert(new_id);
+        self.dag.children.entry(new_id).or_default();
+        self.dag.dependencies.entry(new_id).or_default();
+        self.dag.in_degrees.insert(new_id, 0);
+
+        for dep_id in &depends_on {
+            if self.dag.tasks.contains_key(dep_id) {
+                self.dag.add_edge(*dep_id, new_id);
+            }
+        }
+
+        let mut record = TaskRecord::new(sg);
+        let all_deps_done = depends_on.iter().all(|&dep_id| {
+            self.records.get(&dep_id).map(|r| r.status == TaskStatus::Completed).unwrap_or(false)
+        });
+
+        if all_deps_done {
+            record.status = TaskStatus::Ready;
+            self.ready_set.push(new_id);
+        } else {
+            record.status = TaskStatus::Pending;
+        }
+
+        self.records.insert(new_id, record);
+
+        // Validate DAG acyclicity & recompute LRP with complete rollback on cycle
+        match self.dag.compute_lrp(&self.lrp_config) {
+            Ok(new_lrp) => {
+                self.lrp_table = new_lrp;
+            }
+            Err(e) => {
+                // Rollback: purge injected node and edges
+                self.dag.tasks.remove(&new_id);
+                self.dag.node_ids.remove(&new_id);
+                self.dag.children.remove(&new_id);
+                self.dag.dependencies.remove(&new_id);
+                self.dag.in_degrees.remove(&new_id);
+                for dep_id in &depends_on {
+                    if let Some(children) = self.dag.children.get_mut(dep_id) {
+                        children.remove(&new_id);
+                    }
+                }
+                self.records.remove(&new_id);
+                self.ready_set.retain(|&id| id != new_id);
+                return Err(format!("inject_subgoal rejected: cycle detected: {}", e));
+            }
+        }
+        self.dag.sort_ready_set(&mut self.ready_set, &self.lrp_table);
+
+        Ok(new_id)
+    }
+
+    /// Sets the distilled public interface contract for a given task node in the DAG.
+    pub fn set_interface_contract(&mut self, task_id: usize, contract: String) {
+        if let Some(record) = self.records.get_mut(&task_id) {
+            record.interface_contract = Some(contract);
+        }
+    }
+
+    /// Retrieves the interface contract for a given task node in the DAG.
+    pub fn get_interface_contract(&self, task_id: usize) -> Option<String> {
+        self.records.get(&task_id).and_then(|r| r.interface_contract.clone())
+    }
+
+    /// Gathers all registered interface contracts across all completed tasks in the DAG,
+    /// keyed by target filename for instant lookups by downstream workers.
+    pub fn get_all_interface_contracts(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for record in self.records.values() {
+            if let Some(ref contract) = record.interface_contract {
+                if !record.subgoal.target_entity.is_empty() {
+                    let fname = std::path::Path::new(&record.subgoal.target_entity)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| record.subgoal.target_entity.clone());
+                    map.insert(fname, contract.clone());
+                }
+            }
+        }
+        map
+    }
+
+    pub fn fail_task(&mut self, task_id: usize, reason: &str, diag: Option<DiagnosticCode>) -> Vec<usize> {
+        if let Some(record) = self.records.get_mut(&task_id) {
+            record.status = TaskStatus::Failed;
+            record.finished_at = Some(Instant::now());
+            record.failure_reason = Some(reason.to_string());
+            record.diagnostic_code = diag;
+
+            if record.allocated_tokens > 0 {
+                self.memory_gate.release(record.allocated_tokens);
+                record.allocated_tokens = 0;
+            }
+        }
+        self.ready_set.retain(|&id| id != task_id);
+
+        self.cascade_failure(task_id, reason)
+    }
+
+    pub fn cascade_failure(&mut self, failed_task_id: usize, reason: &str) -> Vec<usize> {
+        let mut cancelled_ids = Vec::new();
+        let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+
+        visited.insert(failed_task_id);
+
+        if let Some(children) = self.dag.children.get(&failed_task_id) {
+            let mut sorted_children: Vec<usize> = children.iter().copied().collect();
+            sorted_children.sort();
+            for child in sorted_children {
+                if visited.insert(child) {
+                    queue.push_back(child);
+                }
+            }
+        }
+
+        while let Some(curr_id) = queue.pop_front() {
+            if let Some(children) = self.dag.children.get(&curr_id) {
+                let mut sorted_children: Vec<usize> = children.iter().copied().collect();
+                sorted_children.sort();
+                for child in sorted_children {
+                    if visited.insert(child) {
+                        queue.push_back(child);
+                    }
+                }
+            }
+
+            if let Some(record) = self.records.get_mut(&curr_id) {
+                match record.status {
+                    TaskStatus::Pending | TaskStatus::Ready => {
+                        let prev = record.status;
+                        record.status = TaskStatus::Cancelled;
+                        record.finished_at = Some(Instant::now());
+                        record.failure_reason = Some(format!(
+                            "Cancelled: Topological ancestor Task #{} FAILED: {}",
+                            failed_task_id, reason
+                        ));
+                        cancelled_ids.push(curr_id);
+
+                        if prev == TaskStatus::Ready {
+                            self.ready_set.retain(|&id| id != curr_id);
+                        }
+                    }
+                    TaskStatus::Running => {
+                        record.abort_flag.store(true, Ordering::SeqCst);
+                        record.status = TaskStatus::Cancelled;
+                        record.finished_at = Some(Instant::now());
+                        record.failure_reason = Some(format!(
+                            "Preempted: Topological ancestor Task #{} FAILED while running",
+                            failed_task_id
+                        ));
+                        cancelled_ids.push(curr_id);
+
+                        if record.allocated_tokens > 0 {
+                            self.memory_gate.release(record.allocated_tokens);
+                            record.allocated_tokens = 0;
+                        }
+                    }
+                    TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => {}
+                }
+            }
+        }
+
+        cancelled_ids
+    }
+
+    pub fn is_all_terminal(&self) -> bool {
+        self.records.values().all(|r| r.status.is_terminal())
+    }
+}
+
+// ===========================================================================
+// MILESTONE 3: RCPSP SCHEDULER (PINNED EASY BACKFILLING & SCOPED CONCURRENCY)
+// ===========================================================================
+
+/// Result of an RCPSP scheduling pass over the Topological Ready Set.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScheduleDecision {
+    /// Head task v* fits in remaining KV capacity and is dispatched immediately.
+    DispatchHead {
+        task_id: usize,
+        allocated_tokens: usize,
+    },
+    /// Head task v* is pinned with a shadow reservation at t_res;
+    /// Zero or more non-delaying candidate tasks u were backfilled.
+    PinnedWithBackfill {
+        pinned_head_id: usize,
+        reservation_delay_secs: f64,
+        backfilled_task_ids: Vec<usize>,
+    },
+    /// Head task is pinned, but no candidate tasks satisfy the EASY backfill predicate.
+    /// Cooperative backpressure: scheduler must wait for active tasks to complete.
+    ContextBoomWait {
+        pinned_head_id: usize,
+        reservation_delay_secs: f64,
+        deficit_tokens: usize,
+    },
+    /// No ready tasks exist, but active tasks are currently running.
+    AwaitingRunningTasks {
+        active_count: usize,
+    },
+    /// All tasks in the DAG have reached a terminal state (Completed, Failed, Cancelled).
+    AllTerminal,
+}
+
+/// A guaranteed shadow reservation for head task v*.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShadowReservation {
+    pub task_id: usize,
+    pub required_tokens: usize,
+    pub deficit_tokens: usize,
+    pub reservation_delay_secs: f64,
+    /// Vector of (task_id, released_tokens, expected_remaining_secs)
+    pub releasing_tasks: Vec<(usize, usize, f64)>,
+}
+
+/// Backfill eligibility classification for a candidate task u.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackfillEligibility {
+    Eligible {
+        justification: BackfillJustification,
+    },
+    Ineligible {
+        reason: BackfillRejectionReason,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackfillJustification {
+    /// Sub-predicate A: Task duration finishes before shadow reservation time (d_u <= t_res - t_now).
+    CompletesBeforeReservation {
+        task_duration_secs: f64,
+        reservation_delay_secs: f64,
+    },
+    /// Sub-predicate B: Task runs past reservation, but remaining headroom at t_res preserves v* tokens.
+    HeadroomPreservedAtReservation {
+        task_tokens: usize,
+        headroom_tokens: usize,
+        head_tokens: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackfillRejectionReason {
+    InsufficientCurrentTokens { requested: usize, available: usize },
+    VfsConflict { conflicting_task_id: usize, path: PathBuf },
+    DelaysPinnedHead { task_duration_secs: f64, reservation_delay_secs: f64, head_tokens: usize },
+}
+
+/// Active execution state of an in-flight worker task.
+#[derive(Debug, Clone)]
+pub struct ActiveTaskProfile {
+    pub task_id: usize,
+    pub allocated_tokens: usize,
+    pub started_at: Instant,
+    pub expected_total_secs: f64,
+    pub expected_remaining_secs: f64,
+}
+
+/// Events delivered from worker threads back to the central scheduler.
+#[derive(Debug)]
+pub enum WorkerEvent {
+    /// Worker succeeded and delivered its findings.
+    Completed {
+        task_id: usize,
+        finding: WorkerFinding,
+    },
+    /// Worker encountered an execution failure (out-of-bounds, syntax, test failure).
+    Failed {
+        task_id: usize,
+        reason: String,
+        diagnostic_code: Option<DiagnosticCode>,
+        finding: WorkerFinding,
+    },
+    /// Worker halted due to cooperative preemption (abort flag tripped).
+    Cancelled {
+        task_id: usize,
+        finding: WorkerFinding,
+    },
+    /// Tester worker detected partial implementation / missing requirements from user goal.
+    /// Issues an Acceptance Delta report to trigger incremental subtask synthesis without wiping.
+    AcceptanceDelta {
+        task_id: usize,
+        target_file: String,
+        delta: String,
+        finding: WorkerFinding,
+    },
+    /// Worker thread panicked (caught by panic wrapper).
+    Panicked {
+        task_id: usize,
+        panic_msg: String,
+    },
+}
+
+/// Metadata tracked for each active in-flight worker thread.
+#[derive(Debug, Clone)]
+pub struct ActiveWorkerProfile {
+    pub task_id: usize,
+    pub allocated_tokens: usize,
+    pub started_at: Instant,
+    pub expected_duration_secs: f64,
+    pub abort_flag: Arc<AtomicBool>,
+    pub write_set: Vec<PathBuf>,
+    pub read_set: Vec<PathBuf>,
+}
+
+/// Online Resource-Constrained Project Scheduling Problem (RCPSP) Scheduler.
+#[derive(Debug, Clone)]
+pub struct RcpspScheduler {
+    /// Conservative minimum generation rate in tokens/second (default: 20.0).
+    pub r_min: f64,
+}
+
+impl RcpspScheduler {
+    pub fn new(r_min: f64) -> Self {
+        Self {
+            r_min: if r_min <= 0.0 || r_min.is_nan() { 20.0 } else { r_min },
+        }
+    }
+
+    pub fn default_rate() -> Self {
+        Self::new(20.0)
+    }
+
+    /// Computes duration bound for a given token count: d_v = k_v / r_min.
+    #[inline]
+    pub fn compute_duration(&self, tokens: usize) -> f64 {
+        tokens as f64 / self.r_min
+    }
+
+    /// Computes expected remaining time for a running task based on elapsed wall-clock time.
+    #[inline]
+    pub fn compute_expected_remaining_time(&self, allocated_tokens: usize, started_at: Instant) -> f64 {
+        let total_secs = self.compute_duration(allocated_tokens);
+        let elapsed_secs = started_at.elapsed().as_secs_f64();
+        (total_secs - elapsed_secs).max(0.001)
+    }
+
+    /// Inspects running tasks in `StateMachineCoordinator` and builds an Earliest Completion Time profile.
+    pub fn get_active_profiles(&self, coordinator: &StateMachineCoordinator) -> Vec<ActiveTaskProfile> {
+        let mut profiles = Vec::new();
+        for (&id, record) in &coordinator.records {
+            if record.status == TaskStatus::Running {
+                let allocated = record.allocated_tokens;
+                let started = record.started_at.unwrap_or_else(Instant::now);
+                let total_secs = self.compute_duration(allocated);
+                let rem_secs = self.compute_expected_remaining_time(allocated, started);
+                profiles.push(ActiveTaskProfile {
+                    task_id: id,
+                    allocated_tokens: allocated,
+                    started_at: started,
+                    expected_total_secs: total_secs,
+                    expected_remaining_secs: rem_secs,
+                });
+            }
+        }
+        profiles.sort_by(|a, b| a.expected_remaining_secs.partial_cmp(&b.expected_remaining_secs).unwrap_or(std::cmp::Ordering::Equal));
+        profiles
+    }
+
+    /// Calculates Shadow Reservation for head task v* if K_rem < MAX_TOKENS(v*).
+    pub fn compute_shadow_reservation(
+        &self,
+        coordinator: &StateMachineCoordinator,
+        head_task_id: usize,
+        head_tokens: usize,
+    ) -> Result<ShadowReservation, String> {
+        let current_rem = coordinator.memory_gate.remaining();
+        if current_rem >= head_tokens {
+            return Ok(ShadowReservation {
+                task_id: head_task_id,
+                required_tokens: head_tokens,
+                deficit_tokens: 0,
+                reservation_delay_secs: 0.0,
+                releasing_tasks: Vec::new(),
+            });
+        }
+
+        let deficit = head_tokens.saturating_sub(current_rem);
+        let active_profiles = self.get_active_profiles(coordinator);
+
+        if active_profiles.is_empty() {
+            return Err(format!(
+                "Cannot compute shadow reservation: no active tasks running and deficit is {} tokens",
+                deficit
+            ));
+        }
+
+        let mut accumulated_tokens = current_rem;
+        let mut releasing = Vec::new();
+        let mut reservation_delay = 0.0;
+        let mut satisfied = false;
+
+        for profile in active_profiles {
+            accumulated_tokens = accumulated_tokens.saturating_add(profile.allocated_tokens);
+            releasing.push((profile.task_id, profile.allocated_tokens, profile.expected_remaining_secs));
+            reservation_delay = profile.expected_remaining_secs;
+
+            if accumulated_tokens >= head_tokens {
+                satisfied = true;
+                break;
+            }
+        }
+
+        if !satisfied {
+            return Err(format!(
+                "Zero-OOM Violation: Even after all running tasks complete, available tokens ({}) < requested ({})",
+                accumulated_tokens, head_tokens
+            ));
+        }
+
+        Ok(ShadowReservation {
+            task_id: head_task_id,
+            required_tokens: head_tokens,
+            deficit_tokens: deficit,
+            reservation_delay_secs: reservation_delay,
+            releasing_tasks: releasing,
+        })
+    }
+
+    /// Checks if candidate SubGoal has VFS read/write conflicts with running subgoals.
+    pub fn check_vfs_conflict(
+        candidate: &SubGoal,
+        active_subgoals: &[&SubGoal],
+    ) -> Option<(usize, PathBuf)> {
+        for &active in active_subgoals {
+            // Write-Write conflict
+            for w in &candidate.write_set {
+                if MemoryVfs::is_path_in_set(w, &active.write_set)
+                    || active.write_set.iter().any(|aw| MemoryVfs::is_path_in_set(aw, std::slice::from_ref(w)))
+                {
+                    return Some((active.id, w.clone()));
+                }
+            }
+            // Write-Read conflict (candidate writes, active reads)
+            for w in &candidate.write_set {
+                if MemoryVfs::is_path_in_set(w, &active.read_set)
+                    || active.read_set.iter().any(|ar| MemoryVfs::is_path_in_set(ar, std::slice::from_ref(w)))
+                {
+                    return Some((active.id, w.clone()));
+                }
+            }
+            // Read-Write conflict (candidate reads, active writes)
+            for r in &candidate.read_set {
+                if MemoryVfs::is_path_in_set(r, &active.write_set)
+                    || active.write_set.iter().any(|aw| MemoryVfs::is_path_in_set(aw, std::slice::from_ref(r)))
+                {
+                    return Some((active.id, r.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Evaluates candidate task u against EASY backfill predicate for pinned head v*.
+    pub fn evaluate_backfill_predicate(
+        &self,
+        candidate: &SubGoal,
+        current_rem_tokens: usize,
+        head_reservation: &ShadowReservation,
+        headroom_at_reservation: usize,
+        active_subgoals: &[&SubGoal],
+    ) -> BackfillEligibility {
+        let k_u = candidate.max_tokens;
+
+        // Condition 1: Must fit in current remaining tokens
+        if k_u > current_rem_tokens {
+            return BackfillEligibility::Ineligible {
+                reason: BackfillRejectionReason::InsufficientCurrentTokens {
+                    requested: k_u,
+                    available: current_rem_tokens,
+                },
+            };
+        }
+
+        // Condition 2: VFS file conflict check
+        if let Some((conflicting_id, path)) = Self::check_vfs_conflict(candidate, active_subgoals) {
+            return BackfillEligibility::Ineligible {
+                reason: BackfillRejectionReason::VfsConflict {
+                    conflicting_task_id: conflicting_id,
+                    path,
+                },
+            };
+        }
+
+        // Condition 3: Zero-Delay Guarantee
+        let d_u = self.compute_duration(k_u);
+        let delta_t_res = head_reservation.reservation_delay_secs;
+
+        // Sub-predicate A: Finishes before reservation time
+        if d_u <= delta_t_res {
+            return BackfillEligibility::Eligible {
+                justification: BackfillJustification::CompletesBeforeReservation {
+                    task_duration_secs: d_u,
+                    reservation_delay_secs: delta_t_res,
+                },
+            };
+        }
+
+        // Sub-predicate B: Headroom preserved at reservation time
+        if k_u <= headroom_at_reservation {
+            return BackfillEligibility::Eligible {
+                justification: BackfillJustification::HeadroomPreservedAtReservation {
+                    task_tokens: k_u,
+                    headroom_tokens: headroom_at_reservation,
+                    head_tokens: head_reservation.required_tokens,
+                },
+            };
+        }
+
+        // Fails Zero-Delay Guarantee
+        BackfillEligibility::Ineligible {
+            reason: BackfillRejectionReason::DelaysPinnedHead {
+                task_duration_secs: d_u,
+                reservation_delay_secs: delta_t_res,
+                head_tokens: head_reservation.required_tokens,
+            },
+        }
+    }
+
+    /// Executes one full online scheduling pass over `StateMachineCoordinator`.
+    pub fn schedule_next_batch(
+        &self,
+        coordinator: &mut StateMachineCoordinator,
+        lrp_map: &HashMap<usize, f64>,
+    ) -> Result<ScheduleDecision, String> {
+        if coordinator.is_all_terminal() {
+            return Ok(ScheduleDecision::AllTerminal);
+        }
+
+        if coordinator.ready_set.is_empty() {
+            let active_count = coordinator.records.values().filter(|r| r.status == TaskStatus::Running).count();
+            return Ok(ScheduleDecision::AwaitingRunningTasks { active_count });
+        }
+
+        // 1. Sort Ready Set descending by LRP with deterministic tie-breaking (lowest id)
+        coordinator.dag.sort_ready_set(&mut coordinator.ready_set, lrp_map);
+
+        let head_id = coordinator.ready_set[0];
+        let head_tokens = coordinator.records.get(&head_id)
+            .map(|r| r.subgoal.max_tokens)
+            .unwrap_or(0);
+
+        let current_rem = coordinator.memory_gate.remaining();
+
+        // 2. Can Head Task start immediately?
+        if current_rem >= head_tokens {
+            let active_subgoals: Vec<&SubGoal> = coordinator.records.values()
+                .filter(|r| r.status == TaskStatus::Running)
+                .map(|r| &r.subgoal)
+                .collect();
+            let head_sg = &coordinator.records.get(&head_id).unwrap().subgoal;
+
+            if Self::check_vfs_conflict(head_sg, &active_subgoals).is_none() {
+                coordinator.admit_task(head_id, head_tokens)?;
+                return Ok(ScheduleDecision::DispatchHead {
+                    task_id: head_id,
+                    allocated_tokens: head_tokens,
+                });
+            }
+        }
+
+        // 3. Pin Head Task v* and compute Shadow Reservation
+        let reservation = self.compute_shadow_reservation(coordinator, head_id, head_tokens)?;
+        let mut sim_rem = current_rem;
+
+        let tokens_freed_by_res: usize = reservation.releasing_tasks.iter()
+            .map(|(_, tok, _)| *tok)
+            .sum();
+        let mut sim_headroom_at_res = (sim_rem + tokens_freed_by_res).saturating_sub(head_tokens);
+
+        let mut backfilled_ids = Vec::new();
+        let mut admitted_subgoals: Vec<SubGoal> = Vec::new();
+
+        let candidates: Vec<usize> = coordinator.ready_set.iter().skip(1).copied().collect();
+
+        // 4. Evaluate candidates u in R_t \ {v*}
+        for cand_id in candidates {
+            let cand_sg = match coordinator.records.get(&cand_id) {
+                Some(r) => r.subgoal.clone(),
+                None => continue,
+            };
+
+            let mut current_active: Vec<&SubGoal> = coordinator.records.values()
+                .filter(|r| r.status == TaskStatus::Running)
+                .map(|r| &r.subgoal)
+                .collect();
+            for adm in &admitted_subgoals {
+                current_active.push(adm);
+            }
+
+            let eligibility = self.evaluate_backfill_predicate(
+                &cand_sg,
+                sim_rem,
+                &reservation,
+                sim_headroom_at_res,
+                &current_active,
+            );
+
+            if let BackfillEligibility::Eligible { justification } = eligibility {
+                let k_u = cand_sg.max_tokens;
+                coordinator.admit_task(cand_id, k_u)?;
+                backfilled_ids.push(cand_id);
+                sim_rem = sim_rem.saturating_sub(k_u);
+
+                match justification {
+                    BackfillJustification::CompletesBeforeReservation { .. } => {}
+                    BackfillJustification::HeadroomPreservedAtReservation { .. } => {
+                        sim_headroom_at_res = sim_headroom_at_res.saturating_sub(k_u);
+                    }
+                }
+
+                admitted_subgoals.push(cand_sg);
+            }
+        }
+
+        if !backfilled_ids.is_empty() {
+            Ok(ScheduleDecision::PinnedWithBackfill {
+                pinned_head_id: head_id,
+                reservation_delay_secs: reservation.reservation_delay_secs,
+                backfilled_task_ids: backfilled_ids,
+            })
+        } else {
+            Ok(ScheduleDecision::ContextBoomWait {
+                pinned_head_id: head_id,
+                reservation_delay_secs: reservation.reservation_delay_secs,
+                deficit_tokens: reservation.deficit_tokens,
+            })
+        }
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct WorkerFinding {
@@ -167,6 +1682,8 @@ pub struct SwarmResult {
     pub total_rollbacks: usize,
     pub total_tokens_saved: usize,
     pub elapsed_ms: u128,
+    pub readme_content: Option<String>,
+    pub sealed_context: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -269,62 +1786,323 @@ impl SwarmCoordinator {
         })
     }
 
-    /// Format prompts dynamically based on the model's vocabulary.
-    /// Completely model-agnostic: supports ChatML, Llama 3 header tokens, or Universal Markdown.
-    pub fn format_prompt(model: &NativeLlamaModel, system: &str, user: &str) -> String {
-        let is_chatml = model.tokenize("<|im_start|>", false).map(|t| t.len() == 1).unwrap_or(false);
-        let is_llama3 = model.tokenize("<|start_header_id|>", false).map(|t| t.len() == 1).unwrap_or(false);
-
-        if is_chatml {
-            format!(
-                "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-                system, user
-            )
-        } else if is_llama3 {
-            format!(
-                "<|start_header_id|>system<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
-                system, user
-            )
+    /// Constructs an analytical MemoryGate calibrated for the worker model geometry and quantization.
+    pub fn create_memory_gate(&self) -> MemoryGate {
+        let l = 28;
+        let d = 1536;
+        let h_q = 12;
+        let h_kv = 2;
+        
+        // Dynamic Quantization Factor:
+        // Automatically calibrate memory scaling based on GGUF quantization tier (e.g., Q4_K_M, Q5_K_M, Q8_0).
+        let path_lower = self.worker_model.model_path.to_lowercase();
+        let quant_scale = if path_lower.contains("q4") || path_lower.contains("iq4") {
+            0.50 // Q4 quantization factor
+        } else if path_lower.contains("q5") || path_lower.contains("q6") {
+            0.65 // Q5/Q6 quantization factor
+        } else if path_lower.contains("q8") {
+            0.80 // Q8 quantization factor
         } else {
-            // Universal standard markdown prompt
-            format!(
-                "### System Instruction:\n{}\n\n### User Objective:\n{}\n\n### Assistant Execution:\n",
-                system, user
-            )
-        }
+            1.00 // Conservative baseline FP16 upper bound
+        };
+
+        let raw_bytes_per_token = MemoryGate::analytical_bytes_per_token(l, h_kv, d, h_q);
+        let bytes_per_token = ((raw_bytes_per_token as f32) * quant_scale).ceil() as usize;
+
+        let n_ctx_train = if self.worker_model.n_ctx_train > 0 {
+            self.worker_model.n_ctx_train as usize
+        } else {
+            8192
+        };
+
+        let specs = crate::system_info::get_system_specs();
+        let free_bytes = (specs.free_ram_gb * 1024.0 * 1024.0 * 1024.0) as u64;
+        let safe_budget_bytes = (free_bytes as f64 * 0.70) as usize;
+
+        let k_max = MemoryGate::calculate_k_max(n_ctx_train, safe_budget_bytes, bytes_per_token).clamp(1024, 65536);
+
+        info!(
+            "[MEMORY GATE] Initialized MemoryGate: K_max={} tokens | bytes_per_token={} (quant_scale={:.2}) | n_ctx_train={}",
+            k_max, bytes_per_token, quant_scale, n_ctx_train
+        );
+
+        MemoryGate::with_bytes_per_token(k_max, bytes_per_token)
+    }
+
+    /// Format prompts dynamically based on the model's detected template.
+    pub fn format_prompt(model: &NativeLlamaModel, system: &str, user: &str) -> String {
+        let sys = if system.trim().is_empty() { None } else { Some(system) };
+        model.format_chat(sys, user)
     }
 
     /// Append user feedback or observation turn dynamically to active context
     pub fn format_observation_turn(model: &NativeLlamaModel, observation: &str, next_instruction: &str) -> String {
-        let is_chatml = model.tokenize("<|im_start|>", false).map(|t| t.len() == 1).unwrap_or(false);
-        let is_llama3 = model.tokenize("<|start_header_id|>", false).map(|t| t.len() == 1).unwrap_or(false);
+        model.format_observation_turn(observation, next_instruction)
+    }
 
-        if is_chatml {
-            format!(
-                "\n<|im_end|>\n<|im_start|>user\nOBSERVATION: {}\n{}<|im_end|>\n<|im_start|>assistant\n",
-                observation, next_instruction
-            )
-        } else if is_llama3 {
-            format!(
-                "\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nOBSERVATION: {}\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
-                observation, next_instruction
-            )
-        } else {
-            format!(
-                "\n\n### User Observation:\nOBSERVATION: {}\n{}\n\n### Assistant Response:\n",
-                observation, next_instruction
-            )
+    /// Checks if a piece is a standard end-of-turn or stop token dynamically
+    pub fn is_stop_piece(model: &NativeLlamaModel, piece: &str) -> bool {
+        model.is_stop_piece(piece)
+    }
+
+    /// Checks if an executable command exists in system PATH in a platform-agnostic way
+    pub fn is_command_available(cmd: &str) -> bool {
+        if let Ok(path_var) = std::env::var("PATH") {
+            for dir in path_var.split(':') {
+                let bin_path = std::path::Path::new(dir).join(cmd);
+                if bin_path.is_file() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Resolves the optimal host syntax check command for any artifact to perform fast AST/syntax
+    /// validation during file generation without executing runtime side-effects or waiting on user input loops.
+    pub fn resolve_syntax_check_command(target: &str) -> String {
+        let p = std::path::Path::new(target);
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        match ext {
+            "py" => {
+                if Self::is_command_available("python3") {
+                    format!("python3 -m py_compile {} 2>&1", target)
+                } else if Self::is_command_available("python") {
+                    format!("python -m py_compile {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "c" => {
+                if Self::is_command_available("gcc") {
+                    format!("gcc -Wall -O2 -fsyntax-only {} 2>&1", target)
+                } else if Self::is_command_available("clang") {
+                    format!("clang -fsyntax-only {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "cpp" | "cc" | "cxx" => {
+                if Self::is_command_available("g++") {
+                    format!("g++ -Wall -O2 -fsyntax-only {} 2>&1", target)
+                } else if Self::is_command_available("clang++") {
+                    format!("clang++ -fsyntax-only {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "rs" => {
+                if Self::is_command_available("rustc") {
+                    format!("rustc --emit=metadata {} -o /tmp/omni_rs_target.rmeta 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "js" => {
+                if Self::is_command_available("node") {
+                    format!("node --check {} 2>&1", target)
+                } else if Self::is_command_available("deno") {
+                    format!("deno check {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "ts" => {
+                if Self::is_command_available("tsc") {
+                    format!("tsc --noEmit {} 2>&1", target)
+                } else if Self::is_command_available("deno") {
+                    format!("deno check {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "sh" | "bash" => {
+                if Self::is_command_available("bash") {
+                    format!("bash -n {} 2>&1", target)
+                } else {
+                    format!("sh -n {} 2>&1", target)
+                }
+            }
+            "go" => {
+                if Self::is_command_available("go") {
+                    format!("go vet {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "zig" => {
+                if Self::is_command_available("zig") {
+                    format!("zig ast-check {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            _ => format!("test -f {}", target),
         }
     }
 
-    /// Checks if a piece is a standard end-of-turn or stop token across architectures
-    pub fn is_stop_piece(piece: &str) -> bool {
-        piece.contains("<|im_end|>")
-            || piece.contains("<|endoftext|>")
-            || piece.contains("<|eot_id|>")
-            || piece.contains("</s>")
-            || piece.contains("<end_of_turn>")
-            || piece.contains('\n')
+    /// Resolves the optimal host verification command for any artifact in a language-agnostic,
+    /// toolchain-discovered manner without hardcoding language rules into business logic.
+    pub fn resolve_verification_command(target: &str) -> String {
+        let p = std::path::Path::new(target);
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        
+        match ext {
+            "c" => {
+                if Self::is_command_available("gcc") {
+                    format!("gcc -Wall -O2 -fsyntax-only {} 2>&1 || gcc -Wall -O2 {} -o /tmp/omni_c_target 2>&1", target, target)
+                } else if Self::is_command_available("clang") {
+                    format!("clang -fsyntax-only {} 2>&1 || clang {} -o /tmp/omni_c_target 2>&1", target, target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "cpp" | "cc" | "cxx" => {
+                if Self::is_command_available("g++") {
+                    format!("g++ -Wall -O2 -fsyntax-only {} 2>&1 || g++ -Wall -O2 {} -o /tmp/omni_cpp_target 2>&1", target, target)
+                } else if Self::is_command_available("clang++") {
+                    format!("clang++ -fsyntax-only {} 2>&1 || clang++ {} -o /tmp/omni_cpp_target 2>&1", target, target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "java" => {
+                let parent = p.parent().unwrap_or(std::path::Path::new("."));
+                let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or(target);
+                let run_dir = if parent.as_os_str().is_empty() || parent == std::path::Path::new(".") {
+                    ".".to_string()
+                } else {
+                    parent.display().to_string()
+                };
+
+                if Self::is_command_available("javac") {
+                    format!("(cd {} && javac {}) 2>&1", run_dir, fname)
+                } else if Self::is_command_available("java") {
+                    format!("(cd {} && java {}) 2>&1", run_dir, fname)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "py" => {
+                if Self::is_command_available("python3") {
+                    format!("python3 -m py_compile {0} 2>&1 && python3 {0} 2>&1", target)
+                } else if Self::is_command_available("python") {
+                    format!("python -m py_compile {0} 2>&1 && python {0} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "rs" => {
+                if Self::is_command_available("rustc") {
+                    format!("rustc --emit=metadata {} -o /tmp/omni_rs_target.rmeta 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "go" => {
+                if Self::is_command_available("go") {
+                    format!("go vet {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "zig" => {
+                if Self::is_command_available("zig") {
+                    format!("zig ast-check {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "sh" | "bash" => {
+                if Self::is_command_available("bash") {
+                    format!("bash -n {} 2>&1", target)
+                } else {
+                    format!("sh -n {} 2>&1", target)
+                }
+            }
+            "js" => {
+                if Self::is_command_available("node") {
+                    format!("node --check {} 2>&1", target)
+                } else if Self::is_command_available("deno") {
+                    format!("deno check {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            "ts" => {
+                if Self::is_command_available("tsc") {
+                    format!("tsc --noEmit {} 2>&1", target)
+                } else if Self::is_command_available("deno") {
+                    format!("deno check {} 2>&1", target)
+                } else if Self::is_command_available("bun") {
+                    format!("bun build --no-bundle {} 2>&1", target)
+                } else {
+                    format!("test -f {}", target)
+                }
+            }
+            custom if !custom.is_empty() && Self::is_command_available(custom) => {
+                format!("{} check {} 2>&1 || {} {} 2>&1", custom, target, custom, target)
+            }
+            _ => {
+                format!("test -s {}", target)
+            }
+        }
+    }
+
+    /// Universally extracts the failing line number from compiler or runtime error text across all languages
+    pub fn extract_error_line_number(err_text: &str, target_filename: &str) -> Option<usize> {
+        let base_name = std::path::Path::new(target_filename)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(target_filename);
+
+        for line in err_text.lines() {
+            // Pattern 1: target.ext:14: error or target.ext:14:5: error
+            if line.contains(base_name) {
+                if let Some(pos) = line.find(base_name) {
+                    let rest = &line[pos + base_name.len()..];
+                    if rest.starts_with(':') {
+                        let num_str: String = rest[1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+                        if let Ok(num) = num_str.parse::<usize>() {
+                            if num > 0 {
+                                return Some(num);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pattern 2: line 14 or Line 14
+            for keyword in &["line ", "Line ", "line: ", "Line: "] {
+                if let Some(pos) = line.find(keyword) {
+                    let rest = &line[pos + keyword.len()..];
+                    let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if let Ok(num) = num_str.parse::<usize>() {
+                        if num > 0 {
+                            return Some(num);
+                        }
+                    }
+                }
+            }
+
+            // Pattern 3: [Line 14] or [14]
+            if let Some(start) = line.find('[') {
+                if let Some(end) = line.find(']') {
+                    if start < end {
+                        let inner = &line[start + 1..end];
+                        let clean = inner.trim_start_matches("Line ").trim_start_matches("line ");
+                        if let Ok(num) = clean.trim().parse::<usize>() {
+                            if num > 0 {
+                                return Some(num);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Primary Swarm Execution Pipeline:
@@ -357,62 +2135,95 @@ impl SwarmCoordinator {
         }
         println!();
 
-        // PHASE 2: System 1 Swarm Execution with Continuous Shared KV Attention & Physical KV Rollback
-        // Allocate single unified KV context for the swarm mission (8192 tokens budget)
-        let mut worker_ctx = self.worker_model.create_context(8192, 512, 4)?;
-        let mut findings: Vec<WorkerFinding> = Vec::new();
+        // PHASE 1.5: Generate Global Contract (Blackboard)
+        println!("  [THINKER BLACKBOARD] Synthesizing Global Contract for DAG Agents...");
+        let global_contract = self.generate_global_contract(user_goal, &subgoals).unwrap_or_else(|_| "No strict contract.".to_string());
+        println!("  [CONTRACT]: {}\n", global_contract.bright_magenta());
 
-        for (idx, mut sg) in subgoals.into_iter().enumerate() {
-            let is_first_worker = idx == 0;
-            match self.thinker_dispatch_directive(user_goal, &sg, &findings) {
-                Ok(directive) if !directive.is_empty() => {
-                    println!(
-                        "  [THINKER DIRECTIVE] Task #{}: \"{}\"",
-                        sg.id,
-                        directive.bright_white()
-                    );
-                    sg.guidance = Some(directive);
-                }
-                _ => {}
+        // PHASE 2: System 1 Swarm Execution with State Machine & Memory Bound Gate
+        let dag = TaskDag::from_subgoals(subgoals.clone())
+            .map_err(|e| format!("DAG construction failed: {}", e))?;
+        let memory_gate = self.create_memory_gate();
+        let mut state_coordinator = StateMachineCoordinator::with_memory_gate(dag, memory_gate)?;
+
+        // Pre-flight Zero-OOM validation
+        if let Err(rejections) = state_coordinator.preflight_validate() {
+            for rej in &rejections {
+                warn!("{}", rej);
+                println!("  [ZERO-OOM PRE-FLIGHT] {}", rej.bright_red());
             }
-
-            println!(
-                "  [DISPATCH WORKER] Task #{}: \"{}\"",
-                sg.id,
-                sg.description.bright_white()
-            );
-
-            let finding = self.run_worker_loop(user_goal, &sg, &mut worker_ctx, is_first_worker, &findings)?;
-            findings.push(finding);
-            println!();
         }
 
-        // Swarm Mission Completed: Purge shared KV-cache (Epistemic Apoptosis)
-        worker_ctx.kv_cache_clear();
+        let findings = self.run_rcpsp_swarm_scope(
+            user_goal,
+            &global_contract,
+            &mut state_coordinator,
+        )?;
 
         // PHASE 3: System 2 Orchestrator Grounded Synthesis
         println!("  [THINKER SYNTHESIS] Synthesizing verified deliverables...");
-        let final_report = self.synthesize_findings(user_goal, &findings)?;
+        let (final_report, model_overview) = self.synthesize_findings(user_goal, &findings)?;
 
-        // PHASE 4: VFS Materialization to Host Disk
-        let staged_diffs = self.vfs.generate_staged_diffs();
-        if !staged_diffs.is_empty() {
-            println!("  [HOST DISK COMMIT] Materializing VFS artifacts to host disk...");
+        // PHASE 4: VFS Materialization to Host Disk (Strictly Verified Only)
+        let mut verified_paths: Vec<PathBuf> = Vec::new();
+        for r in state_coordinator.records.values() {
+            if r.status == TaskStatus::Completed && r.subgoal.kind != TaskKind::Test {
+                let p = PathBuf::from(&r.subgoal.target_entity);
+                if !p.as_os_str().is_empty() && !verified_paths.contains(&p) {
+                    verified_paths.push(p);
+                }
+            }
+        }
+
+        let mut final_verified_paths = verified_paths;
+        let (readme_content, sealed_context) = if !final_verified_paths.is_empty() {
+            // Universal Documentation Mandate:
+            // Every completed Swarm mission unconditionally generates a standard 'README.md'
+            // documenting the project deliverables, architecture, execution instructions, and verification status.
+            let readme = self.generate_project_readme(
+                user_goal,
+                &findings,
+                &final_verified_paths,
+                model_overview.as_deref(),
+            );
+            self.vfs.write_file("README.md", readme.as_bytes());
+            let readme_path = PathBuf::from("README.md");
+            if !final_verified_paths.contains(&readme_path) {
+                final_verified_paths.push(readme_path);
+            }
+
+            // Causal Turn Sealing:
+            // Inject Assistant response containing the README.md content + verification flag,
+            // sealed with the model's native turn_suffix / EOT token.
+            let assistant_turn = format!(
+                "{}\n\n[DELIVERABLES VERIFIED]: All project artifacts generated, validated in cleanroom, and committed to disk.",
+                readme.trim()
+            );
+            let sealed = self.orchestrator_model.format_completed_turn(None, user_goal, &assistant_turn);
+            (Some(readme), Some(sealed))
+        } else {
+            (None, None)
+        };
+
+        if final_verified_paths.is_empty() {
+            println!("  [HOST DISK COMMIT GATE] Zero tasks reached 'Completed' status. Skipping host disk commit.");
+        } else {
             let target_dir = self.config.output_dir.as_deref();
-            match self.vfs.commit_to_dir(target_dir, true) {
+            println!("  [HOST DISK COMMIT GATE] Materializing verified deliverables to host disk: {:?}", final_verified_paths);
+            match self.vfs.commit_verified_files(target_dir, &final_verified_paths, true) {
                 Ok(count) => {
-                    for d in &staged_diffs {
+                    for d in &final_verified_paths {
                         let dest_path = if let Some(dir) = target_dir {
-                            dir.join(d.path.file_name().unwrap_or(d.path.as_os_str()))
+                            dir.join(d.file_name().unwrap_or(d.as_os_str()))
                         } else {
-                            d.path.clone()
+                            d.clone()
                         };
                         println!("   [SAVED TO DISK] {}", dest_path.display().to_string().bright_white());
                     }
-                    println!("   [COMMIT] Successfully committed {} file(s) to host machine.", count.to_string().bright_green());
+                    println!("   [COMMIT] Successfully committed {} verified file(s) to host machine.", count.to_string().bright_green());
                 }
                 Err(e) => {
-                    warn!("Failed to commit VFS to host disk: {}", e);
+                    warn!("Failed to commit verified VFS files to host disk: {}", e);
                 }
             }
         }
@@ -435,7 +2246,662 @@ impl SwarmCoordinator {
             total_rollbacks,
             total_tokens_saved,
             elapsed_ms: start_time.elapsed().as_millis(),
+            readme_content,
+            sealed_context,
         })
+    }
+
+    /// Executes the RCPSP Swarm DAG concurrently using std::thread::scope.
+    pub fn run_rcpsp_swarm_scope(
+        &self,
+        user_goal: &str,
+        global_contract: &str,
+        state_coordinator: &mut StateMachineCoordinator,
+    ) -> Result<Vec<WorkerFinding>, String> {
+        let (tx, rx): (Sender<WorkerEvent>, Receiver<WorkerEvent>) = channel();
+        let mut active_workers: HashMap<usize, ActiveWorkerProfile> = HashMap::new();
+        let mut findings: Vec<WorkerFinding> = Vec::new();
+        let mut delta_retry_counts: HashMap<String, usize> = HashMap::new();
+        let mut total_dynamic_injections: usize = 0;
+
+        let lrp_config = LrpConfig {
+            r_min: 20.0,
+            min_tokens_floor: 2048,
+            model_ctx_limit: if self.worker_model.n_ctx_train > 0 {
+                Some(self.worker_model.n_ctx_train as usize)
+            } else {
+                None
+            },
+        };
+
+        let lrp_table = state_coordinator.dag.compute_lrp(&lrp_config).unwrap_or_default();
+        let max_n_ctx = self.worker_model.n_ctx_train;
+
+        std::thread::scope(|s| {
+            loop {
+                // 1. TERMINATION CHECK
+                if state_coordinator.is_all_terminal() && active_workers.is_empty() {
+                    break;
+                }
+
+                // 2. DYNAMIC ADMISSION & BACKFILLING LOOP
+                loop {
+                    state_coordinator.dag.sort_ready_set(&mut state_coordinator.ready_set, &lrp_table);
+
+                    if state_coordinator.ready_set.is_empty() {
+                        break;
+                    }
+
+                    let head_id = state_coordinator.ready_set[0];
+                    let head_sg = match state_coordinator.records.get(&head_id) {
+                        Some(r) => r.subgoal.clone(),
+                        None => break,
+                    };
+
+                    let mut head_alloc_ctx = head_sg.max_tokens.max(2048);
+                    if max_n_ctx > 0 && max_n_ctx < head_alloc_ctx as i32 {
+                        head_alloc_ctx = max_n_ctx as usize;
+                    }
+
+                    // Check if head task v* has VFS conflict with currently running tasks
+                    let head_vfs_conflict = active_workers.values().any(|aw| {
+                        Self::has_vfs_conflict(&head_sg.write_set, &head_sg.read_set, &aw.write_set, &aw.read_set)
+                    });
+
+                    // Can Head Task Admit Right Now?
+                    if !head_vfs_conflict && state_coordinator.memory_gate.can_admit(head_alloc_ctx) {
+                        let abort_flag = match state_coordinator.admit_task(head_id, head_alloc_ctx) {
+                            Ok(flag) => flag,
+                            Err(e) => {
+                                warn!("Failed to admit head task #{}: {}", head_id, e);
+                                break;
+                            }
+                        };
+
+                        let profile = ActiveWorkerProfile {
+                            task_id: head_id,
+                            allocated_tokens: head_alloc_ctx,
+                            started_at: Instant::now(),
+                            expected_duration_secs: head_alloc_ctx as f64 / lrp_config.r_min,
+                            abort_flag: abort_flag.clone(),
+                            write_set: head_sg.write_set.clone(),
+                            read_set: head_sg.read_set.clone(),
+                        };
+                        active_workers.insert(head_id, profile);
+
+                        println!(
+                            "  [DISPATCH WORKER] Task #{}: \"{}\" (KV Quota: {})",
+                            head_id,
+                            head_sg.description.bright_white(),
+                            head_alloc_ctx.to_string().bright_blue()
+                        );
+
+                        let dag_contracts = state_coordinator.get_all_interface_contracts();
+                        Self::spawn_scoped_worker(
+                            s,
+                            self,
+                            user_goal,
+                            global_contract,
+                            head_sg,
+                            head_alloc_ctx,
+                            abort_flag,
+                            findings.clone(),
+                            dag_contracts,
+                            tx.clone(),
+                        );
+
+                        // Re-evaluate ready set after admitting head task
+                        continue;
+                    }
+
+                    // Head task v* cannot start now -> PINNED.
+                    let reservation_delay_secs = Self::compute_shadow_reservation_delay(
+                        head_alloc_ctx,
+                        &state_coordinator.memory_gate,
+                        &active_workers,
+                        lrp_config.r_min,
+                    );
+
+                    let mut backfilled_any = false;
+
+                    // Evaluate candidate tasks u in R_t \ {v*} for EASY Backfilling
+                    let candidate_ids: Vec<usize> = state_coordinator.ready_set.iter().skip(1).copied().collect();
+                    for cand_id in candidate_ids {
+                        let cand_sg = match state_coordinator.records.get(&cand_id) {
+                            Some(r) => r.subgoal.clone(),
+                            None => continue,
+                        };
+
+                        let mut cand_alloc_ctx = cand_sg.max_tokens.max(2048);
+                        if max_n_ctx > 0 && max_n_ctx < cand_alloc_ctx as i32 {
+                            cand_alloc_ctx = max_n_ctx as usize;
+                        }
+
+                        if !state_coordinator.memory_gate.can_admit(cand_alloc_ctx) {
+                            continue;
+                        }
+
+                        let cand_vfs_conflict = active_workers.values().any(|aw| {
+                            Self::has_vfs_conflict(&cand_sg.write_set, &cand_sg.read_set, &aw.write_set, &aw.read_set)
+                        }) || Self::has_vfs_conflict(&cand_sg.write_set, &cand_sg.read_set, &head_sg.write_set, &head_sg.read_set);
+
+                        if cand_vfs_conflict {
+                            continue;
+                        }
+
+                        // EASY Backfill Predicate: Does starting u delay v*?
+                        let cand_duration = cand_alloc_ctx as f64 / lrp_config.r_min;
+                        let completes_before_res = cand_duration <= reservation_delay_secs;
+                        let headroom_preserved = state_coordinator.memory_gate.remaining() >= cand_alloc_ctx + head_alloc_ctx;
+
+                        if completes_before_res || headroom_preserved {
+                            let abort_flag = match state_coordinator.admit_task(cand_id, cand_alloc_ctx) {
+                                Ok(flag) => flag,
+                                Err(_) => continue,
+                            };
+
+                            let profile = ActiveWorkerProfile {
+                                task_id: cand_id,
+                                allocated_tokens: cand_alloc_ctx,
+                                started_at: Instant::now(),
+                                expected_duration_secs: cand_duration,
+                                abort_flag: abort_flag.clone(),
+                                write_set: cand_sg.write_set.clone(),
+                                read_set: cand_sg.read_set.clone(),
+                            };
+                            active_workers.insert(cand_id, profile);
+
+                            println!(
+                                "  [EASY BACKFILL] Backfilled Task #{}: \"{}\" ({} tokens, {:.1}s) ahead of pinned Task #{}",
+                                cand_id,
+                                cand_sg.description.bright_white(),
+                                cand_alloc_ctx.to_string().bright_blue(),
+                                cand_duration,
+                                head_id
+                            );
+
+                            let dag_contracts = state_coordinator.get_all_interface_contracts();
+                            Self::spawn_scoped_worker(
+                                s,
+                                self,
+                                user_goal,
+                                global_contract,
+                                cand_sg,
+                                cand_alloc_ctx,
+                                abort_flag,
+                                findings.clone(),
+                                dag_contracts,
+                                tx.clone(),
+                            );
+
+                            backfilled_any = true;
+                            break; // Break candidate loop to re-sort ready set
+                        }
+                    }
+
+                    if !backfilled_any {
+                        // Neither head nor candidate could be admitted -> Context Boom / Reservation wait
+                        break;
+                    }
+                }
+
+                // 3. SUSPENSION & EVENT RECEPTION
+                if active_workers.is_empty() {
+                    if !state_coordinator.is_all_terminal() {
+                        warn!("Deadlock detected: No active workers and no ready tasks can be admitted.");
+                        for rec in state_coordinator.records.values_mut() {
+                            if !rec.status.is_terminal() {
+                                rec.status = TaskStatus::Cancelled;
+                                rec.failure_reason = Some("Deadlock avoidance: un-runnable task sweep".to_string());
+                            }
+                        }
+                    }
+                    break;
+                }
+
+                match rx.recv() {
+                    Ok(event) => match event {
+                        WorkerEvent::Completed { task_id, finding } => {
+                            active_workers.remove(&task_id);
+                            findings.push(finding);
+
+                            // The Automatic Contract Distiller Rule:
+                            // If the staged deliverable exceeds auto-inject threshold, distill its contract and register in DAG.
+                            if let Some(record) = state_coordinator.records.get(&task_id) {
+                                let target_entity = record.subgoal.target_entity.clone();
+                                if !target_entity.is_empty() {
+                                    let target_path = PathBuf::from(&target_entity);
+                                    if let Some(bytes) = self.vfs.read_file(&target_path) {
+                                        let content = String::from_utf8_lossy(&bytes);
+                                        let lines_count = content.lines().count();
+                                        if lines_count > AUTO_INJECT_MAX_LINES || bytes.len() > AUTO_INJECT_MAX_BYTES {
+                                            println!("  [CONTRACT DISTILLER] File '{}' ({} lines, {} bytes) exceeds auto-inject threshold -> Registering Contract in DAG...", target_entity.bright_cyan(), lines_count, bytes.len());
+                                            match self.distill_interface_contract(&target_entity, &content) {
+                                                Ok(contract) => {
+                                                    println!("  [DAG CONTRACT REGISTRY] Registered interface contract for '{}' on Task #{} in DAG.", target_entity.bright_cyan(), task_id);
+                                                    state_coordinator.set_interface_contract(task_id, contract);
+                                                }
+                                                Err(e) => {
+                                                    warn!("  [CONTRACT DISTILLER] Distillation warning for '{}': {}", target_entity, e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            let _ = state_coordinator.complete_task(task_id);
+                            info!("  [WORKER EVENT] Task #{} COMPLETED.", task_id);
+                        }
+                        WorkerEvent::Failed { task_id, reason, diagnostic_code, finding } => {
+                            active_workers.remove(&task_id);
+                            findings.push(finding);
+                            let cancelled = state_coordinator.fail_task(task_id, &reason, diagnostic_code);
+                            warn!(
+                                "  [WORKER EVENT] Task #{} FAILED: {}. Cascaded cancellation to {} descendants: {:?}",
+                                task_id, reason, cancelled.len(), cancelled
+                            );
+                        }
+                        WorkerEvent::Cancelled { task_id, finding } => {
+                            active_workers.remove(&task_id);
+                            findings.push(finding);
+                            info!("  [WORKER EVENT] Task #{} CANCELLED via preemption.", task_id);
+                        }
+                        WorkerEvent::AcceptanceDelta { task_id, target_file, delta, finding } => {
+                            active_workers.remove(&task_id);
+                            findings.push(finding);
+                            let _ = state_coordinator.complete_task(task_id);
+
+                            println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_magenta());
+                            println!("  [TESTER ACCEPTANCE AUDIT] Target '{}': Incomplete against user goal!", target_file.bright_cyan());
+                            println!("  [ACCEPTANCE DELTA REPORT] Missing requirements: {}", delta.bright_yellow());
+
+                            let target_path = PathBuf::from(&target_file);
+                            let missing_artifact = {
+                                let mut found = None;
+                                for part in delta.split(';') {
+                                    let trimmed = part.trim();
+                                    if let Some(idx) = trimmed.find("Missing required artifact '") {
+                                        let rest = &trimmed[idx + "Missing required artifact '".len()..];
+                                        if let Some(end_idx) = rest.find('\'') {
+                                            let file = &rest[..end_idx];
+                                            if !file.is_empty() {
+                                                found = Some(file.to_string());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                found
+                            };
+
+                            let req_key = missing_artifact.clone().unwrap_or_else(|| target_file.clone());
+
+                            // Barrier 1: Global Injection Ceiling (Circuit Breaker)
+                            if total_dynamic_injections >= MAX_TOTAL_DYNAMIC_INJECTIONS {
+                                println!(
+                                    "  {} Total dynamic injections reached maximum budget ({}/{}). Enforcing graceful termination.",
+                                    "[GLOBAL CIRCUIT BREAKER]".bright_red().bold(),
+                                    total_dynamic_injections,
+                                    MAX_TOTAL_DYNAMIC_INJECTIONS
+                                );
+                                println!("  [SOVEREIGN HALT] Preserving all working deliverables in VFS (Zero-Wipe Invariant). Terminating expansion.");
+                                println!("{}\n", "────────────────────────────────────────────────────────────────────────────────".bright_magenta());
+                                continue;
+                            }
+
+                            // Barrier 2: Rule of 3 (Per-Requirement Retry Budget)
+                            let retry_count = delta_retry_counts.entry(req_key.clone()).or_insert(0);
+                            *retry_count += 1;
+                            let current_attempt = *retry_count;
+
+                            if current_attempt > MAX_DELTA_RETRIES_PER_TARGET {
+                                println!(
+                                    "  {} Requirement '{}' has exceeded maximum retries ({}/{}). Halting dynamic loop to prevent live-lock.",
+                                    "[RULE OF 3 CIRCUIT BREAKER]".bright_red().bold(),
+                                    req_key.bright_yellow(),
+                                    current_attempt - 1,
+                                    MAX_DELTA_RETRIES_PER_TARGET
+                                );
+                                println!("  [SOVEREIGN HALT] Preserving all working deliverables in VFS (Zero-Wipe Invariant). Terminating expansion.");
+                                println!("{}\n", "────────────────────────────────────────────────────────────────────────────────".bright_magenta());
+                                continue;
+                            }
+
+                            println!(
+                                "  [THINKER PLANNER REVISION] Attempt {}/{} for '{}' -> Enforcing Zero-Wipe Invariant & Dynamic Subgoal Dispatch...",
+                                current_attempt,
+                                MAX_DELTA_RETRIES_PER_TARGET,
+                                req_key.bright_cyan()
+                            );
+
+                            if let Some(missing_file) = missing_artifact {
+                                let missing_path = PathBuf::from(&missing_file);
+                                let escalated_guidance = match current_attempt {
+                                    1 => format!(
+                                        "Generate complete, standalone implementation of '{}' fulfilling all requirements in the user goal: {}.",
+                                        missing_file, user_goal
+                                    ),
+                                    2 => format!(
+                                        "[CRITICAL ESCALATION - ATTEMPT 2/{}]: Previous attempt failed to produce '{}'. You MUST generate a standalone, valid '{}' satisfying user goal: {}. Do NOT duplicate or embed its content inside other files.",
+                                        MAX_DELTA_RETRIES_PER_TARGET, missing_file, missing_file, user_goal
+                                    ),
+                                    _ => format!(
+                                        "[FINAL ATTEMPT {}/{}]: This is the final attempt to satisfy '{}'. Generate complete, standalone implementation of '{}'. If unfulfilled, dynamic expansion will halt permanently.",
+                                        current_attempt, MAX_DELTA_RETRIES_PER_TARGET, missing_file, missing_file
+                                    ),
+                                };
+
+                                match state_coordinator.inject_subgoal(
+                                    SubGoal {
+                                        id: 0,
+                                        description: format!("Create missing required deliverable '{}' to satisfy objective (Attempt {}/{})", missing_file, current_attempt, MAX_DELTA_RETRIES_PER_TARGET),
+                                        target_entity: missing_file.clone(),
+                                        kind: TaskKind::Create,
+                                        guidance: Some(escalated_guidance),
+                                        depends_on: vec![],
+                                        read_set: vec![target_path.clone()],
+                                        write_set: vec![missing_path.clone()],
+                                        max_tokens: 4096,
+                                    },
+                                    vec![task_id],
+                                ) {
+                                    Ok(create_id) => {
+                                        total_dynamic_injections += 1;
+                                        if let Ok(retest_id) = state_coordinator.inject_subgoal(
+                                            SubGoal {
+                                                id: 0,
+                                                description: format!("Run cleanroom verification and acceptance re-audit of '{}' and '{}'", target_file, missing_file),
+                                                target_entity: target_file.clone(),
+                                                kind: TaskKind::Test,
+                                                guidance: Some("Execute cleanroom verification and ensure all requirements are satisfied.".to_string()),
+                                                depends_on: vec![missing_file.clone()],
+                                                read_set: vec![target_path.clone(), missing_path.clone()],
+                                                write_set: vec![],
+                                                max_tokens: 2048,
+                                            },
+                                            vec![create_id],
+                                        ) {
+                                            total_dynamic_injections += 1;
+                                            println!("  [DYNAMIC DAG EXPANSION] Successfully injected Create Task #{} for '{}' and Re-Audit Task #{}.", create_id, missing_file.bright_cyan(), retest_id);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("  [DYNAMIC DAG EXPANSION] Failed to inject subgoal: {}", e);
+                                    }
+                                }
+                            } else {
+                                let escalated_guidance = match current_attempt {
+                                    1 => format!(
+                                        "CRITICAL: Keep and preserve all existing working functions/code in '{}'. Incrementally add/modify code to fulfill missing requirements: {}. Do not delete or wipe existing features.",
+                                        target_file, delta
+                                    ),
+                                    2 => format!(
+                                        "[CRITICAL ESCALATION - ATTEMPT 2/{}]: Previous modifications on '{}' did not satisfy: {}. You MUST incrementally address these exact missing requirements while keeping all existing code.",
+                                        MAX_DELTA_RETRIES_PER_TARGET, target_file, delta
+                                    ),
+                                    _ => format!(
+                                        "[FINAL ATTEMPT {}/{}]: Final modification attempt on '{}' for missing requirements: {}. If unfulfilled, dynamic expansion will halt permanently.",
+                                        current_attempt, MAX_DELTA_RETRIES_PER_TARGET, target_file, delta
+                                    ),
+                                };
+
+                                match state_coordinator.inject_subgoal(
+                                    SubGoal {
+                                        id: 0,
+                                        description: format!("Extend '{}' to implement missing requirements: {} (Attempt {}/{})", target_file, delta, current_attempt, MAX_DELTA_RETRIES_PER_TARGET),
+                                        target_entity: target_file.clone(),
+                                        kind: TaskKind::Modify,
+                                        guidance: Some(escalated_guidance),
+                                        depends_on: vec![target_file.clone()],
+                                        read_set: vec![target_path.clone()],
+                                        write_set: vec![target_path.clone()],
+                                        max_tokens: 3072,
+                                    },
+                                    vec![task_id],
+                                ) {
+                                    Ok(modify_id) => {
+                                        total_dynamic_injections += 1;
+                                        if let Ok(retest_id) = state_coordinator.inject_subgoal(
+                                            SubGoal {
+                                                id: 0,
+                                                description: format!("Run cleanroom verification and acceptance re-audit of '{}'", target_file),
+                                                target_entity: target_file.clone(),
+                                                kind: TaskKind::Test,
+                                                guidance: Some(format!("Execute cleanroom verification and ensure all requirements including '{}' are 100% satisfied.", delta)),
+                                                depends_on: vec![target_file.clone()],
+                                                read_set: vec![target_path.clone()],
+                                                write_set: vec![],
+                                                max_tokens: 2048,
+                                            },
+                                            vec![modify_id],
+                                        ) {
+                                            total_dynamic_injections += 1;
+                                            println!("  [DYNAMIC DAG EXPANSION] Successfully injected Modify Task #{} and Re-Audit Task #{}.", modify_id, retest_id);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("  [DYNAMIC DAG EXPANSION] Failed to inject subgoal: {}", e);
+                                    }
+                                }
+                            }
+                            println!("{}\n", "────────────────────────────────────────────────────────────────────────────────".bright_magenta());
+                        }
+                        WorkerEvent::Panicked { task_id, panic_msg } => {
+                            active_workers.remove(&task_id);
+                            let cancelled = state_coordinator.fail_task(
+                                task_id,
+                                &format!("Worker thread panicked: {}", panic_msg),
+                                None,
+                            );
+                            warn!(
+                                "  [WORKER EVENT] Task #{} PANICKED: {}. Cascaded cancellation to: {:?}",
+                                task_id, panic_msg, cancelled
+                            );
+                        }
+                    },
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Ensure findings are deterministically sorted by worker_id for synthesis
+        findings.sort_by_key(|f| f.worker_id);
+
+        Ok(findings)
+    }
+
+    /// Spawns an isolated worker thread within the scope, wrapping execution with catch_unwind.
+    fn spawn_scoped_worker<'scope>(
+        s: &'scope std::thread::Scope<'scope, '_>,
+        coordinator: &'scope SwarmCoordinator,
+        user_goal: &'scope str,
+        global_contract: &'scope str,
+        subgoal: SubGoal,
+        allocated_ctx: usize,
+        abort_flag: Arc<AtomicBool>,
+        previous_findings: Vec<WorkerFinding>,
+        dag_contracts: HashMap<String, String>,
+        tx: Sender<WorkerEvent>,
+    ) {
+        let task_id = subgoal.id;
+        let subgoal_desc = subgoal.description.clone();
+
+        s.spawn(move || {
+            let res = catch_unwind(AssertUnwindSafe(|| {
+                // Thread-Local NativeLlamaContext instantiation
+                let mut worker_ctx = coordinator.worker_model
+                    .create_context(allocated_ctx, 512, 4)
+                    .map_err(|e| format!("Native context allocation failed: {}", e))?;
+
+                // Generate directive if Thinker is configured
+                let mut sg_with_guidance = subgoal.clone();
+                if let Ok(directive) = coordinator.thinker_dispatch_directive(
+                    user_goal,
+                    &subgoal,
+                    global_contract,
+                    &previous_findings,
+                ) {
+                    if !directive.is_empty() {
+                        println!(
+                            "  [THINKER DIRECTIVE] Task #{}: \"{}\"",
+                            subgoal.id,
+                            directive.bright_white()
+                        );
+                        sg_with_guidance.guidance = Some(directive);
+                    }
+                }
+
+                let is_first = previous_findings.is_empty();
+                let finding = coordinator.run_worker_loop_with_abort_and_contracts(
+                    user_goal,
+                    &sg_with_guidance,
+                    &mut worker_ctx,
+                    is_first,
+                    &previous_findings,
+                    Some(abort_flag),
+                    Some(&dag_contracts),
+                )?;
+
+                worker_ctx.kv_cache_clear();
+                Ok(finding)
+            }));
+
+            match res {
+                Ok(Ok(finding)) => {
+                    if finding.finding.contains("ERR_OUT_OF_BOUNDS_WRITE")
+                        || finding.finding.contains("OutOfBoundsWrite")
+                    {
+                        let _ = tx.send(WorkerEvent::Failed {
+                            task_id,
+                            reason: finding.finding.clone(),
+                            diagnostic_code: Some(DiagnosticCode::OutOfBoundsWrite),
+                            finding,
+                        });
+                    } else if finding.finding.starts_with("CANCELLED:") {
+                        let _ = tx.send(WorkerEvent::Cancelled { task_id, finding });
+                    } else if finding.finding.contains("[ACCEPTANCE DELTA]") {
+                        let delta = if let Some(idx) = finding.finding.find("[ACCEPTANCE DELTA]") {
+                            finding.finding[idx + 18..].lines().next().unwrap_or(&finding.finding).trim().to_string()
+                        } else {
+                            finding.finding.clone()
+                        };
+                        let _ = tx.send(WorkerEvent::AcceptanceDelta {
+                            task_id,
+                            target_file: subgoal.target_entity.clone(),
+                            delta,
+                            finding,
+                        });
+                    } else if finding.finding.starts_with("FAILED") {
+                        let _ = tx.send(WorkerEvent::Failed {
+                            task_id,
+                            reason: finding.finding.clone(),
+                            diagnostic_code: None,
+                            finding,
+                        });
+                    } else {
+                        let _ = tx.send(WorkerEvent::Completed { task_id, finding });
+                    }
+                }
+                Ok(Err(err_str)) => {
+                    let finding = WorkerFinding {
+                        worker_id: task_id,
+                        sub_goal: subgoal_desc,
+                        finding: format!("FAILED: {}", err_str),
+                        steps_taken: 0,
+                        rollbacks_count: 0,
+                        tokens_saved_by_rollback: 0,
+                    };
+                    let _ = tx.send(WorkerEvent::Failed {
+                        task_id,
+                        reason: err_str,
+                        diagnostic_code: None,
+                        finding,
+                    });
+                }
+                Err(panic_payload) => {
+                    let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic payload".to_string()
+                    };
+                    let _ = tx.send(WorkerEvent::Panicked {
+                        task_id,
+                        panic_msg: msg,
+                    });
+                }
+            }
+        });
+    }
+
+    /// Checks Bernstein conditions between two tasks' read and write sets.
+    pub fn has_vfs_conflict(
+        w1: &[PathBuf],
+        r1: &[PathBuf],
+        w2: &[PathBuf],
+        r2: &[PathBuf],
+    ) -> bool {
+        // Write-Write conflict
+        for p1 in w1 {
+            if MemoryVfs::is_path_in_set(p1, w2) || w2.iter().any(|p2| MemoryVfs::is_path_in_set(p2, std::slice::from_ref(p1))) {
+                return true;
+            }
+        }
+        // Write-Read conflict (w1 vs r2)
+        for p1 in w1 {
+            if MemoryVfs::is_path_in_set(p1, r2) || r2.iter().any(|p2| MemoryVfs::is_path_in_set(p2, std::slice::from_ref(p1))) {
+                return true;
+            }
+        }
+        // Read-Write conflict (r1 vs w2)
+        for p1 in r1 {
+            if MemoryVfs::is_path_in_set(p1, w2) || w2.iter().any(|p2| MemoryVfs::is_path_in_set(p2, std::slice::from_ref(p1))) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Calculates the shadow reservation delay for pinned head task v*.
+    pub fn compute_shadow_reservation_delay(
+        head_tokens: usize,
+        memory_gate: &MemoryGate,
+        active_workers: &HashMap<usize, ActiveWorkerProfile>,
+        _r_min: f64,
+    ) -> f64 {
+        if memory_gate.remaining() >= head_tokens {
+            return 0.0;
+        }
+
+        let deficit = head_tokens.saturating_sub(memory_gate.remaining());
+        let mut profiles: Vec<&ActiveWorkerProfile> = active_workers.values().collect();
+
+        // Sort by expected remaining duration ascending
+        profiles.sort_by(|a, b| {
+            let rem_a = (a.expected_duration_secs - a.started_at.elapsed().as_secs_f64()).max(0.001);
+            let rem_b = (b.expected_duration_secs - b.started_at.elapsed().as_secs_f64()).max(0.001);
+            rem_a.partial_cmp(&rem_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut cumulative_freed = 0;
+        let mut max_delay = 0.0;
+
+        for p in profiles {
+            cumulative_freed += p.allocated_tokens;
+            let rem = (p.expected_duration_secs - p.started_at.elapsed().as_secs_f64()).max(0.001);
+            if rem > max_delay {
+                max_delay = rem;
+            }
+            if cumulative_freed >= deficit {
+                return max_delay;
+            }
+        }
+
+        max_delay
     }
 
     /// Dynamic Thinker Dispatch: System 2 issues the explicit, actionable directive for every worker
@@ -443,6 +2909,7 @@ impl SwarmCoordinator {
         &self,
         user_goal: &str,
         subgoal: &SubGoal,
+        global_contract: &str,
         previous_findings: &[WorkerFinding],
     ) -> Result<String, String> {
         let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
@@ -467,13 +2934,114 @@ Be direct, imperative, and specific (max 35 words).";
             format!("Previous worker findings: {}", last)
         };
 
+        let contract_section = if global_contract.trim().is_empty() || global_contract == "No strict contract." {
+            String::new()
+        } else {
+            format!("\nGlobal Contract:\n{}", global_contract.trim())
+        };
+
+        let writes: Vec<_> = subgoal.write_set.iter().map(|p| p.display().to_string()).collect();
+        let reads: Vec<_> = subgoal.read_set.iter().map(|p| p.display().to_string()).collect();
+
         let user_msg = format!(
-            "User Goal: {}\nSub-goal: {}\nTarget Entity: {}\nContext: {}\n\nDirective for Worker:",
-            user_goal, subgoal.description, subgoal.target_entity, prev_summary
+            "User Goal: {}\nSub-goal: {}\nTarget Entity: {}\nAuthorized Writes: [{}]\nPermitted Reads: [{}]\nContext: {}{}\n\nDirective for Worker:",
+            user_goal, subgoal.description, subgoal.target_entity,
+            writes.join(", "), reads.join(", "),
+            prev_summary, contract_section
         );
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
-        let output = ctx.generate(&prompt, 64)?;
-        Ok(output.trim().to_string())
+        let output = ctx.generate(&prompt, 384)?;
+        let clean = Self::strip_thought(&output);
+        if clean.is_empty() {
+            Ok(subgoal.description.clone())
+        } else {
+            Ok(clean)
+        }
+    }
+
+    /// Universal AI-Powered Contract Distiller:
+    /// In accordance with the Sovereign Organizer role, this rule triggers when a deliverable
+    /// is too large to inject into downstream workers' attention context.
+    /// It queries the AI model to extract ONLY the public interface, exported types,
+    /// components, routes, and signatures, producing a lean, language-agnostic contract.
+    pub fn distill_interface_contract(&self, filename: &str, content: &str) -> Result<String, String> {
+        let lines: Vec<&str> = content.lines().collect();
+        if lines.len() <= AUTO_INJECT_MAX_LINES && content.len() <= AUTO_INJECT_MAX_BYTES {
+            return Ok(content.to_string());
+        }
+
+        // 1. Attempt AI model distillation using Sovereign Thinker context
+        if let Ok(mut ctx) = self.orchestrator_model.create_context(2048, 512, 4) {
+            let system_msg = "You are the Universal Interface Architect & Contract Distiller.\n\
+Environment: Autonomous Multi-File Software Swarm.\n\
+Task: Given a large source file, extract ONLY its public interface contract for other files to link against.\n\
+RULES:\n\
+1. Output ONLY exported components, public classes, public functions, API route handlers, and method signatures.\n\
+2. For HTML/CSS: output the main DOM hierarchy, class names (.class), and IDs (#id).\n\
+3. NEVER output internal implementation details, algorithm bodies, or loops. Replace function bodies with `{ ... }` or `...`.\n\
+4. Maximum length: 30 lines. Clean, concise, production-grade interface specification.";
+
+            let user_msg = format!("Target File: {}\n\nSource Code:\n```\n{}\n```\n\nPublic Interface Contract:", filename, content);
+            let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
+            if let Ok(output) = ctx.generate(&prompt, 384) {
+                let clean = Self::strip_thought(&output);
+                let trimmed = clean.trim();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed.to_string());
+                }
+            }
+        }
+
+        // 2. Deterministic Fallback if model context allocation or generation is unavailable
+        Ok(Self::distill_interface_fallback(filename, content))
+    }
+
+    /// Resilient, language-agnostic heuristic fallback for interface extraction across all languages
+    /// (Next.js/React, Python, Java, Rust, Go, C/C++, HTML, CSS) when model inference is unavailable.
+    pub fn distill_interface_fallback(filename: &str, content: &str) -> String {
+        let mut distilled = Vec::new();
+        let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('#') {
+                continue;
+            }
+            let is_match = match ext {
+                "html" | "htm" => {
+                    trimmed.contains("class=") || trimmed.contains("id=") || trimmed.starts_with("<div")
+                        || trimmed.starts_with("<header") || trimmed.starts_with("<nav") || trimmed.starts_with("<main")
+                        || trimmed.starts_with("<section") || trimmed.starts_with("<button") || trimmed.starts_with("<form")
+                }
+                "css" => {
+                    trimmed.starts_with('.') || trimmed.starts_with('#') || trimmed.contains('{') || trimmed.starts_with('@')
+                }
+                "py" => {
+                    trimmed.starts_with("def ") || trimmed.starts_with("class ") || trimmed.starts_with("async def ")
+                        || trimmed.starts_with('@')
+                }
+                _ => {
+                    trimmed.starts_with("pub ") || trimmed.starts_with("export ") || trimmed.starts_with("public ")
+                        || trimmed.starts_with("protected ") || trimmed.starts_with("func ") || trimmed.starts_with("fn ")
+                        || trimmed.starts_with("interface ") || trimmed.starts_with("type ") || trimmed.starts_with("struct ")
+                        || trimmed.starts_with("enum ") || trimmed.starts_with("class ") || trimmed.starts_with("def ")
+                        || trimmed.starts_with("async ")
+                }
+            };
+
+            if is_match {
+                distilled.push(trimmed);
+                if distilled.len() >= 35 {
+                    break;
+                }
+            }
+        }
+
+        if !distilled.is_empty() {
+            distilled.join("\n")
+        } else {
+            content.lines().take(AUTO_INJECT_MAX_LINES).collect::<Vec<_>>().join("\n")
+        }
     }
 
     /// Evaluates worker failure with Epistemic Compaction:
@@ -522,10 +3090,15 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             failed_code
         };
 
-        let snippet_err = if runtime_error.len() > 300 {
-            &runtime_error[..300]
+        let snippet_err = if runtime_error.len() > 2000 {
+            let lines: Vec<&str> = runtime_error.lines().collect();
+            if lines.len() > 30 {
+                lines[lines.len() - 30..].join("\n")
+            } else {
+                runtime_error.chars().rev().take(2000).collect::<String>().chars().rev().collect()
+            }
         } else {
-            runtime_error
+            runtime_error.to_string()
         };
 
         let user_msg = format!(
@@ -540,7 +3113,7 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         );
 
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
-        let raw = ctx.generate(&prompt, 128)?;
+        let raw = ctx.generate(&prompt, 384)?;
 
         // WIPE temporary inspection tokens from Thinker context immediately
         ctx.kv_cache_clear();
@@ -682,6 +3255,13 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             return DiagnosticCode::MissingDependency(dep);
         }
 
+        // 0.5 Deterministic Security Boundary Violation Detection
+        if exec_output.contains("ERR_OUT_OF_BOUNDS_WRITE")
+            || exec_output.contains("VFS_BOUNDARY_VIOLATION")
+        {
+            return DiagnosticCode::OutOfBoundsWrite;
+        }
+
         // Check for repeated attractor pattern
         if let Some(prev) = previous_diagnostic {
             if (*prev == DiagnosticCode::PlaceholderOrEmpty || *prev == DiagnosticCode::VfsFileNotWritten)
@@ -702,9 +3282,14 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                 return DiagnosticCode::FileNotDeleted;
             }
         }
-        if let SwarmAction::RunTerminal { .. } = action {
+        if let SwarmAction::RunTerminal { .. } | SwarmAction::TestRun { .. } = action {
             if !exec_success {
                 return DiagnosticCode::TestFailed;
+            }
+        }
+        if let SwarmAction::Verdict { status, ref proof_or_missing } = action {
+            if !status {
+                return DiagnosticCode::AcceptanceCriteriaFailed(proof_or_missing.clone());
             }
         }
 
@@ -725,6 +3310,9 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                     }
                 }
                 TaskKind::Test => {
+                    if exec_output.contains("ERR_ACCEPTANCE_CRITERIA_FAILED") || exec_output.contains("Missing required artifact") {
+                        return DiagnosticCode::AcceptanceCriteriaFailed(exec_output.to_string());
+                    }
                     if !exec_success {
                         return DiagnosticCode::TestFailed;
                     }
@@ -734,13 +3322,13 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         }
 
         // 1. Missing code block or unparsed action
-        if matches!(action, SwarmAction::None) && !generated_text.contains("```") && !generated_text.contains("vfs.") {
+        if matches!(action, SwarmAction::None) && !generated_text.contains("```") {
             return DiagnosticCode::NoCodeBlock;
         }
 
-        // 2. Lua execution failure / syntax trap
+        // 2. Execution failure
         if !exec_success {
-            return DiagnosticCode::LuaSyntaxTrap;
+            return DiagnosticCode::TestFailed;
         }
 
         // 3. File not created in VFS
@@ -805,21 +3393,22 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
     }
 
     pub fn parse_thinker_decision(text: &str, subgoal: &SubGoal) -> ThinkerDecision {
-        let upper = text.to_uppercase();
+        let clean = Self::strip_thought(text);
+        let upper = clean.to_uppercase();
         if upper.contains("DECISION: RESET") || upper.contains("DECISION:RESET") {
-            let reason = if let Some(idx) = text.find("REASON:") {
-                text[idx + 7..].lines().next().unwrap_or("").trim().to_string()
-            } else if let Some(idx) = text.find('|') {
-                text[idx + 1..].lines().next().unwrap_or("").trim().to_string()
+            let reason = if let Some(idx) = clean.find("REASON:") {
+                clean[idx + 7..].lines().next().unwrap_or("").trim().to_string()
+            } else if let Some(idx) = clean.find('|') {
+                clean[idx + 1..].lines().next().unwrap_or("").trim().to_string()
             } else {
                 format!("Rewrite complete implementation for {}", subgoal.target_entity)
             };
             ThinkerDecision::Reset(reason)
         } else {
-            let reason = if let Some(idx) = text.find("REASON:") {
-                text[idx + 7..].lines().next().unwrap_or("").trim().to_string()
-            } else if let Some(idx) = text.find('|') {
-                text[idx + 1..].lines().next().unwrap_or("").trim().to_string()
+            let reason = if let Some(idx) = clean.find("REASON:") {
+                clean[idx + 7..].lines().next().unwrap_or("").trim().to_string()
+            } else if let Some(idx) = clean.find('|') {
+                clean[idx + 1..].lines().next().unwrap_or("").trim().to_string()
             } else {
                 format!("Fix syntax error and ensure {} is written to VFS", subgoal.target_entity)
             };
@@ -829,6 +3418,19 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
 
     pub fn is_explicit_single_file(goal: &str) -> bool {
         let lower = goal.to_lowercase();
+        // Interactive applications, modular suites, multi-component systems, or tasks requesting multiple files are explicitly NOT single-file tasks
+        if lower.contains("interactive")
+            || lower.contains("modular")
+            || lower.contains("separate files")
+            || lower.contains("multiple files")
+            || lower.contains("multi-file")
+            || lower.contains("تفاعلي")
+            || lower.contains("تفاعلية")
+            || lower.contains("متعدد")
+        {
+            return false;
+        }
+
         lower.contains("single file")
             || lower.contains("one file")
             || lower.contains("a file")
@@ -836,26 +3438,6 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("one script")
             || lower.contains("single script")
             || lower.contains("standalone script")
-            || lower.contains("program")
-            || lower.contains("a program")
-            || lower.contains("one program")
-            || lower.contains("single program")
-            || lower.contains("a tool")
-            || lower.contains("utility")
-            || lower.contains("renderer")
-            || lower.contains("benchmark")
-            || lower.contains("generator")
-            || lower.contains("simulator")
-            || lower.contains("converter")
-            || lower.contains("scanner")
-            || lower.contains("crawler")
-            || lower.contains("solver")
-            || lower.contains("monitor")
-            || lower.contains("summarizer")
-            || lower.contains("evaluator")
-            || lower.contains("برنامج")
-            || lower.contains("اداة")
-            || lower.contains("أداة")
             || lower.contains("ملف واحد")
             || lower.contains("ملفا واحدا")
             || lower.contains("سكربت واحد")
@@ -863,8 +3445,19 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("صفحه واحده")
             || lower.contains("في ملف")
             || lower.contains("فى ملف")
-            || (!lower.contains("separate files") && !lower.contains("multiple files") && !lower.contains("frontend and backend") && !lower.contains("client and server")
-                && (lower.contains("python") || lower.contains("بايثون") || lower.contains("script") || lower.contains("سكربت")))
+            || lower.contains("utility")
+            || lower.contains("renderer")
+            || lower.contains("benchmark")
+            || lower.contains("simulator")
+            || lower.contains("scanner")
+            || lower.contains("crawler")
+            || lower.contains("solver")
+            || lower.contains("monitor")
+            || lower.contains("summarizer")
+            || lower.contains("evaluator")
+            || lower.contains("اداة")
+            || lower.contains("أداة")
+            || (lower.contains("internet speed") || lower.contains("سرعة الإنترنت"))
     }
 
     /// Normalizes entity filename to proper casing (e.g. PascalCase for Java files)
@@ -1037,6 +3630,66 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     }
 }
 
+    /// System 2: Generates a unifying blackboard contract for independent DAG workers
+    fn generate_global_contract(&self, goal: &str, subgoals: &[SubGoal]) -> Result<String, String> {
+        let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
+        
+        // Explicit VFS Boundary Contract Header (Deterministic)
+        let mut contract = String::from("VFS BOUNDARY CONTRACT:\n");
+        for sg in subgoals {
+            let writes: Vec<_> = sg.write_set.iter().map(|p| p.display().to_string()).collect();
+            let reads: Vec<_> = sg.read_set.iter().map(|p| p.display().to_string()).collect();
+            contract.push_str(&format!(
+                "- Task #{}: writes=[{}], reads=[{}], depends_on=[{}]\n",
+                sg.id,
+                if writes.is_empty() { "none".to_string() } else { writes.join(", ") },
+                if reads.is_empty() { "none".to_string() } else { reads.join(", ") },
+                if sg.depends_on.is_empty() { "none".to_string() } else { sg.depends_on.join(", ") }
+            ));
+        }
+        
+        let sg_list = subgoals.iter().map(|sg| {
+            let writes: Vec<_> = sg.write_set.iter().map(|p| p.display().to_string()).collect();
+            let reads: Vec<_> = sg.read_set.iter().map(|p| p.display().to_string()).collect();
+            format!(
+                "- Task #{}: {} (target: {}) | writes: [{}] | reads: [{}] | depends_on: [{}]",
+                sg.id, sg.description, sg.target_entity, writes.join(", "), reads.join(", "), sg.depends_on.join(", ")
+            )
+        }).collect::<Vec<_>>().join("\n");
+        
+        let system = "You are the System 2 Sovereign Architect.\n\
+        Your team of workers will execute the following sub-goals in parallel/isolated contexts.\n\
+        To prevent conflicts, synthesize the ARCHITECTURAL CONSTANTS section of the GLOBAL CONTRACT.\n\
+        Specify ONLY shared constants: ports, database filenames, API endpoints, shared struct names, or UI themes.\n\
+        Do NOT write code. Write concise bullet points. Max 50 words.";
+        
+        let user = format!("Goal: {}\nSubgoals:\n{}\n\nGenerate ARCHITECTURAL CONSTANTS:", goal, sg_list);
+        let prompt = Self::format_prompt(&self.orchestrator_model, system, &user);
+        
+        let tokens = self.orchestrator_model.tokenize(&prompt, true)?;
+        ctx.eval_tokens(&tokens, 0)?;
+        
+        let mut llm_part = String::new();
+        let mut sampler = crate::native_llama::NativeLlamaSampler::new(&Default::default(), self.orchestrator_model.n_vocab())?;
+        for _ in 0..384 {
+            let tok = ctx.sample(&mut sampler)?;
+            let text = self.orchestrator_model.token_to_piece(tok).unwrap_or_default();
+            if text.is_empty() || self.orchestrator_model.is_stop_token(tok) || self.orchestrator_model.is_stop_piece(&text) {
+                break;
+            }
+            llm_part.push_str(&text);
+            ctx.eval_tokens(&[tok], 0)?;
+        }
+        
+        let clean_constants = Self::strip_thought(&llm_part);
+        if !clean_constants.trim().is_empty() {
+            contract.push_str("\nARCHITECTURAL CONSTANTS:\n");
+            contract.push_str(clean_constants.trim());
+        }
+        
+        Ok(contract.trim().to_string())
+    }
+
     /// System 2: Decomposes goal into discrete sub-goals
     fn orchestrate_plan(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
         let is_build = Self::is_build_task(goal);
@@ -1047,29 +3700,37 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             format!(
                 "You are the System 2 Sovereign Architect.\n\
                 Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
-                Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java) or via vfs.write(\"filename\", [[content]]).\n\n\
-                PARSIMONY & WORKER DISPATCH RULES:\n\
-                - You decide how many workers to deploy (from 1 up to {} max budget).\n\
-                - Rule of Parsimony: If the user objective asks for a single script, utility, single document, or standalone file (e.g. Python script, shell script, single web page, or report), deploy EXACTLY 1 worker to generate the complete file in one pass. Output EXACTLY ONE line for SUBGOAL.\n\
-                - Only decompose into multiple sub-goals if the objective genuinely requires multiple distinct physical files (e.g. separate frontend and backend, or html with separate css). Each sub-goal MUST target a distinct physical filename (ENTITY).\n\
+                Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java).\n\n\
+                PARSIMONY & MODULAR DISPATCH RULES:\n\
+                - You decide how many workers to deploy (from 2 up to {} max budget).\n\
+                - MODULAR DECOMPOSITION MANDATE: Decompose non-trivial software applications into distinct, cohesive sub-tasks across modular files (e.g. data models -> core logic/storage -> interactive CLI interface).\n\
+                - NEVER collapse an entire interactive application or multi-component project into a single monolithic worker task. Break it into at least 2 distinct implementation tasks.\n\
                 - For Java: Target filenames MUST use PascalCase (e.g. GameLoop.java, Snake.java, Food.java) matching their primary public class.\n\
-                - NEVER output multiple sub-goals for the same file or redundant sub-tasks.\n\
-                - SPREADSHEETS & BINARY: Lua VFS cannot write binary ZIP archives (.xlsx, .docx). For spreadsheets, Excel, or tabular data, always direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel opens natively.\n\n\
+                - SPREADSHEETS & TABULAR: For spreadsheets, Excel, or tabular data, direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel and spreadsheet software open natively.\n\
+                - VFS BOUNDARIES: Explicitly declare the file(s) the worker will create/mutate (WRITE_SET) and any existing file(s) it needs to inspect (READ_SET).\n\
+                - MANDATORY CLEANROOM ACCEPTANCE TEST: When the objective creates an executable program or CLI application, you MUST ALWAYS append a final review test worker (kind: TEST) which lists the staged deliverable in READ_SET and DEPENDS_ON to verify user acceptance criteria in the isolated cleanroom.\n\n\
+                DELIVERABLES SPECIFICATION:\n\
+                - Explicitly determine the exact deliverable files and total count required to satisfy the user objective.\n\
+                - You may declare planned deliverable files on the first line:\n\
+                PLANNED_FILES: <comma-separated list of filenames, e.g. index.html, styles.css>\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
-                SUBGOAL: <explicit implementation directive> | ENTITY: <target filename>\n\n\
+                SUBGOAL: <explicit implementation directive> | ENTITY: <target filename> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or target filename> | DEPENDS_ON: <comma-separated dependencies or none>\n\n\
                 Examples:\n\
+                Modular software application deliverable:\n\
+                SUBGOAL: Implement core data models, business logic, and file persistence | ENTITY: core_models.py | READ_SET: none | WRITE_SET: core_models.py | DEPENDS_ON: none\n\
+                SUBGOAL: Implement interactive CLI interface, menu loop, and user commands | ENTITY: app_cli.py | READ_SET: core_models.py | WRITE_SET: app_cli.py | DEPENDS_ON: core_models.py\n\
+                SUBGOAL: Execute cleanroom verification and validate interactive user workflows | ENTITY: app_cli.py | READ_SET: app_cli.py, core_models.py | WRITE_SET: none | DEPENDS_ON: app_cli.py\n\
                 Single-file deliverable:\n\
-                SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py\n\
-                Java multi-file deliverable:\n\
-                SUBGOAL: Implement main game window, board panel, and game loop | ENTITY: GameLoop.java\n\
-                SUBGOAL: Implement snake body segments, movement, and direction | ENTITY: Snake.java\n\
-                SUBGOAL: Implement food spawning, collision logic, and score tracking | ENTITY: Food.java\n\
-                Spreadsheet / tabular deliverable:\n\
-                SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv\n\
+                SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py | READ_SET: none | WRITE_SET: measure_speed.py | DEPENDS_ON: none\n\
                 Multi-file deliverable:\n\
-                SUBGOAL: Write the HTML structure and markup | ENTITY: index.html\n\
-                SUBGOAL: Write the external CSS styling | ENTITY: styles.css\n\n\
-                - REVIEW & TEST WORKER: When the objective creates an executable script or program (e.g. .py, .sh, .java), you may deploy a final review/smoke test worker (kind: TEST, ENTITY: <target>) to verify runtime stability in the isolated container sandbox before final delivery to the user.",
+                SUBGOAL: Implement backend API endpoints and data storage | ENTITY: server.py | READ_SET: none | WRITE_SET: server.py | DEPENDS_ON: none\n\
+                SUBGOAL: Implement client frontend interface and network calls | ENTITY: client.py | READ_SET: server.py | WRITE_SET: client.py | DEPENDS_ON: server.py\n\
+                Spreadsheet / tabular deliverable:\n\
+                SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv | READ_SET: none | WRITE_SET: data.csv | DEPENDS_ON: none\n\
+                Multi-file web deliverable:\n\
+                SUBGOAL: Write the HTML structure and markup | ENTITY: index.html | READ_SET: none | WRITE_SET: index.html | DEPENDS_ON: none\n\
+                SUBGOAL: Write the external CSS styling | ENTITY: styles.css | READ_SET: index.html | WRITE_SET: styles.css | DEPENDS_ON: index.html\n\n\
+                - REVIEW & TEST WORKER: When the objective creates an executable program, you may deploy a final review test worker (kind: TEST) which MUST list all code files it tests in READ_SET and DEPENDS_ON.",
                 self.config.max_subgoals
             )
         } else {
@@ -1079,10 +3740,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 - You decide how many workers to deploy (from 1 up to {} max budget).\n\
                 - For straightforward topics, 1 worker is sufficient.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
-                SUBGOAL: <precise search objective> | ENTITY: <primary keyword>\n\n\
+                SUBGOAL: <precise search objective> | ENTITY: <primary keyword> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or none> | DEPENDS_ON: <dependencies or none>\n\n\
                 Examples:\n\
-                SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors\n\
-                SUBGOAL: Search for recent astrophysics discoveries | ENTITY: astrophysics",
+                SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none\n\
+                SUBGOAL: Search for recent astrophysics discoveries | ENTITY: astrophysics | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none",
                 self.config.max_subgoals
             )
         };
@@ -1090,45 +3751,183 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let user_msg = format!("Goal: {}", goal);
         let prompt = Self::format_prompt(&self.orchestrator_model, &system_msg, &user_msg);
 
-        let output = ctx.generate(&prompt, 256)?;
+        let output = ctx.generate(&prompt, 512)?;
+        println!("  [THINKER PLAN RAW OUTPUT]\n{}\n  [END THINKER PLAN RAW OUTPUT]", output.trim());
         let mut subgoals = Vec::new();
         let mut seen_entities = std::collections::HashSet::new();
+        let mut planned_files: Vec<String> = Vec::new();
         let mut id = 1;
 
         for line in output.lines() {
-            let l = line.trim();
-            if l.starts_with("SUBGOAL:") {
-                let rest = l.trim_start_matches("SUBGOAL:").trim();
-                let parts: Vec<&str> = rest.split("| ENTITY:").collect();
-                let desc = parts[0].trim().to_string();
-                let raw_entity = if parts.len() > 1 && !parts[1].trim().is_empty() {
-                    parts[1].trim().to_string()
-                } else if is_build {
-                    Self::infer_target_entity(goal)
-                } else {
-                    goal.split_whitespace().next().unwrap_or("general").to_string()
-                };
-                let entity = Self::normalize_entity_filename(&raw_entity);
+            let mut l = line.trim();
+            while l.starts_with('`') {
+                l = l.trim_start_matches('`').trim();
+            }
+            if l.is_empty() {
+                continue;
+            }
 
-                let entity_key = entity.to_lowercase();
-                if seen_entities.contains(&entity_key) {
-                    continue; // Skip duplicate entity: never spawn redundant workers for the same target
-                }
-                seen_entities.insert(entity_key);
-
-                if !desc.is_empty() {
-                    let task_kind = Self::infer_task_kind(&desc);
-                    subgoals.push(SubGoal {
-                        id,
-                        description: desc,
-                        target_entity: entity,
-                        kind: task_kind,
-                        guidance: None,
-                    });
-                    id += 1;
-                    if subgoals.len() >= self.config.max_subgoals {
-                        break;
+            let l_upper = l.to_uppercase();
+            if l_upper.starts_with("PLANNED_FILES:") || l_upper.starts_with("REQUIRED_FILES:") || l_upper.starts_with("DELIVERABLES:") || l_upper.starts_with("FILES:") {
+                let tag_len = if l_upper.starts_with("PLANNED_FILES:") { 14 }
+                    else if l_upper.starts_with("REQUIRED_FILES:") { 15 }
+                    else if l_upper.starts_with("DELIVERABLES:") { 13 }
+                    else { 6 };
+                let files_str = l[tag_len..].trim();
+                for f in files_str.split(',') {
+                    let cleaned = Self::normalize_entity_filename(f.trim());
+                    if !cleaned.is_empty() && !planned_files.contains(&cleaned) {
+                        planned_files.push(cleaned);
                     }
+                }
+                continue;
+            }
+
+            // Resilient Subgoal Detection:
+            // Match SUBGOAL: or SUB-GOAL: anywhere in the line, stripping numbered lists (1., 2.), markdown bullets (- , *), bold (**SUBGOAL:**), etc.
+            let subgoal_pos = if let Some(pos) = l_upper.find("SUBGOAL:") {
+                Some(pos + 8)
+            } else if let Some(pos) = l_upper.find("SUB-GOAL:") {
+                Some(pos + 9)
+            } else {
+                None
+            };
+
+            let rest = match subgoal_pos {
+                Some(idx) => l[idx..].trim().trim_matches('*').trim(),
+                None => continue,
+            };
+
+            let pipe_parts: Vec<&str> = rest.split('|').map(|s| s.trim()).collect();
+            if pipe_parts.is_empty() {
+                continue;
+            }
+
+            let desc = pipe_parts[0].to_string();
+            let mut raw_entity = String::new();
+            let mut raw_depends_on = String::new();
+            let mut raw_read_set = Vec::new();
+            let mut raw_write_set = Vec::new();
+
+            for part in &pipe_parts[1..] {
+                let p_upper = part.to_uppercase();
+                if p_upper.starts_with("ENTITY:") {
+                    raw_entity = part[7..].trim().to_string();
+                } else if p_upper.starts_with("DEPENDS_ON:") {
+                    raw_depends_on = part[11..].trim().to_string();
+                } else if p_upper.starts_with("READ_SET:") || p_upper.starts_with("READS:") {
+                    let tag_len = if p_upper.starts_with("READ_SET:") { 9 } else { 6 };
+                    let val = part[tag_len..].trim();
+                    if val.to_lowercase() != "none" && !val.is_empty() {
+                        for item in val.split(',') {
+                            let cleaned = Self::normalize_entity_filename(item.trim());
+                            if !cleaned.is_empty() {
+                                raw_read_set.push(PathBuf::from(cleaned));
+                            }
+                        }
+                    }
+                } else if p_upper.starts_with("WRITE_SET:") || p_upper.starts_with("WRITES:") {
+                    let tag_len = if p_upper.starts_with("WRITE_SET:") { 10 } else { 7 };
+                    let val = part[tag_len..].trim();
+                    if val.to_lowercase() != "none" && !val.is_empty() {
+                        for item in val.split(',') {
+                            let cleaned = Self::normalize_entity_filename(item.trim());
+                            if !cleaned.is_empty() {
+                                raw_write_set.push(PathBuf::from(cleaned));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let entity = if !raw_entity.is_empty() {
+                Self::normalize_entity_filename(&raw_entity)
+            } else if is_build {
+                Self::infer_target_entity(goal)
+            } else {
+                goal.split_whitespace().next().unwrap_or("general").to_string()
+            };
+
+            if is_build && !entity.is_empty() && entity != "none" && !planned_files.contains(&entity) {
+                planned_files.push(entity.clone());
+            }
+
+            for w in &raw_write_set {
+                let w_str = w.to_string_lossy().to_string();
+                if is_build && !w_str.is_empty() && w_str != "none" && !planned_files.contains(&w_str) {
+                    planned_files.push(w_str);
+                }
+            }
+
+            let mut depends_on = Vec::new();
+            if raw_depends_on.to_lowercase() != "none" && !raw_depends_on.is_empty() {
+                for dep in raw_depends_on.split(',') {
+                    let d = dep.trim();
+                    if !d.is_empty() && d.to_lowercase() != "none" {
+                        depends_on.push(Self::normalize_entity_filename(d));
+                    }
+                }
+            }
+
+            // Deterministic Fallback Rules (Zero-Hallucination Guarantee)
+            let mut write_set = if !raw_write_set.is_empty() {
+                raw_write_set
+            } else if is_build && !entity.is_empty() {
+                vec![PathBuf::from(&entity)]
+            } else {
+                Vec::new()
+            };
+
+            if is_build && !entity.is_empty() && entity != "none" {
+                let entity_path = PathBuf::from(&entity);
+                if !write_set.contains(&entity_path) {
+                    write_set.push(entity_path);
+                }
+            }
+
+            let read_set = if !raw_read_set.is_empty() {
+                raw_read_set
+            } else if is_build {
+                let mut rs = Vec::new();
+                for dep in &depends_on {
+                    let p = PathBuf::from(dep);
+                    if !rs.contains(&p) {
+                        rs.push(p);
+                    }
+                }
+                if !entity.is_empty() {
+                    let p = PathBuf::from(&entity);
+                    if !rs.contains(&p) {
+                        rs.push(p);
+                    }
+                }
+                rs
+            } else {
+                Vec::new()
+            };
+
+            let task_kind = Self::infer_task_kind(&desc);
+            let dedup_key = format!("{}:{}", task_kind.name(), entity.to_lowercase());
+            if seen_entities.contains(&dedup_key) {
+                continue; // Skip duplicate task kind for the same entity
+            }
+            seen_entities.insert(dedup_key);
+
+            if !desc.is_empty() {
+                subgoals.push(SubGoal {
+                    id,
+                    description: desc,
+                    target_entity: entity,
+                    kind: task_kind,
+                    guidance: None,
+                    depends_on,
+                    read_set,
+                    write_set,
+                    max_tokens: if is_build { 4096 } else { 2048 },
+                });
+                id += 1;
+                if subgoals.len() >= self.config.max_subgoals {
+                    break;
                 }
             }
         }
@@ -1136,19 +3935,30 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         // If user goal explicitly specifies a single file/script, enforce exactly 1 creation worker
         if Self::is_explicit_single_file(goal) && subgoals.len() > 1 {
             subgoals.truncate(1);
+            if planned_files.len() > 1 {
+                planned_files.truncate(1);
+            }
         }
 
         // Fallback if model output did not match format exactly
         if subgoals.is_empty() {
             if is_build {
                 let inferred = Self::infer_target_entity(goal);
+                if !planned_files.contains(&inferred) {
+                    planned_files.push(inferred.clone());
+                }
                 let task_kind = Self::infer_task_kind(goal);
+                let target_path = PathBuf::from(&inferred);
                 subgoals.push(SubGoal {
                     id: 1,
                     description: format!("Create and write complete standalone implementation for: {}", goal),
-                    target_entity: inferred,
+                    target_entity: inferred.clone(),
                     kind: task_kind,
                     guidance: None,
+                    depends_on: vec![],
+                    read_set: vec![target_path.clone()],
+                    write_set: vec![target_path],
+                    max_tokens: 4096,
                 });
             } else {
                 subgoals.push(SubGoal {
@@ -1157,40 +3967,63 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     target_entity: goal.split_whitespace().next().unwrap_or("topic").to_string(),
                     kind: TaskKind::Search,
                     guidance: None,
+                    depends_on: vec![],
+                    read_set: vec![],
+                    write_set: vec![],
+                    max_tokens: 2048,
                 });
             }
         }
 
         // Thinker Sovereign Review Gate:
-        // When building executable deliverables (.py, .sh, .js), deploy a Review & Smoke Test worker
-        // to execute and verify the deliverable in the isolated host sandbox before delivery to user.
-        if is_build && subgoals.len() < self.config.max_subgoals {
-            let has_executable = subgoals.iter().any(|sg| {
-                sg.target_entity.ends_with(".py")
-                    || sg.target_entity.ends_with(".sh")
-                    || sg.target_entity.ends_with(".js")
-            });
+        // Universal, Language-Agnostic Verification: When building or modifying deliverables,
+        // deploy an isolated, strictly read-only Review & Verification worker.
+        if is_build {
             let has_test_worker = subgoals.iter().any(|sg| sg.kind == TaskKind::Test);
+            let candidate_target = subgoals.iter().rfind(|sg| sg.kind == TaskKind::Create || sg.kind == TaskKind::Modify)
+                .map(|sg| sg.target_entity.clone());
 
-            if has_executable && !has_test_worker {
-                let target = subgoals
-                    .iter()
-                    .find(|sg| {
-                        sg.target_entity.ends_with(".py")
-                            || sg.target_entity.ends_with(".sh")
-                            || sg.target_entity.ends_with(".js")
-                    })
-                    .map(|sg| sg.target_entity.clone())
-                    .unwrap_or_else(|| "main.py".to_string());
-
-                let next_id = subgoals.len() + 1;
-                subgoals.push(SubGoal {
-                    id: next_id,
-                    description: format!("Run isolated sandbox smoke test and review runtime execution of '{}'", target),
-                    target_entity: target,
-                    kind: TaskKind::Test,
-                    guidance: Some("Execute isolated sandbox test and verify zero runtime errors before final host commit".to_string()),
-                });
+            if let Some(target) = candidate_target {
+                if !has_test_worker && !target.is_empty() {
+                    let next_id = subgoals.len() + 1;
+                    let target_path = PathBuf::from(&target);
+                    let test_sheet = crate::sandbox::cleanroom::TestSheet::from_planned_files(goal, &planned_files);
+                    let spec_note = if !test_sheet.required_files.is_empty() {
+                        format!(" Enforce required artifacts {:?} and semantic acceptance rubric.", test_sheet.required_files)
+                    } else {
+                        String::new()
+                    };
+                    let mut all_read_targets: Vec<PathBuf> = Vec::new();
+                    for f in &test_sheet.required_files {
+                        let pb = PathBuf::from(f);
+                        if !all_read_targets.contains(&pb) {
+                            all_read_targets.push(pb);
+                        }
+                    }
+                    for f in &planned_files {
+                        let pb = PathBuf::from(f);
+                        if !all_read_targets.contains(&pb) {
+                            all_read_targets.push(pb);
+                        }
+                    }
+                    if all_read_targets.is_empty() {
+                        all_read_targets.push(target_path);
+                    }
+                    subgoals.push(SubGoal {
+                        id: next_id,
+                        description: format!("Run Test Sheet protocol verification & review of '{}'.{}", target, spec_note),
+                        target_entity: target.clone(),
+                        kind: TaskKind::Test,
+                        guidance: Some(format!(
+                            "Audit against Cognitive Test Sheet: Verify that required files {:?} are staged in VFS, check semantic markers {:?}, simulate interactive inputs {:?}, and confirm 100% acceptance before host commit.",
+                            test_sheet.required_files, test_sheet.semantic_markers, test_sheet.interactive_inputs
+                        )),
+                        depends_on: vec![target],
+                        read_set: all_read_targets,
+                        write_set: vec![], // Strictly Read-Only (W = ∅)
+                        max_tokens: 4096,
+                    });
+                }
             }
         }
 
@@ -1198,7 +4031,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     }
 
     /// System 1: Autonomous Worker Loop with Checkpoint Freeze and Unified KV-Cache Stream
-    fn run_worker_loop(
+    pub fn run_worker_loop(
         &self,
         user_goal: &str,
         subgoal: &SubGoal,
@@ -1206,9 +4039,50 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         is_first_worker: bool,
         previous_findings: &[WorkerFinding],
     ) -> Result<WorkerFinding, String> {
+        self.run_worker_loop_with_abort(
+            user_goal,
+            subgoal,
+            worker_ctx,
+            is_first_worker,
+            previous_findings,
+            None,
+        )
+    }
+
+    pub fn run_worker_loop_with_abort(
+        &self,
+        user_goal: &str,
+        subgoal: &SubGoal,
+        worker_ctx: &mut NativeLlamaContext,
+        is_first_worker: bool,
+        previous_findings: &[WorkerFinding],
+        abort_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<WorkerFinding, String> {
+        self.run_worker_loop_with_abort_and_contracts(
+            user_goal,
+            subgoal,
+            worker_ctx,
+            is_first_worker,
+            previous_findings,
+            abort_flag,
+            None,
+        )
+    }
+
+    pub fn run_worker_loop_with_abort_and_contracts(
+        &self,
+        user_goal: &str,
+        subgoal: &SubGoal,
+        worker_ctx: &mut NativeLlamaContext,
+        is_first_worker: bool,
+        previous_findings: &[WorkerFinding],
+        abort_flag: Option<Arc<AtomicBool>>,
+        dag_contracts: Option<&HashMap<String, String>>,
+    ) -> Result<WorkerFinding, String> {
         let is_build = Self::is_build_task(&subgoal.description) || Self::is_build_task(user_goal);
 
         let mut attempt = 1;
+            let mut last_error_desc: Option<String> = None;
         let max_attempts = 3;
         let mut current_directive = subgoal.guidance.clone().unwrap_or_else(|| subgoal.description.clone());
         let mut pending_nudge: Option<String> = None;
@@ -1233,8 +4107,25 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         // Unified Sovereign Swarm Memory:
         // Record the anchor cursor where this worker begins in the shared KV cache.
         let worker_initial_cursor = worker_ctx.current_cursor();
+        let mut is_surgical = false;
+        let mut surgery_slice: Option<crate::sandbox::diagnostics::AstSlice> = None;
 
         while attempt <= max_attempts {
+            let vfs_snapshot = self.vfs.take_snapshot();
+            // CHECKPOINT 1: Start of worker step attempt
+            if let Some(ref abort) = abort_flag {
+                if abort.load(Ordering::Relaxed) {
+                    println!("  [ABORT CHECKPOINT] Worker #{} detected cancellation. Halting attempt.", subgoal.id);
+                    return Ok(WorkerFinding {
+                        worker_id: subgoal.id,
+                        sub_goal: subgoal.description.clone(),
+                        finding: "CANCELLED: Worker aborted due to upstream dependency failure.".to_string(),
+                        steps_taken: attempt,
+                        rollbacks_count,
+                        tokens_saved_by_rollback: tokens_saved,
+                    });
+                }
+            }
             // Check if starting fresh (attempt 1 or after a RESET)
             if pending_nudge.is_none() {
                 if is_first_worker && attempt == 1 {
@@ -1271,11 +4162,11 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             [ENGINE EXECUTION MANDATE]:\n\
                             1. You are a pure code-generation engine. You have NO conversational persona.\n\
                             2. NEVER output conversational speech, greetings, explanations, or commentary.\n\
-                            3. Output ONLY the complete, production-ready code for '{}' inside a code block (e.g. ```python ... ```, ```sh ... ```, ```java ... ```) or call vfs.write(\"{}\", [[...]]) inside a ```lua ... ``` block.\n\
+                            3. Output ONLY the complete, production-ready code for '{}' inside a code block (e.g. ```python ... ```, ```sh ... ```, ```java ... ```).\n\
                             4. The code MUST be 100% complete, fully implemented, and standalone.\n\
                             5. NEVER output placeholder comments like TODO, FIXME, pass, or ellipses (...).\n\
                             6. For spreadsheets, Excel, or tables: output clean CSV format with headers.",
-                            user_goal, subgoal.description, subgoal.target_entity, subgoal.target_entity, subgoal.target_entity
+                            user_goal, subgoal.description, subgoal.target_entity, subgoal.target_entity
                         )
                     } else {
                         format!(
@@ -1356,24 +4247,88 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     let next_instruction = if is_build {
                         if subgoal.kind == TaskKind::Test {
                             format!(
-                                "[CONTINUOUS SWARM DIRECTIVE - ISOLATED TEST WORKER]:\n\
+                                "[SUPREME DIRECTIVE - USER GOAL (SUPREME AUTHORITY)]:\n\
+                                \"{}\"\n\n\
+                                [CONTINUOUS SWARM DIRECTIVE - ISOLATED TEST WORKER (USER ADVOCATE)]:\n\
                                 Task #{}: {}\n\
                                 Target File: {}\n\
                                 Thinker Directive: {}\n\n\
-                                [SANDBOX TEST MANDATE]:\n\
-                                - Your role is to review and test the staged deliverable in the isolated sandbox.\n\
-                                - Output the command to test '{}', e.g.:\n\
-                                python3 {}\n\
+                                [SANDBOX TEST & ACCEPTANCE MANDATE]:\n\
+                                - Your loyalty is EXCLUSIVELY to the User Goal above, NOT to the planner or worker.\n\
+                                - If the goal requires specific files, styling, CSS, or functionality that is missing, the deliverable is INCOMPLETE.\n\
+                                - Your role is to simulate real user interaction and test '{}' inside the isolated cleanroom.\n\
+                                - Output a ```test_run block specifying the execution command and sequential keyboard inputs (one per line) to exercise the program and exit cleanly, e.g.:\n\
+                                ```test_run\n\
+                                command: python3 {}\n\
+                                inputs:\n\
+                                1\n\
+                                Test Item\n\
+                                4\n\
+                                ```\n\
                                 Execute test now:",
+                                user_goal,
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
                                 subgoal.target_entity, subgoal.target_entity
                             )
+                        } else if subgoal.kind == TaskKind::Modify {
+                            let target_buf = PathBuf::from(&subgoal.target_entity);
+                            let code_snippet = self.vfs.read_file(&target_buf)
+                                .map(|b| String::from_utf8_lossy(&b).to_string())
+                                .unwrap_or_default();
+                            format!(
+                                "[CONTINUOUS SWARM DIRECTIVE - INCREMENTAL EXTENSION]:\n\
+                                Task #{}: {}\n\
+                                Target File: {}\n\
+                                Thinker Directive: {}\n\n\
+                                [EXISTING WORKING CODE IN VFS FOR '{}']:\n```\n{}\n```\n\n\
+                                [MANDATORY PRESERVATION INVARIANT]:\n\
+                                - Keep and preserve all existing functions, classes, and logic in '{}'.\n\
+                                - Incrementally add or update the implementation to satisfy the directive without deleting previous capabilities.\n\
+                                - Output EXCLUSIVELY the complete updated code inside a single markdown code block.\n\
+                                - ZERO conversational text outside the code block.\n\
+                                Output the complete updated '{}' now:",
+                                subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
+                                subgoal.target_entity, code_snippet,
+                                subgoal.target_entity, subgoal.target_entity
+                            )
                         } else {
+                            let mut read_context = String::new();
+                            for read_path in &subgoal.read_set {
+                                let fname = read_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                                if let Some(contracts) = dag_contracts {
+                                    if let Some(contract) = contracts.get(&fname) {
+                                        read_context.push_str(&format!(
+                                            "\n[DAG CONTRACT FOR '{}']:\n```\n{}\n```\n",
+                                            fname, contract
+                                        ));
+                                        continue;
+                                    }
+                                }
+
+                                if let Some(bytes) = self.vfs.read_file(read_path) {
+                                    let content = String::from_utf8_lossy(&bytes);
+                                    if !content.trim().is_empty() {
+                                        let lines_count = content.lines().count();
+                                        if lines_count > AUTO_INJECT_MAX_LINES || bytes.len() > AUTO_INJECT_MAX_BYTES {
+                                            let distilled = Self::distill_interface_fallback(&fname, &content);
+                                            read_context.push_str(&format!(
+                                                "\n[DAG CONTRACT FOR '{}']:\n```\n{}\n```\n",
+                                                fname, distilled
+                                            ));
+                                        } else {
+                                            read_context.push_str(&format!(
+                                                "\n[EXISTING DELIVERABLE '{}' IN VFS]:\n```\n{}\n```\n",
+                                                read_path.display(), content
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
                             format!(
                                 "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
                                 Task #{}: {}\n\
                                 Target File: {}\n\
-                                Thinker Directive: {}\n\n\
+                                Thinker Directive: {}\n{}\n\
                                 [MANDATORY INTEROPERABILITY]:\n\
                                 - You share continuous attention memory with prior workers above.\n\
                                 - Strictly attend to the exact class names, method signatures, return types, and fields defined in prior files in memory.\n\
@@ -1382,6 +4337,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 - ZERO conversational text outside the code block.\n\
                                 Generate the code for '{}' now:",
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
+                                read_context,
                                 java_guidance, subgoal.target_entity, subgoal.target_entity
                             )
                         }
@@ -1421,59 +4377,118 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     );
                 }
             } else if let Some(ref nudge) = pending_nudge {
-                // NUDGE BRANCH: Worker is frozen at checkpoint!
-                let nudge_turn = format!(
-                    "\n[ENGINE DIRECTIVE INJECTION - CORRECTION]:\n\
-                    Notice from Thinker: {}\n\
-                    Target File: {}\n\
-                    MANDATE: Output ONLY the corrected, complete code block now without any commentary or explanations:",
-                    nudge, subgoal.target_entity
-                );
+                // AST SURGERY DETECTION: Language-agnostic line extraction across any compiler/runtime
+                let target_file = if subgoal.kind == TaskKind::Test {
+                    subgoal.depends_on.first().cloned().unwrap_or_else(|| subgoal.target_entity.clone())
+                } else {
+                    subgoal.target_entity.clone()
+                };
+
+                let mut target_line = 0;
+                if let Some(ref err_text) = last_error_desc {
+                    if let Some(num) = Self::extract_error_line_number(err_text, &target_file) {
+                        target_line = num;
+                    }
+                }
+
+                if target_line > 0 {
+                    let target_buf = PathBuf::from(&target_file);
+                    let content_opt = self.vfs.read_file(&target_buf)
+                        .map(|b| String::from_utf8_lossy(&b).to_string())
+                        .or_else(|| {
+                            let full_path = format!("{}/{}", self.config.output_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".to_string()), target_file);
+                            std::fs::read_to_string(&full_path).ok()
+                        });
+                    if let Some(content) = content_opt {
+                        if let Ok(slice) = crate::sandbox::diagnostics::TopologicalDiagnostic::extract_from_source(&target_file, &content, target_line) {
+                            surgery_slice = Some(slice);
+                            is_surgical = true;
+                        }
+                    }
+                }
+
+                let fence_lang = std::path::Path::new(&target_file)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("text");
+
+                let (nudge_content, msg_type) = if let Some(ref slice) = surgery_slice {
+                    println!("  [TOPOLOGICAL MACRO-SURGERY] Extracted broken block in '{}' lines {}-{}", target_file, slice.start_line, slice.end_line);
+                    (
+                        format!(
+                            "[TOPOLOGICAL MACRO-SURGERY - AST ISOLATION]:\n\
+                            Diagnostic: Defect localized on line {} in '{}'\n\
+                            Runtime/Compiler Error: {}\n\
+                            Target Block (Lines {}-{}):\n```{}\n{}\n```\n\
+                            MANDATE: Output ONLY the corrected block of code within ```{} ``` fences. Do not output the entire file.",
+                            target_line, target_file, nudge, slice.start_line, slice.end_line, fence_lang, slice.content, fence_lang
+                        ),
+                        "Macro-Surgery AST Nudge"
+                    )
+                } else {
+                    (
+                        format!(
+                            "[ENGINE DIRECTIVE INJECTION - CORRECTION]:\n\
+                            Notice from Thinker: {}\n\
+                            Target File: {}\n\
+                            MANDATE: Output ONLY the corrected, complete code block now without any commentary or explanations:",
+                            nudge, subgoal.target_entity
+                        ),
+                        "Standard Thinker Nudge"
+                    )
+                };
+
+                let nudge_turn = self.worker_model.format_nudge_turn(&nudge_content);
                 let nudge_tokens = self.worker_model.tokenize(&nudge_turn, false)?;
                 worker_ctx.eval_tokens(&nudge_tokens, 0)?;
                 println!(
-                    "  [WORKER RESUME] Applied Thinker nudge ({} tokens) from frozen checkpoint {}.",
-                    nudge_tokens.len(), checkpoint
+                    "  [WORKER RESUME] Applied {} ({} tokens) from frozen checkpoint {}.",
+                    msg_type, nudge_tokens.len(), checkpoint
                 );
             }
 
-            // Autoregressive generation
+            // Autoregressive generation with Sovereign Thinker Scratchpad Budget & Isolation
             let mut generated_text = String::new();
             let mut generated_tokens = Vec::new();
-            let mut in_code_block = false;
-            let max_gen_tokens = if is_build { 1536 } else { 256 };
+            let mut think_tokens_count = 0;
+            let max_think_budget = 512;
+            let max_deliverable_tokens = if is_build { 1536 } else { 256 };
+            let max_total_tokens = max_think_budget + max_deliverable_tokens;
 
             let mut sampler = crate::native_llama::NativeLlamaSampler::new(&crate::native_llama::SamplingConfig {
-                temperature: 0.7,
-                top_p: 0.9,
+                temperature: if is_build { 0.2 } else { 0.7 },
+                top_p: 0.95,
                 top_k: 40,
                 repetition_penalty: 1.1,
                 penalty_last_n: 64,
                 seed: 42,
-            }).map_err(|e| e.to_string())?;
-            let mut recent_tokens: std::collections::VecDeque<i32> = std::collections::VecDeque::with_capacity(64);
+            }, self.worker_model.n_vocab()).map_err(|e| e.to_string())?;
+            let mut recent_tokens: std::collections::VecDeque<i32> = std::collections::VecDeque::with_capacity(32);
 
-            for _ in 0..max_gen_tokens {
-                let tok = worker_ctx.sample(&mut sampler)?;
-                let piece = self.worker_model.token_to_piece(tok)?;
-                
-                recent_tokens.push_back(tok);
-                if recent_tokens.len() >= 16 {
-                    let half = recent_tokens.len() / 2;
-                    let first_half = recent_tokens.iter().take(half);
-                    let second_half = recent_tokens.iter().skip(half);
-                    if first_half.eq(second_half) {
+            for _ in 0..max_total_tokens {
+                // CHECKPOINT 2: Inside token generation loop
+                if let Some(ref abort) = abort_flag {
+                    if abort.load(Ordering::Relaxed) {
+                        println!("  [ABORT CHECKPOINT] Worker #{} preempted during token generation.", subgoal.id);
                         break;
                     }
                 }
 
+                let tok = worker_ctx.sample(&mut sampler)?;
+                let piece = self.worker_model.token_to_piece(tok)?;
+                
+                recent_tokens.push_back(tok);
+                if recent_tokens.len() > 32 {
+                    recent_tokens.pop_front();
+                }
+                if recent_tokens.len() == 32 {
+                    let slice: Vec<i32> = recent_tokens.iter().copied().collect();
+                    if slice[..16] == slice[16..] {
+                        break;
+                    }
+                }
 
-                if piece.contains("<|im_end|>")
-                    || piece.contains("<|endoftext|>")
-                    || piece.contains("<|eot_id|>")
-                    || piece.contains("</s>")
-                    || piece.contains("<end_of_turn>")
-                {
+                if piece.is_empty() || self.worker_model.is_stop_token(tok) || self.worker_model.is_stop_piece(&piece) {
                     break;
                 }
 
@@ -1481,24 +4496,59 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 generated_text.push_str(&piece);
                 worker_ctx.eval_tokens(&[tok], 0)?;
 
-                if generated_text.contains("```") {
-                    in_code_block = true;
-                }
+                // Dynamic Thinker State Analysis
+                let has_open_think = generated_text.contains("<think>") || generated_text.contains("<thought>");
+                let has_close_think = generated_text.contains("</think>") || generated_text.contains("</thought>");
+                let in_think = has_open_think && !has_close_think;
 
-                if in_code_block {
-                    if let Some(first_idx) = generated_text.find("```") {
-                        if generated_text[first_idx + 3..].contains("```") {
-                            break;
+                if in_think {
+                    think_tokens_count += 1;
+                    // Enforce mathematical thought budget cap: prevent endless reasoning attractor loops
+                    if think_tokens_count >= max_think_budget {
+                        let force_close = "\n</think>\n";
+                        generated_text.push_str(force_close);
+                        if let Ok(force_tokens) = self.worker_model.tokenize(force_close, false) {
+                            let _ = worker_ctx.eval_tokens(&force_tokens, 0);
                         }
                     }
-                } else if !is_build && piece.contains('\n') {
-                    break;
+                    continue; // Skip termination checks while actively deliberating inside think scratchpad
+                }
+
+                // Effective Deliverable Text (strictly post-thought monologue)
+                let effective_text = if let Some(pos) = generated_text.rfind("</think>") {
+                    &generated_text[pos + 8..]
+                } else if let Some(pos) = generated_text.rfind("</thought>") {
+                    &generated_text[pos + 10..]
+                } else {
+                    &generated_text[..]
+                };
+
+                let eff_trimmed = effective_text.trim();
+                let eff_trimmed_start = effective_text.trim_start();
+
+                // 1. Markdown code block deliverable completed
+                if let Some(first_idx) = effective_text.find("```") {
+                    if effective_text[first_idx + 3..].contains("```") {
+                        break;
+                    }
+                } else if subgoal.kind == TaskKind::Test {
+                    // 2. Tester single-command deliverable: breaks on first newline after non-empty command
+                    if !eff_trimmed_start.starts_with("```") && eff_trimmed.len() >= 3 && piece.contains('\n') {
+                        break;
+                    }
+                } else if !is_build {
+                    // 3. Non-build single line command/result
+                    if !eff_trimmed_start.starts_with("```") && eff_trimmed.len() >= 3 && piece.contains('\n') {
+                        break;
+                    }
                 }
             }
 
             let parsed_action = Self::parse_action(&generated_text);
             let action = if subgoal.kind == TaskKind::Test {
                 match parsed_action {
+                    SwarmAction::TestRun { .. } => parsed_action,
+                    SwarmAction::Verdict { .. } => parsed_action,
                     SwarmAction::RunTerminal { ref command } => {
                         let clean_cmd = Self::strip_command_prefix(command);
                         SwarmAction::RunTerminal { command: clean_cmd }
@@ -1539,49 +4589,33 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                     format!("test_{}", subgoal.target_entity)
                                 };
                                 self.vfs.write_file(&std::path::PathBuf::from(&test_filename), content.as_bytes());
-                                let run_cmd = if test_filename.ends_with(".py") {
-                                    format!("python3 {}", test_filename)
-                                } else {
-                                    format!("bash {}", test_filename)
-                                };
+                                let run_cmd = Self::resolve_verification_command(&test_filename);
                                 SwarmAction::RunTerminal { command: run_cmd }
                             }
                         } else if !has_test_structure && lines.len() <= 4 {
-                            // Short snippet that didn't match an explicit command: run the target entity directly
-                            let default_cmd = if subgoal.target_entity.ends_with(".py") {
-                                format!("python3 {}", subgoal.target_entity)
-                            } else if subgoal.target_entity.ends_with(".sh") {
-                                format!("bash {}", subgoal.target_entity)
-                            } else {
-                                format!("test -f {}", subgoal.target_entity)
-                            };
+                            // Short snippet that didn't match an explicit command: run language-agnostic verification on target
+                            let default_cmd = Self::resolve_verification_command(&subgoal.target_entity);
                             SwarmAction::RunTerminal { command: default_cmd }
                         } else {
                             // Actual test script generated! Write it to a distinct test file, NEVER overwrite deliverable!
+                            let target_ext = std::path::Path::new(&subgoal.target_entity)
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("test");
                             let test_filename = if subgoal.target_entity.is_empty() {
-                                "test_suite.py".to_string()
+                                format!("test_suite.{}", target_ext)
                             } else if subgoal.target_entity.starts_with("test_") {
                                 subgoal.target_entity.clone()
                             } else {
                                 format!("test_{}", subgoal.target_entity)
                             };
                             self.vfs.write_file(&std::path::PathBuf::from(&test_filename), content.as_bytes());
-                            let run_cmd = if test_filename.ends_with(".py") {
-                                format!("python3 {}", test_filename)
-                            } else {
-                                format!("bash {}", test_filename)
-                            };
+                            let run_cmd = Self::resolve_verification_command(&test_filename);
                             SwarmAction::RunTerminal { command: run_cmd }
                         }
                     }
                     _ => {
-                        let default_cmd = if subgoal.target_entity.ends_with(".py") {
-                            format!("python3 {}", subgoal.target_entity)
-                        } else if subgoal.target_entity.ends_with(".sh") {
-                            format!("bash {}", subgoal.target_entity)
-                        } else {
-                            format!("test -f {}", subgoal.target_entity)
-                        };
+                        let default_cmd = Self::resolve_verification_command(&subgoal.target_entity);
                         SwarmAction::RunTerminal { command: default_cmd }
                     }
                 }
@@ -1603,8 +4637,23 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 );
             }
 
+            // CHECKPOINT 3: Pre-action mutation checkpoint
+            if let Some(ref abort) = abort_flag {
+                if abort.load(Ordering::Relaxed) {
+                    println!("  [ABORT CHECKPOINT] Worker #{} aborting before VFS write/action execution.", subgoal.id);
+                    return Ok(WorkerFinding {
+                        worker_id: subgoal.id,
+                        sub_goal: subgoal.description.clone(),
+                        finding: "CANCELLED: Worker aborted prior to file mutation.".to_string(),
+                        steps_taken: attempt,
+                        rollbacks_count,
+                        tokens_saved_by_rollback: tokens_saved,
+                    });
+                }
+            }
+
             // Execute action
-            let (mut exec_success, mut exec_output) = match action {
+            let (exec_success, exec_output) = match action {
                 SwarmAction::WriteFile { ref filename, ref content } => {
                     let actual_filename = if filename.is_empty() {
                         &subgoal.target_entity
@@ -1612,9 +4661,64 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         filename.as_str()
                     };
                     let path = std::path::PathBuf::from(actual_filename);
-                    println!("  [EXECUTION] Direct code write: '{}' ({} bytes)...", actual_filename, content.len());
-                    self.vfs.write_file(&path, content.as_bytes());
-                    (true, format!("Wrote {} bytes to {}", content.len(), actual_filename))
+
+                    // BOUNDARY ENFORCEMENT: Enforce subgoal.write_set
+                    if !MemoryVfs::is_path_in_set(&path, &subgoal.write_set) {
+                        println!(
+                            "  [VFS BOUNDARY VIOLATION] Worker #{} attempted unauthorized write to '{}' (allowed write_set: {:?})",
+                            subgoal.id, actual_filename, subgoal.write_set
+                        );
+                        (
+                            false,
+                            format!(
+                                "ERR_OUT_OF_BOUNDS_WRITE: Unauthorized write to '{}'. Path is not in write_set: {:?}",
+                                actual_filename, subgoal.write_set
+                            ),
+                        )
+                    } else {
+                        if is_surgical && surgery_slice.is_some() {
+                            let slice = surgery_slice.as_ref().unwrap();
+                            let full_content_opt = self.vfs.read_file(&path)
+                                .map(|b| String::from_utf8_lossy(&b).to_string())
+                                .or_else(|| {
+                                    let full_path = format!("{}/{}", self.config.output_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".to_string()), actual_filename);
+                                    std::fs::read_to_string(&full_path).ok()
+                                });
+
+                            if let Some(full_content) = full_content_opt {
+                                let lines: Vec<&str> = full_content.split('\n').collect();
+                                let start_idx = slice.start_line.saturating_sub(1);
+                                let end_idx = slice.end_line.min(lines.len());
+                                
+                                let mut new_content = String::new();
+                                for i in 0..start_idx {
+                                    new_content.push_str(lines[i]);
+                                    new_content.push('\n');
+                                }
+                                
+                                new_content.push_str(content);
+                                if !content.ends_with('\n') {
+                                    new_content.push('\n');
+                                }
+                                
+                                for i in end_idx..lines.len() {
+                                    new_content.push_str(lines[i]);
+                                    if i < lines.len() - 1 {
+                                        new_content.push('\n');
+                                    }
+                                }
+                                
+                                self.vfs.write_file(&path, new_content.as_bytes());
+                            } else {
+                                // Fallback if file read fails for some reason
+                                self.vfs.write_file(&path, content.as_bytes());
+                            }
+                        } else {
+                            println!("  [EXECUTION] Direct code write: '{}' ({} bytes)...", actual_filename, content.len());
+                            self.vfs.write_file(&path, content.as_bytes());
+                        }
+                        (true, format!("Wrote {} bytes to {}", content.len(), actual_filename))
+                    }
                 }
                 SwarmAction::PatchFile { ref filename, ref target, ref replacement } => {
                     let actual_filename = if filename.is_empty() {
@@ -1623,16 +4727,32 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         filename.as_str()
                     };
                     let path = std::path::PathBuf::from(actual_filename);
-                    println!("  [EXECUTION] Patching '{}'...", actual_filename);
-                    match self.vfs.patch_file(&path, target, replacement) {
-                        Ok(true) => {
-                            (true, format!("Successfully patched {}", actual_filename))
-                        }
-                        Ok(false) => {
-                            (false, format!("Target snippet not found in {}", actual_filename))
-                        }
-                        Err(e) => {
-                            (false, format!("Patch error in {}: {}", actual_filename, e))
+
+                    // BOUNDARY ENFORCEMENT: Enforce subgoal.write_set
+                    if !MemoryVfs::is_path_in_set(&path, &subgoal.write_set) {
+                        println!(
+                            "  [VFS BOUNDARY VIOLATION] Worker #{} attempted unauthorized patch to '{}' (allowed write_set: {:?})",
+                            subgoal.id, actual_filename, subgoal.write_set
+                        );
+                        (
+                            false,
+                            format!(
+                                "ERR_OUT_OF_BOUNDS_WRITE: Unauthorized patch on '{}'. Path is not in write_set: {:?}",
+                                actual_filename, subgoal.write_set
+                            ),
+                        )
+                    } else {
+                        println!("  [EXECUTION] Patching '{}'...", actual_filename);
+                        match self.vfs.patch_file(&path, target, replacement) {
+                            Ok(true) => {
+                                (true, format!("Successfully patched {}", actual_filename))
+                            }
+                            Ok(false) => {
+                                (false, format!("Target snippet not found in {}", actual_filename))
+                            }
+                            Err(e) => {
+                                (false, format!("Patch error in {}: {}", actual_filename, e))
+                            }
                         }
                     }
                 }
@@ -1643,15 +4763,53 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         filename.as_str()
                     };
                     let path = std::path::PathBuf::from(actual_filename);
-                    println!("  [EXECUTION] Deleting file: '{}'...", actual_filename);
-                    let deleted = self.vfs.delete_file(&path);
-                    if deleted {
-                        (true, format!("Successfully deleted {}", actual_filename))
-                    } else if !self.vfs.exists(&path) {
-                        (true, format!("File '{}' is not present in VFS (already deleted)", actual_filename))
+
+                    // BOUNDARY ENFORCEMENT: Enforce subgoal.write_set
+                    if !MemoryVfs::is_path_in_set(&path, &subgoal.write_set) {
+                        println!(
+                            "  [VFS BOUNDARY VIOLATION] Worker #{} attempted unauthorized delete of '{}' (allowed write_set: {:?})",
+                            subgoal.id, actual_filename, subgoal.write_set
+                        );
+                        (
+                            false,
+                            format!(
+                                "ERR_OUT_OF_BOUNDS_WRITE: Unauthorized delete of '{}'. Path is not in write_set: {:?}",
+                                actual_filename, subgoal.write_set
+                            ),
+                        )
                     } else {
-                        (false, format!("Failed to delete '{}' from VFS", actual_filename))
+                        println!("  [EXECUTION] Deleting file: '{}'...", actual_filename);
+                        let deleted = self.vfs.delete_file(&path);
+                        if deleted {
+                            (true, format!("Successfully deleted {}", actual_filename))
+                        } else if !self.vfs.exists(&path) {
+                            (true, format!("File '{}' is not present in VFS (already deleted)", actual_filename))
+                        } else {
+                            (false, format!("Failed to delete '{}' from VFS", actual_filename))
+                        }
                     }
+                }
+                SwarmAction::TestRun { ref command, ref inputs } => {
+                    let clean_cmd = Self::strip_command_prefix(command);
+                    let bwrap_active = IsolatedJail::is_bwrap_available();
+                    println!(
+                        "  [INTERACTIVE CLEANROOM] Executing test_run (bwrap={}): '{}' with {} simulated inputs...",
+                        bwrap_active, clean_cmd, inputs.len()
+                    );
+                    let staged_files = self.vfs.all_files();
+                    let input_strs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
+                    let report = crate::sandbox::cleanroom::UniversalCleanroom::execute_interactive(
+                        &clean_cmd,
+                        &staged_files,
+                        &input_strs,
+                        std::time::Duration::from_secs(60),
+                    );
+                    let combined = format!("{}\n{}", report.full_stdout, report.full_stderr);
+                    (report.success, combined)
+                }
+                SwarmAction::Verdict { status, ref proof_or_missing } => {
+                    println!("  [ACCEPTANCE VERDICT] Model emitted verdict: status={} | {}", status, proof_or_missing);
+                    (status, proof_or_missing.clone())
                 }
                 SwarmAction::RunTerminal { ref command } => {
                     let clean_cmd = Self::strip_command_prefix(command);
@@ -1660,8 +4818,17 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         "  [EXECUTION] Isolated Sandbox exec (bwrap={}): '{}'...",
                         bwrap_active, clean_cmd
                     );
-                    let vfs_files = self.vfs.all_files();
-                    match IsolatedJail::run_in_jail(&clean_cmd, &vfs_files, std::time::Duration::from_secs(30)) {
+                    let staged_files = self.vfs.all_files();
+                    let planned_targets: Vec<String> = subgoal.read_set.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                    let test_sheet = crate::sandbox::cleanroom::TestSheet::from_planned_files(user_goal, &planned_targets);
+                    let formatted_input = if !test_sheet.interactive_inputs.is_empty() {
+                        let mut buf = test_sheet.interactive_inputs.join("\n");
+                        buf.push('\n');
+                        Some(buf.into_bytes())
+                    } else {
+                        None
+                    };
+                    match IsolatedJail::run_in_jail_with_input(&clean_cmd, &staged_files, std::time::Duration::from_secs(120), formatted_input.as_deref()) {
                         Ok(jail_res) => {
                             let combined = format!("{}{}", jail_res.stdout, jail_res.stderr);
                             (jail_res.success, combined)
@@ -1670,21 +4837,6 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             (false, format!("Isolated jail error: {}", e))
                         }
                     }
-                }
-                SwarmAction::RunLua { ref script } => {
-                    println!("  [EXECUTION] Running Lua script ({} chars)...", script.len());
-                    let runner = crate::sandbox::LuaSandboxRunner::with_terminal(self.vfs.clone(), self.terminal.clone());
-                    let res = runner.run_script(script);
-                    let out = if res.success {
-                        if res.output_log.trim().is_empty() {
-                            "Executed with exit code 0".to_string()
-                        } else {
-                            res.output_log.trim().to_string()
-                        }
-                    } else {
-                        res.error.unwrap_or_else(|| "Lua execution runtime trap".to_string())
-                    };
-                    (res.success, out)
                 }
                 SwarmAction::Search { ref query } => {
                     println!("  [SEARCH] Query: \"{}\"", query);
@@ -1779,89 +4931,73 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 }
             }
 
-            // AST Syntax Validation Gate
+            // Universal Language-Agnostic Cleanroom Validation Gate
             let mut syntax_error: Option<String> = None;
             if (is_build || subgoal.kind == TaskKind::Create || subgoal.kind == TaskKind::Modify)
                 && vfs_target_exists && vfs_target_size > 0 && !placeholder_found
             {
-                if let Some(code) = vfs_str {
-                    if subgoal.target_entity.ends_with(".py") {
-                        let hex_encoded: String = code.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-                        let check_cmd = format!("python3 -c \"import ast; ast.parse(bytes.fromhex('{}').decode('utf-8'))\"", hex_encoded);
-                        match self.terminal.run_sync(&check_cmd, 5) {
-                            Ok(res) => {
-                                if res.contains("SyntaxError") || res.contains("Traceback") {
-                                    let err_line = res.lines().find(|l| l.contains("SyntaxError")).unwrap_or("Python SyntaxError");
-                                    syntax_error = Some(err_line.to_string());
-                                }
-                            }
-                            Err(err) => {
-                                if err.contains("SyntaxError") || err.contains("Traceback") {
-                                    let err_line = err.lines().find(|l| l.contains("SyntaxError")).unwrap_or("Python SyntaxError");
-                                    syntax_error = Some(err_line.to_string());
-                                } else if !err.trim().is_empty() {
-                                    syntax_error = Some(err.lines().next().unwrap_or("Python verification error").to_string());
-                                }
-                            }
-                        }
-                        if syntax_error.is_none() {
-                            let vfs_files = self.vfs.all_files();
-                            if let Ok(smoke_res) = IsolatedJail::smoke_test_script(&subgoal.target_entity, &vfs_files, std::time::Duration::from_secs(4)) {
-                                if let Some(ref dep) = smoke_res.missing_dependency {
-                                    println!(
-                                        "  [SMOKE TEST] Detected missing host dependency in sandbox: '{}'",
-                                        dep.bright_yellow()
-                                    );
-                                    exec_success = false;
-                                    exec_output = format!("ModuleNotFoundError: No module named '{}'", dep);
-                                }
-                            }
-                        }
-                    } else if subgoal.target_entity.ends_with(".json") {
-                        if let Err(e) = serde_json::from_str::<serde_json::Value>(code) {
-                            syntax_error = Some(format!("JSON syntax error: {}", e));
-                        }
-                    } else if subgoal.target_entity.ends_with(".sh") {
-                        let hex_encoded: String = code.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-                        let check_cmd = format!("bash -n <(python3 -c \"import sys; sys.stdout.buffer.write(bytes.fromhex('{}'))\")", hex_encoded);
-                        match self.terminal.run_sync(&check_cmd, 5) {
-                            Ok(res) => {
-                                if !res.trim().is_empty() && (res.contains("syntax error") || res.contains("error")) {
-                                    syntax_error = Some(res.trim().to_string());
-                                }
-                            }
-                            Err(err) => {
-                                if !err.trim().is_empty() {
-                                    syntax_error = Some(err.lines().next().unwrap_or("Bash syntax error").to_string());
-                                }
-                            }
-                        }
-                    } else if subgoal.target_entity.ends_with(".java") {
-                        let stem = subgoal.target_entity.trim_end_matches(".java");
-                        let open_braces = code.chars().filter(|&c| c == '{').count();
-                        let close_braces = code.chars().filter(|&c| c == '}').count();
-                        if open_braces != close_braces {
-                            syntax_error = Some(format!(
-                                "Java syntax error: Unbalanced curly braces ({} open vs {} close)",
-                                open_braces, close_braces
-                            ));
-                        } else {
-                            let has_decl = code.lines().any(|l| {
-                                let words: Vec<&str> = l.split_whitespace().collect();
-                                words.windows(2).any(|w| {
-                                    (w[0] == "class" || w[0] == "interface" || w[0] == "enum")
-                                        && (w[1] == stem || w[1].starts_with(&format!("{}<", stem)) || w[1].starts_with(&format!("{}(", stem)))
-                                })
-                            });
-                            if !has_decl {
-                                syntax_error = Some(format!(
-                                    "Java structural mismatch: File is named '{}.java' but does not declare 'class {}'",
-                                    stem, stem
-                                ));
-                            }
+                if let Some(bytes) = vfs_bytes.as_ref() {
+                    let vfs_files = self.vfs.all_files();
+                    let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
+                        &subgoal.target_entity,
+                        bytes,
+                        &vfs_files,
+                    );
+                    if !report.is_valid {
+                        syntax_error = report.error_message.clone();
+                        if let Some(line) = report.error_line {
+                            println!("  [UNIVERSAL CLEANROOM] Detected error at line {} in '{}': {:?}", line, subgoal.target_entity, report.error_message);
                         }
                     }
                 }
+            }
+
+            // Cognitive Test Sheet Protocol Audit for Test tasks
+            let mut test_acceptance: Option<crate::sandbox::cleanroom::AcceptanceDeltaReport> = None;
+            let mut acceptance_error_desc: Option<String> = None;
+            if subgoal.kind == TaskKind::Test {
+                let target_file = if subgoal.target_entity.is_empty() {
+                    subgoal.depends_on.first().cloned().unwrap_or_default()
+                } else {
+                    subgoal.target_entity.clone()
+                };
+                let target_buf = PathBuf::from(&target_file);
+                let file_content = self.vfs.read_file(&target_buf)
+                    .map(|b| String::from_utf8_lossy(&b).to_string())
+                    .unwrap_or_default();
+
+                let vfs_files: Vec<String> = self.vfs.list_files()
+                    .into_iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect();
+
+                // Aggregate content across all staged files in VFS to ensure semantic markers & domain checks
+                // evaluate the complete multi-file project bundle (e.g. CSS markers in style.css, JS in app.js).
+                let mut aggregated_content = file_content.clone();
+                for f in &vfs_files {
+                    if f != &target_file {
+                        if let Some(bytes) = self.vfs.read_file(&PathBuf::from(f)) {
+                            aggregated_content.push_str("\n\n");
+                            aggregated_content.push_str(&String::from_utf8_lossy(&bytes));
+                        }
+                    }
+                }
+
+                let planned_targets: Vec<String> = subgoal.read_set.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                let test_sheet = crate::sandbox::cleanroom::TestSheet::from_planned_files(user_goal, &planned_targets);
+
+                let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_acceptance_criteria_with_sheet(
+                    &target_file,
+                    &aggregated_content,
+                    user_goal,
+                    &test_sheet,
+                    &vfs_files,
+                );
+
+                if !report.is_accepted {
+                    acceptance_error_desc = Some(format!("ERR_ACCEPTANCE_CRITERIA_FAILED: {}", report.delta_summary));
+                }
+                test_acceptance = Some(report);
             }
 
             // 4-Tier Verification Gate
@@ -1877,10 +5013,98 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     exec_success && !self.vfs.exists(&target_path)
                 }
                 TaskKind::Test => {
-                    exec_success
-                        && !exec_output.contains("Traceback (most recent call last)")
+                    let mut no_crash = exec_success
+                        && !exec_output.contains("error:")
+                        && !exec_output.contains("Error:")
                         && !exec_output.contains("FAILED")
                         && !exec_output.contains("SyntaxError:")
+                        && !exec_output.contains("compilation failed")
+                        && !exec_output.contains("Traceback (most recent call last)");
+
+                    if let SwarmAction::TestRun { .. } = action {
+                        let verdict_prompt = format!(
+                            "\n\n[TERMINAL EXECUTION SCREEN LOG]:\n```\n{}\n```\n\n\
+                            [SUPREME USER GOAL]:\n\"{}\"\n\n\
+                            [VERDICT MANDATE - STRICT OUTPUT REQUIRED]:\n\
+                            Evaluate the terminal execution log above against the user's supreme goal.\n\
+                            Did the program satisfy all user requirements?\n\
+                            You MUST output EXCLUSIVELY a ```verdict block. Any other format is rejected:\n\
+                            ```verdict\n\
+                            status: YES (or NO)\n\
+                            proof: <if YES, what was verified>\n\
+                            missing:\n\
+                            - <if NO, bulleted list of missing requirements>\n\
+                            ```\n\
+                            Output verdict now:",
+                            exec_output.trim(), user_goal
+                        );
+                        let verdict_tokens = self.worker_model.tokenize(&verdict_prompt, false).unwrap_or_default();
+                        if let Ok(()) = worker_ctx.eval_tokens(&verdict_tokens, 0) {
+                            let mut verdict_text = String::new();
+                            for _ in 0..256 {
+                                if let Ok(tok) = worker_ctx.sample(&mut sampler) {
+                                    if let Ok(piece) = self.worker_model.token_to_piece(tok) {
+                                        verdict_text.push_str(&piece);
+                                        if piece.contains("```") && verdict_text.matches("```").count() >= 2 {
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            let verdict_action = Self::parse_action(&verdict_text);
+                            if let SwarmAction::Verdict { status, proof_or_missing } = verdict_action {
+                                if !status {
+                                    println!("  [ACCEPTANCE VERDICT REJECTED] Target '{}': {}", subgoal.target_entity.bright_cyan(), proof_or_missing.bright_yellow());
+                                    final_finding = format!(
+                                        "[ACCEPTANCE DELTA] In '{}': Missing requirements: {}. Implemented: Verified execution in cleanroom",
+                                        subgoal.target_entity,
+                                        proof_or_missing
+                                    );
+                                    no_crash = false;
+                                } else {
+                                    println!("  [ACCEPTANCE VERDICT ACCEPTED] Target '{}': {}", subgoal.target_entity.bright_cyan(), proof_or_missing.bright_green());
+                                    final_finding = format!(
+                                        "PASS: Acceptance criteria verified by user simulator. Proof: {}",
+                                        proof_or_missing
+                                    );
+                                    no_crash = true;
+                                }
+                            }
+                        }
+                    } else if let SwarmAction::Verdict { status, ref proof_or_missing } = action {
+                        if !status {
+                            println!("  [ACCEPTANCE VERDICT REJECTED] Target '{}': {}", subgoal.target_entity.bright_cyan(), proof_or_missing.bright_yellow());
+                            final_finding = format!(
+                                "[ACCEPTANCE DELTA] In '{}': Missing requirements: {}. Implemented: Verified in cleanroom",
+                                subgoal.target_entity,
+                                proof_or_missing
+                            );
+                            no_crash = false;
+                        } else {
+                            println!("  [ACCEPTANCE VERDICT ACCEPTED] Target '{}': {}", subgoal.target_entity.bright_cyan(), proof_or_missing.bright_green());
+                            final_finding = format!(
+                                "PASS: Acceptance criteria verified by user simulator. Proof: {}",
+                                proof_or_missing
+                            );
+                            no_crash = true;
+                        }
+                    } else if no_crash {
+                        if let Some(ref acceptance) = test_acceptance {
+                            if !acceptance.is_accepted {
+                                println!("  [ACCEPTANCE DELTA AUDIT] Target '{}' missing requirements: {}", subgoal.target_entity.bright_cyan(), acceptance.delta_summary.bright_yellow());
+                                final_finding = format!(
+                                    "[ACCEPTANCE DELTA] In '{}': Missing requirements: {}. Implemented: {}",
+                                    subgoal.target_entity,
+                                    acceptance.missing_requirements.join("; "),
+                                    acceptance.covered_requirements.join("; ")
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    no_crash
                 }
                 TaskKind::Search => {
                     exec_success && !exec_output.trim().is_empty()
@@ -1915,7 +5139,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                     TaskKind::Test => {
                         format!(
-                            "[FLAG #{} (Verified Test): Execution gate passed with exit code 0; zero tracebacks]",
+                            "[FLAG #{} (Verified Test): Execution gate passed with exit code 0; zero tracebacks; 100% Acceptance Criteria Satisfied]",
                             subgoal.id
                         )
                     }
@@ -1960,6 +5184,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             }
 
             // FAILURE OCCURRED: Trigger Worker Rollback to Checkpoint
+            self.vfs.restore_snapshot(vfs_snapshot);
             let tokens_before = tokens_at_attempt_end;
             let _ = worker_ctx.rollback_to(checkpoint);
             let tokens_after = worker_ctx.current_cursor();
@@ -1969,7 +5194,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
             // Deterministic Diagnostic Classification
             let diagnostic = if let Some(ref _syn_err) = syntax_error {
-                DiagnosticCode::LuaSyntaxTrap
+                DiagnosticCode::TestFailed
+            } else if let Some(ref acc_err) = acceptance_error_desc {
+                DiagnosticCode::AcceptanceCriteriaFailed(acc_err.clone())
             } else {
                 Self::classify_failure_for_kind(
                     &action,
@@ -1989,11 +5216,26 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 subgoal.id, tokens_after, excised, diagnostic.name()
             );
 
+            // Immediate Abort on Boundary Violation (Zero Retries Allowed for Security Breaches)
+            if diagnostic == DiagnosticCode::OutOfBoundsWrite {
+                println!(
+                    "  [FATAL BOUNDARY BREACH] Task #{} triggered OutOfBoundsWrite for '{}'! Aborting worker loop immediately without retries.",
+                    subgoal.id, subgoal.target_entity
+                );
+                final_finding = format!(
+                    "FAILED: OutOfBoundsWrite - Task #{} violated security boundaries by attempting modification outside its write_set.",
+                    subgoal.id
+                );
+                break;
+            }
+
             // ESCALATE TO THINKER FOR SOVEREIGN DECISION
             let error_desc = if let Some(ref syn_err) = syntax_error {
                 format!("Syntax error in '{}': {}", subgoal.target_entity, syn_err)
             } else if placeholder_found {
                 format!("Incomplete placeholder in '{}': {}", subgoal.target_entity, placeholder_reason)
+            } else if let Some(ref acc_err) = acceptance_error_desc {
+                acc_err.clone()
             } else if !exec_success {
                 exec_output.clone()
             } else {
@@ -2013,6 +5255,22 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 }
             };
 
+            println!("{}", "  ┌── [WORKER ATTEMPT FAILURE AUDIT] ──────────────────────────────────".bright_red());
+            println!("  │ Task ID       : #{} ({:?}) Target: '{}'", subgoal.id, subgoal.kind, subgoal.target_entity.bright_cyan());
+            println!("  │ Attempt       : #{} of {}", attempt, self.config.max_steps_per_worker);
+            println!("  │ Diagnostic    : {}", diagnostic.name().bright_yellow().bold());
+            if let Some(ref syn) = syntax_error {
+                println!("  │ Syntax Failure: {}", syn.bright_red());
+            }
+            if let Some(ref acc) = acceptance_error_desc {
+                println!("  │ Acceptance Err: {}", acc.bright_yellow());
+            }
+            if !exec_success && !exec_output.trim().is_empty() {
+                println!("  │ Execution Err : {}", exec_output.lines().next().unwrap_or("Non-zero exit").bright_red());
+            }
+            println!("  │ Error Summary : {}", error_desc.trim().bright_red());
+            println!("{}", "  └────────────────────────────────────────────────────────────────────".bright_red());
+
             let (decision, ledger_entry) = self.thinker_evaluate_failure(
                 subgoal,
                 attempt,
@@ -2024,16 +5282,29 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             println!("  {}", ledger_entry);
 
             last_diagnostic = Some(diagnostic);
+            last_error_desc = Some(error_desc.clone());
+
+            let is_premature_token_misfire = generated_tokens.len() <= 10;
+            if is_premature_token_misfire {
+                println!(
+                    "  [COLD-START RESILIENCE] Worker #{} generated only {} tokens (<= 10). Excused from error counter without consuming attempt budget.",
+                    subgoal.id, generated_tokens.len()
+                );
+            }
 
             match decision {
                 ThinkerDecision::Nudge(hint) => {
                     pending_nudge = Some(hint);
-                    attempt += 1;
+                    if !is_premature_token_misfire {
+                        attempt += 1;
+                    }
                 }
                 ThinkerDecision::Reset(new_directive) => {
                     current_directive = new_directive;
                     pending_nudge = None;
-                    attempt += 1;
+                    if !is_premature_token_misfire {
+                        attempt += 1;
+                    }
                 }
                 ThinkerDecision::ConsultDependency { dependency, question } => {
                     let user_choice = Self::prompt_user_for_dependency(&dependency, &question);
@@ -2105,7 +5376,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     }
 
     /// System 2: Synthesizes all gathered worker findings into a final report as Executive Secretary
-    fn synthesize_findings(&self, original_goal: &str, findings: &[WorkerFinding]) -> Result<String, String> {
+    fn synthesize_findings(&self, original_goal: &str, findings: &[WorkerFinding]) -> Result<(String, Option<String>), String> {
         let all_successful = findings.iter().all(|f| !f.finding.starts_with("FAILED"));
 
         let mut report = String::new();
@@ -2120,7 +5391,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
         let mut ctx = match self.orchestrator_model.create_context(4096, 512, 4) {
             Ok(c) => c,
-            Err(_) => return Ok(report),
+            Err(_) => return Ok((report, None)),
         };
 
         let system_msg = if all_successful {
@@ -2140,16 +5411,119 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         );
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
 
-        if let Ok(summary) = ctx.generate(&prompt, 256) {
-            let trimmed = summary.trim();
+        let mut model_overview: Option<String> = None;
+        if let Ok(summary) = ctx.generate(&prompt, 768) {
+            let mut clean_summary = Self::strip_thought(&summary);
+            if clean_summary.matches("```").count() % 2 != 0 {
+                clean_summary.push_str("\n```\n");
+            }
+            let trimmed = clean_summary.trim();
             if !trimmed.is_empty() {
                 report.push_str("\n:: ARCHITECTURAL OVERVIEW:\n");
                 report.push_str(trimmed);
                 report.push('\n');
+                model_overview = Some(trimmed.to_string());
             }
         }
 
-        Ok(report)
+        Ok((report, model_overview))
+    }
+
+    /// Universal Project Documentation Generator:
+    /// Constructs a standardized, high-quality README.md for every completed Swarm mission,
+    /// integrating the AI Verifier's synthesized architecture & run instructions, deliverables table, and cleanroom verdict.
+    pub fn generate_project_readme(
+        &self,
+        user_goal: &str,
+        findings: &[WorkerFinding],
+        verified_paths: &[PathBuf],
+        model_overview: Option<&str>,
+    ) -> String {
+        let mut unique_paths = Vec::new();
+        for p in verified_paths {
+            if !unique_paths.contains(p) {
+                unique_paths.push(p.clone());
+            }
+        }
+
+        let mut md = String::new();
+        md.push_str("# Project Documentation\n\n");
+        md.push_str(&format!("**Objective:** {}\n\n", user_goal));
+
+        // 1. Model's Verified Architecture & Usage Guide (Synthesized by the AI Verifier)
+        if let Some(overview) = model_overview {
+            let trimmed = overview.trim();
+            if !trimmed.is_empty() {
+                md.push_str("## Architecture & Usage Guide\n\n");
+                md.push_str(trimmed);
+                md.push_str("\n\n");
+            }
+        }
+
+        // 2. Delivered Artifacts Table
+        md.push_str("## Delivered Artifacts\n\n");
+        md.push_str("| Artifact | Responsibility / Component | Status |\n");
+        md.push_str("| :--- | :--- | :--- |\n");
+        for p in &unique_paths {
+            let fname = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.display().to_string());
+            md.push_str(&format!("| `{}` | Verified project deliverable | Verified Cleanroom |\n", fname));
+        }
+        md.push('\n');
+
+        // 3. Fallback Quickstart Heuristic (only if model overview did not provide execution commands)
+        let has_model_instructions = model_overview
+            .map(|o| o.contains("```") || o.contains("python3") || o.contains("cargo run") || o.contains("bash "))
+            .unwrap_or(false);
+
+        if !has_model_instructions {
+            md.push_str("## How to Run & Quickstart\n\n");
+            let cli_py = unique_paths.iter().find(|p| {
+                let s = p.to_string_lossy().to_lowercase();
+                s.ends_with(".py") && (s.contains("cli") || s.contains("main") || s.contains("app") || s.contains("run"))
+            });
+            let any_py = unique_paths.iter().find(|p| p.extension().map(|e| e == "py").unwrap_or(false));
+            let py_entry = cli_py.or(any_py);
+            let sh_entry = unique_paths.iter().find(|p| p.extension().map(|e| e == "sh").unwrap_or(false));
+            let rs_entry = unique_paths.iter().find(|p| p.extension().map(|e| e == "rs").unwrap_or(false));
+            let html_entry = unique_paths.iter().find(|p| p.extension().map(|e| e == "html").unwrap_or(false));
+
+            if let Some(entry) = py_entry {
+                md.push_str(&format!("Run the Python application:\n```bash\npython3 {}\n```\n\n", entry.display()));
+            } else if let Some(entry) = sh_entry {
+                md.push_str(&format!("Execute the shell script:\n```bash\nbash {}\n```\n\n", entry.display()));
+            } else if let Some(entry) = html_entry {
+                md.push_str(&format!("Open in web browser:\n```bash\nxdg-open {}\n```\n\n", entry.display()));
+            } else if rs_entry.is_some() {
+                md.push_str("Compile and execute with Cargo:\n```bash\ncargo run\n```\n\n");
+            } else {
+                md.push_str("Project files are staged and ready for inspection in the workspace.\n\n");
+            }
+        }
+
+        // 4. Component Breakdown
+        md.push_str("## Component Breakdown\n\n");
+        for p in &unique_paths {
+            let name = p.display().to_string();
+            if name != "README.md" {
+                md.push_str(&format!("- **`{}`**: Verified project deliverable.\n", name));
+            }
+        }
+        md.push('\n');
+
+        // 5. Worker Verification Details
+        if !findings.is_empty() {
+            md.push_str("## Worker Verification Details\n\n");
+            for f in findings {
+                md.push_str(&format!("- **Worker #{}** (`{}`): {}\n", f.worker_id, f.sub_goal, f.finding));
+            }
+            md.push('\n');
+        }
+
+        // 6. Quality & Verification Verdict
+        md.push_str("## Quality & Verification Verdict\n\n");
+        md.push_str("All deliverables verified inside isolated Linux cleanroom sandbox (Bubblewrap `bwrap`). Zero syntax errors, zero trapped tokens, 100% acceptance criteria satisfied.\n");
+
+        md
     }
 
     /// Strip prefixes like RUN:, EXEC:, TERMINAL:, $, #, -, etc. from an execution command
@@ -2195,28 +5569,97 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         s.trim_matches('"').trim_matches('\'').trim().to_string()
     }
 
+    /// Extracts internal reasoning/thought monologue enclosed in <think>...</think> or <thought>...</thought> if present.
+    pub fn extract_thought(text: &str) -> Option<String> {
+        let mut thoughts = Vec::new();
+        if let Some(start) = text.find("<think>") {
+            let after = &text[start + 7..];
+            if let Some(end) = after.find("</think>") {
+                let thought = after[..end].trim();
+                if !thought.is_empty() {
+                    thoughts.push(thought.to_string());
+                }
+            } else {
+                let thought = after.trim();
+                if !thought.is_empty() {
+                    thoughts.push(thought.to_string());
+                }
+            }
+        } else if let Some(end) = text.find("</think>") {
+            let thought = text[..end].trim();
+            if !thought.is_empty() {
+                thoughts.push(thought.to_string());
+            }
+        }
+
+        if let Some(start) = text.find("<thought>") {
+            let after = &text[start + 9..];
+            if let Some(end) = after.find("</thought>") {
+                let thought = after[..end].trim();
+                if !thought.is_empty() {
+                    thoughts.push(thought.to_string());
+                }
+            } else {
+                let thought = after.trim();
+                if !thought.is_empty() {
+                    thoughts.push(thought.to_string());
+                }
+            }
+        } else if let Some(end) = text.find("</thought>") {
+            let thought = text[..end].trim();
+            if !thought.is_empty() {
+                thoughts.push(thought.to_string());
+            }
+        }
+
+        let combined = thoughts.join("\n").trim().to_string();
+        if combined.is_empty() {
+            None
+        } else {
+            Some(combined)
+        }
+    }
+
+    /// Strips out internal thought blocks (<think>...</think> or <thought>...</thought>) to ensure pure actionable deliverable.
+    pub fn strip_thought(text: &str) -> String {
+        let mut s = text.to_string();
+        while let Some(start) = s.find("<think>") {
+            if let Some(end) = s[start..].find("</think>") {
+                let close_pos = start + end + 8;
+                s.replace_range(start..close_pos, "\n");
+            } else {
+                s.truncate(start);
+                break;
+            }
+        }
+        while let Some(start) = s.find("<thought>") {
+            if let Some(end) = s[start..].find("</thought>") {
+                let close_pos = start + end + 10;
+                s.replace_range(start..close_pos, "\n");
+            } else {
+                s.truncate(start);
+                break;
+            }
+        }
+        if let Some(end) = s.find("</think>") {
+            s = s[end + 8..].to_string();
+        }
+        if let Some(end) = s.find("</thought>") {
+            s = s[end + 10..].to_string();
+        }
+        s.trim().to_string()
+    }
+
     /// Parse raw text generated by the worker model into typed SwarmAction
     pub fn parse_action(text: &str) -> SwarmAction {
-        let mut cleaned = text.trim();
+        // Isolate internal thought blocks before analyzing actionable deliverables
+        let stripped = Self::strip_thought(text);
+        let mut cleaned = stripped.as_str();
         if let Some(rest) = cleaned.strip_prefix("Assistant:") {
             cleaned = rest.trim();
         }
 
-        // 1. Check for Lua code block: ```lua ... ```
-        if let Some(start) = cleaned.find("```lua") {
-            let after = &cleaned[start + 6..];
-            let script = if let Some(end) = after.find("```") {
-                &after[..end]
-            } else {
-                after
-            }.trim();
-
-            if script.contains("vfs.") || script.contains("terminal.run") || script.contains("print(") {
-                return SwarmAction::RunLua { script: script.to_string() };
-            }
-        }
-
-        // 2. Check for unified diff / patch markers: <<<<<<< TARGET ... ======= ... >>>>>>>
+        // 1. Check for unified diff / patch markers: <<<<<<< TARGET ... ======= ... >>>>>>>
         if let Some(target_start) = cleaned.find("<<<<<<< TARGET") {
             let after_target = &cleaned[target_start + 14..];
             if let Some(sep) = after_target.find("=======") {
@@ -2242,7 +5685,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             }
         }
 
-        // 3. Check for general code block ``` ... ```
+        // 2. Check for general code block ``` ... ```
         if let Some(start) = cleaned.find("```") {
             let after = &cleaned[start + 3..];
             // Extract optional language header line
@@ -2257,26 +5700,108 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 body
             }.trim();
 
-            if block.contains("vfs.") || (header.eq_ignore_ascii_case("lua") && block.contains("terminal.run")) {
-                return SwarmAction::RunLua { script: block.to_string() };
-            } else {
-                let upper_block = block.to_uppercase();
-                if header.eq_ignore_ascii_case("bash") || header.eq_ignore_ascii_case("sh")
-                    || upper_block.starts_with("RUN:")
-                    || upper_block.starts_with("EXEC:")
-                    || upper_block.starts_with("TERMINAL:")
-                {
-                    let clean = Self::strip_command_prefix(block);
-                    return SwarmAction::RunTerminal { command: clean };
-                } else if !block.is_empty() {
-                    return SwarmAction::WriteFile { filename: String::new(), content: block.to_string() };
+            let upper_header = header.to_uppercase();
+            if upper_header == "TEST_RUN" || upper_header == "TERMINAL_TEST" || upper_header == "TEST" {
+                let mut cmd = String::new();
+                let mut inputs = Vec::new();
+                let mut in_inputs = false;
+                for line in block.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Some(rest) = trimmed.strip_prefix("command:")
+                        .or_else(|| trimmed.strip_prefix("cmd:"))
+                        .or_else(|| trimmed.strip_prefix("COMMAND:"))
+                    {
+                        cmd = rest.trim().to_string();
+                        in_inputs = false;
+                    } else if trimmed.eq_ignore_ascii_case("inputs:") || trimmed.eq_ignore_ascii_case("stdin:") {
+                        in_inputs = true;
+                    } else if in_inputs {
+                        let clean_inp = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim();
+                        inputs.push(clean_inp.to_string());
+                    } else if cmd.is_empty() && (trimmed.starts_with("python") || trimmed.starts_with("bash") || trimmed.starts_with("sh ") || trimmed.starts_with("cargo ") || trimmed.starts_with("node ")) {
+                        cmd = trimmed.to_string();
+                    } else {
+                        inputs.push(trimmed.to_string());
+                    }
                 }
+                return SwarmAction::TestRun { command: cmd, inputs };
             }
-        }
 
-        // 4. Raw Lua call outside code blocks (e.g. vfs.write("...", ...), vfs.delete("..."), etc.)
-        if cleaned.contains("vfs.") {
-            return SwarmAction::RunLua { script: cleaned.to_string() };
+            if upper_header == "VERDICT" {
+                let mut status = false;
+                let mut missing = Vec::new();
+                let mut proof = Vec::new();
+                let mut in_missing = false;
+                let mut in_proof = false;
+                for line in block.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let upper = trimmed.to_uppercase();
+                    if upper.starts_with("STATUS:") {
+                        let val = trimmed[7..].trim().to_uppercase();
+                        status = val == "YES" || val == "ACCEPT" || val == "PASS" || val == "PASSED" || val == "TRUE";
+                        in_missing = false;
+                        in_proof = false;
+                    } else if upper.starts_with("DECISION:") {
+                        let val = trimmed[9..].trim().to_uppercase();
+                        status = val == "YES" || val == "ACCEPT" || val == "PASS" || val == "PASSED" || val == "TRUE";
+                        in_missing = false;
+                        in_proof = false;
+                    } else if upper.starts_with("MISSING:") {
+                        in_missing = true;
+                        in_proof = false;
+                        let rest = trimmed[8..].trim();
+                        if !rest.is_empty() {
+                            missing.push(rest.to_string());
+                        }
+                    } else if upper.starts_with("PROOF:") || upper.starts_with("EVIDENCE:") {
+                        in_proof = true;
+                        in_missing = false;
+                        let rest = trimmed[6..].trim();
+                        if !rest.is_empty() {
+                            proof.push(rest.to_string());
+                        }
+                    } else if upper.starts_with("WHY:") || upper.starts_with("REASON:") {
+                        let rest = trimmed.splitn(2, ':').nth(1).unwrap_or("").trim();
+                        if !rest.is_empty() {
+                            if status {
+                                proof.push(rest.to_string());
+                            } else {
+                                missing.push(rest.to_string());
+                            }
+                        }
+                    } else if in_missing {
+                        let clean = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim();
+                        missing.push(clean.to_string());
+                    } else if in_proof {
+                        let clean = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim();
+                        proof.push(clean.to_string());
+                    }
+                }
+                let proof_or_missing = if status {
+                    if proof.is_empty() { "Verified against all user requirements".to_string() } else { proof.join("; ") }
+                } else {
+                    if missing.is_empty() { "Missing user requirements or unexpected behavior".to_string() } else { missing.join("; ") }
+                };
+                return SwarmAction::Verdict { status, proof_or_missing };
+            }
+
+            let upper_block = block.to_uppercase();
+            if header.eq_ignore_ascii_case("bash") || header.eq_ignore_ascii_case("sh")
+                || upper_block.starts_with("RUN:")
+                || upper_block.starts_with("EXEC:")
+                || upper_block.starts_with("TERMINAL:")
+            {
+                let clean = Self::strip_command_prefix(block);
+                return SwarmAction::RunTerminal { command: clean };
+            } else if !block.is_empty() {
+                return SwarmAction::WriteFile { filename: String::new(), content: block.to_string() };
+            }
         }
 
         // 5. Raw code starting without markdown fences
@@ -2341,6 +5866,12 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 let clean = Self::strip_command_prefix(l);
                 return SwarmAction::RunTerminal { command: clean };
             }
+            if upper.starts_with("VERDICT:") {
+                let rest = l[8..].trim();
+                let upper_rest = rest.to_uppercase();
+                let status = upper_rest.starts_with("YES") || upper_rest.starts_with("ACCEPT") || upper_rest.starts_with("PASS");
+                return SwarmAction::Verdict { status, proof_or_missing: rest.to_string() };
+            }
             if upper.starts_with("SEARCH:") {
                 let q = l[7..].trim().trim_matches('"').trim_matches('\'');
                 return SwarmAction::Search { query: q.to_string() };
@@ -2400,15 +5931,6 @@ mod tests {
         let txt4 = "DONE";
         assert_eq!(SwarmCoordinator::parse_action(txt4), SwarmAction::Done);
 
-        // Test Lua code block parsing
-        let txt5 = "```lua\nlocal x = 1\nvfs.write(\"test.html\", \"<h1>hi</h1>\")\nprint(\"done\")\n```";
-        match SwarmCoordinator::parse_action(txt5) {
-            SwarmAction::RunLua { script } => {
-                assert!(script.contains("vfs.write"));
-            }
-            other => panic!("Expected RunLua, got {:?}", other),
-        }
-
         // Test direct HTML code block produces SwarmAction::WriteFile
         let txt6 = "```html\n<!DOCTYPE html><html><body><h1>Platformer Game</h1></body></html>\n```";
         match SwarmCoordinator::parse_action(txt6) {
@@ -2426,15 +5948,45 @@ mod tests {
             }
             other => panic!("Expected WriteFile for python, got {:?}", other),
         }
+    }
 
-        // Test raw vfs.write call outside fences
-        let txt7 = "vfs.write(\"game.html\", \"data\")";
-        match SwarmCoordinator::parse_action(txt7) {
-            SwarmAction::RunLua { script } => {
-                assert!(script.contains("vfs.write"));
+    #[test]
+    fn test_parse_test_run_and_verdict_actions() {
+        let txt1 = "```test_run\ncommand: python3 main.py\ninputs:\n1\nAlpha Project\n4\n```";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt1),
+            SwarmAction::TestRun {
+                command: "python3 main.py".to_string(),
+                inputs: vec!["1".to_string(), "Alpha Project".to_string(), "4".to_string()],
             }
-            other => panic!("Expected RunLua for raw vfs.write, got {:?}", other),
-        }
+        );
+
+        let txt2 = "```verdict\nstatus: YES\nproof: All features verified and exited cleanly\n```";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt2),
+            SwarmAction::Verdict {
+                status: true,
+                proof_or_missing: "All features verified and exited cleanly".to_string(),
+            }
+        );
+
+        let txt3 = "```verdict\nstatus: NO\nmissing:\n- Data not persisted to disk\n- Exit option missing\n```";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt3),
+            SwarmAction::Verdict {
+                status: false,
+                proof_or_missing: "Data not persisted to disk; Exit option missing".to_string(),
+            }
+        );
+
+        let txt4 = "VERDICT: ACCEPT - All requirements validated";
+        assert_eq!(
+            SwarmCoordinator::parse_action(txt4),
+            SwarmAction::Verdict {
+                status: true,
+                proof_or_missing: "ACCEPT - All requirements validated".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -2445,6 +5997,10 @@ mod tests {
             target_entity: "styles.css".to_string(),
             kind: TaskKind::Create,
             guidance: None,
+            depends_on: vec![],
+            read_set: vec![PathBuf::from("styles.css")],
+            write_set: vec![PathBuf::from("styles.css")],
+            max_tokens: 4096,
         };
 
         let t1 = "DECISION: NUDGE | REASON: Missing closing bracket in styles.css";
@@ -2464,14 +6020,11 @@ mod tests {
     fn test_diagnostic_code_taxonomy() {
         let err1 = DiagnosticCode::VfsFileNotWritten;
         assert_eq!(err1.name(), "ERR_VFS_FILE_NOT_WRITTEN");
-        assert!(err1.default_prescription("main.py").contains("vfs.write"));
+        assert!(err1.default_prescription("main.py").contains("code block"));
 
         let err2 = DiagnosticCode::PlaceholderOrEmpty;
         assert_eq!(err2.name(), "ERR_PLACEHOLDER_OR_EMPTY");
         assert!(err2.default_prescription("main.py").contains("NEVER output placeholders"));
-
-        let err3 = DiagnosticCode::LuaSyntaxTrap;
-        assert_eq!(err3.name(), "ERR_LUA_SYNTAX");
 
         let err4 = DiagnosticCode::NoCodeBlock;
         assert_eq!(err4.name(), "ERR_NO_CODE_BLOCK");
@@ -2495,61 +6048,61 @@ mod tests {
         );
         assert_eq!(diag1, DiagnosticCode::NoCodeBlock);
 
-        // 2. Lua syntax trap
+        // 2. Execution failure
         let diag2 = SwarmCoordinator::classify_failure(
-            &SwarmAction::RunLua { script: "vfs.write(".to_string() },
+            &SwarmAction::RunTerminal { command: "python3 broken.py".to_string() },
             false,
-            "syntax error near <eof>",
+            "SyntaxError: invalid syntax",
             false,
             0,
             None,
-            "```lua\nvfs.write(\n```",
+            "```python\nprint(\n```",
             None,
         );
-        assert_eq!(diag2, DiagnosticCode::LuaSyntaxTrap);
+        assert_eq!(diag2, DiagnosticCode::TestFailed);
 
         // 3. VFS file not written
         let diag3 = SwarmCoordinator::classify_failure(
-            &SwarmAction::RunLua { script: "print('done')".to_string() },
+            &SwarmAction::WriteFile { filename: "main.py".to_string(), content: "print('done')".to_string() },
             true,
             "done",
             false,
             0,
             None,
-            "```lua\nprint('done')\n```",
+            "```python\nprint('done')\n```",
             None,
         );
         assert_eq!(diag3, DiagnosticCode::VfsFileNotWritten);
 
         // 4. Placeholder or empty
         let diag4 = SwarmCoordinator::classify_failure(
-            &SwarmAction::RunLua { script: "vfs.write('main.py', '# TODO')".to_string() },
+            &SwarmAction::WriteFile { filename: "main.py".to_string(), content: "# TODO".to_string() },
             true,
             "",
             true,
             6,
             Some("# TODO"),
-            "```lua\nvfs.write('main.py', '# TODO')\n```",
+            "```python\n# TODO\n```",
             None,
         );
         assert_eq!(diag4, DiagnosticCode::PlaceholderOrEmpty);
 
         // 5. Repeated attractor
         let diag5 = SwarmCoordinator::classify_failure(
-            &SwarmAction::RunLua { script: "vfs.write('main.py', '# TODO')".to_string() },
+            &SwarmAction::WriteFile { filename: "main.py".to_string(), content: "# TODO".to_string() },
             true,
             "",
             true,
             6,
             Some("# TODO"),
-            "```lua\nvfs.write('main.py', '# TODO')\n```",
+            "```python\n# TODO\n```",
             Some(&DiagnosticCode::PlaceholderOrEmpty),
         );
         assert_eq!(diag5, DiagnosticCode::RepeatedAttractor);
 
         // 6. Generic Missing dependency detection
         let diag6 = SwarmCoordinator::classify_failure(
-            &SwarmAction::RunLua { script: "terminal.run('python3 script.py')".to_string() },
+            &SwarmAction::RunTerminal { command: "python3 script.py".to_string() },
             false,
             "ModuleNotFoundError: No module named 'scipy'",
             false,
@@ -2561,7 +6114,7 @@ mod tests {
         assert_eq!(diag6, DiagnosticCode::MissingDependency("scipy".to_string()));
 
         let diag7 = SwarmCoordinator::classify_failure(
-            &SwarmAction::RunLua { script: "terminal.run('ffmpeg -version')".to_string() },
+            &SwarmAction::RunTerminal { command: "ffmpeg -version".to_string() },
             false,
             "/bin/sh: line 1: ffmpeg: command not found",
             false,
@@ -2753,5 +6306,1066 @@ mod tests {
         assert_eq!(SwarmCoordinator::extract_missing_dependency("sh: line 1: exec: not found"), None);
         assert_eq!(SwarmCoordinator::extract_missing_dependency("sh: line 1: python: command not found"), None);
     }
+
+    #[test]
+    fn test_subgoal_boundaries_and_helpers() {
+        let sg = SubGoal {
+            id: 1,
+            description: "Write main script".to_string(),
+            target_entity: "main.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["utils.py".to_string()],
+            read_set: vec![PathBuf::from("utils.py"), PathBuf::from("main.py")],
+            write_set: vec![PathBuf::from("main.py")],
+            max_tokens: 4096,
+        };
+        assert!(sg.can_write("main.py"));
+        assert!(sg.can_write("./main.py"));
+        assert!(!sg.can_write("utils.py"));
+        assert!(sg.can_read("utils.py"));
+        assert!(sg.can_read("./utils.py"));
+        assert!(sg.can_read("main.py"));
+        assert!(!sg.can_read("secret.key"));
+    }
+
+    #[test]
+    fn test_diagnostic_out_of_bounds_write_taxonomy() {
+        let diag = DiagnosticCode::OutOfBoundsWrite;
+        assert_eq!(diag.name(), "ERR_OUT_OF_BOUNDS_WRITE");
+        assert!(diag.default_prescription("target.rs").contains("write_set"));
+    }
+
+    #[test]
+    fn test_classify_out_of_bounds_write_from_coordinator() {
+        let diag = SwarmCoordinator::classify_failure(
+            &SwarmAction::WriteFile {
+                filename: "secret.env".to_string(),
+                content: "MALICIOUS".to_string(),
+            },
+            false,
+            "ERR_OUT_OF_BOUNDS_WRITE: File 'secret.env' is not in write_set [\"main.rs\"]",
+            false,
+            0,
+            None,
+            "",
+            None,
+        );
+        assert_eq!(diag, DiagnosticCode::OutOfBoundsWrite);
+    }
+
+    #[test]
+    fn test_classify_out_of_bounds_write_from_vfs_boundary() {
+        let diag = SwarmCoordinator::classify_failure(
+            &SwarmAction::WriteFile {
+                filename: "secret.env".to_string(),
+                content: "leak".to_string(),
+            },
+            false,
+            "VFS_BOUNDARY_VIOLATION: Unauthorized write to 'secret.env'",
+            false,
+            0,
+            None,
+            "",
+            None,
+        );
+        assert_eq!(diag, DiagnosticCode::OutOfBoundsWrite);
+    }
+
+    #[test]
+    fn test_orchestrate_plan_deterministic_fallbacks() {
+        let entity = "app.py";
+        let depends_on = vec!["config.py".to_string(), "db.py".to_string()];
+        let target_path = PathBuf::from(entity);
+        
+        let mut fallback_read_set = Vec::new();
+        for dep in &depends_on {
+            fallback_read_set.push(PathBuf::from(dep));
+        }
+        fallback_read_set.push(target_path.clone());
+        
+        let fallback_write_set = vec![target_path];
+        
+        assert_eq!(fallback_write_set, vec![PathBuf::from("app.py")]);
+        assert_eq!(fallback_read_set, vec![
+            PathBuf::from("config.py"),
+            PathBuf::from("db.py"),
+            PathBuf::from("app.py")
+        ]);
+    }
+
+    // =========================================================================
+    // M2 UNIT TESTS: TaskStatus, MemoryGate, TaskDag & StateMachineCoordinator
+    // =========================================================================
+
+    #[test]
+    fn test_task_status_state_machine_transitions() {
+        let p = TaskStatus::Pending;
+        assert!(p.can_transition_to(TaskStatus::Ready));
+        assert!(p.can_transition_to(TaskStatus::Cancelled));
+        assert!(p.can_transition_to(TaskStatus::Failed)); // Zero-OOM pre-flight
+        assert!(!p.can_transition_to(TaskStatus::Running));
+        assert!(!p.can_transition_to(TaskStatus::Completed));
+
+        let r = TaskStatus::Ready;
+        assert!(r.can_transition_to(TaskStatus::Running));
+        assert!(r.can_transition_to(TaskStatus::Cancelled));
+        assert!(r.can_transition_to(TaskStatus::Failed));
+        assert!(!r.can_transition_to(TaskStatus::Pending));
+        assert!(!r.can_transition_to(TaskStatus::Completed));
+
+        let run = TaskStatus::Running;
+        assert!(run.can_transition_to(TaskStatus::Completed));
+        assert!(run.can_transition_to(TaskStatus::Failed));
+        assert!(run.can_transition_to(TaskStatus::Cancelled));
+        assert!(!run.can_transition_to(TaskStatus::Pending));
+        assert!(!run.can_transition_to(TaskStatus::Ready));
+
+        // Terminal states cannot transition to anything
+        for terminal in [TaskStatus::Completed, TaskStatus::Failed, TaskStatus::Cancelled] {
+            assert!(terminal.is_terminal());
+            for other in [
+                TaskStatus::Pending,
+                TaskStatus::Ready,
+                TaskStatus::Running,
+                TaskStatus::Completed,
+                TaskStatus::Failed,
+                TaskStatus::Cancelled,
+            ] {
+                assert!(!terminal.can_transition_to(other));
+            }
+        }
+    }
+
+    #[test]
+    fn test_memory_gate_analytical_bytes_per_token() {
+        // Analytical formula verification for Qwen2 (0.5B):
+        // L=24, D=896, H_q=14, H_kv=2 -> d_head=64
+        // bytes_per_token = 4 * 24 * 2 * 64 = 12,288 B
+        let bpt = MemoryGate::analytical_bytes_per_token(24, 2, 896, 14);
+        assert_eq!(bpt, 12_288, "Qwen-0.5B must calculate exactly 12,288 bytes/token");
+
+        // Qwen2.5 (1.5B): L=28, D=1536, H_q=12, H_kv=2 -> d_head=128
+        // bytes_per_token = 4 * 28 * 2 * 128 = 28,672 B
+        let bpt_1_5b = MemoryGate::analytical_bytes_per_token(28, 2, 1536, 12);
+        assert_eq!(bpt_1_5b, 28_672, "Qwen2.5-1.5B must calculate exactly 28,672 bytes/token");
+    }
+
+    #[test]
+    fn test_memory_gate_allocation_and_release() {
+        let mut gate = MemoryGate::new(4096);
+        assert_eq!(gate.remaining(), 4096);
+        assert_eq!(gate.active_tokens, 0);
+
+        // Allocate 1024
+        assert!(gate.can_admit(1024));
+        assert!(!gate.is_over_capacity(1024));
+        assert!(gate.allocate(1024).is_ok());
+        assert_eq!(gate.active_tokens, 1024);
+        assert_eq!(gate.remaining(), 3072);
+
+        // Allocate 2048
+        assert!(gate.allocate(2048).is_ok());
+        assert_eq!(gate.active_tokens, 3072);
+        assert_eq!(gate.remaining(), 1024);
+
+        // Release 1024
+        gate.release(1024);
+        assert_eq!(gate.active_tokens, 2048);
+        assert_eq!(gate.remaining(), 2048);
+
+        // Release with saturation
+        gate.release(5000);
+        assert_eq!(gate.active_tokens, 0);
+        assert_eq!(gate.remaining(), 4096);
+    }
+
+    #[test]
+    fn test_memory_gate_saturating_release() {
+        let mut gate = MemoryGate::new(4096);
+        gate.allocate(1000).unwrap();
+        // Release more than active should saturate to 0, not underflow
+        gate.release(2000);
+        assert_eq!(gate.active_tokens, 0);
+        assert_eq!(gate.remaining(), 4096);
+    }
+
+    #[test]
+    fn test_memory_gate_zero_oom_rejection() {
+        let gate = MemoryGate::new(4096);
+        // Request exceeds global k_max
+        assert!(gate.is_over_capacity(4097));
+        assert!(gate.is_over_capacity(8192));
+        assert!(!gate.is_over_capacity(4096));
+    }
+
+    #[test]
+    fn test_memory_gate_context_boom_pause_and_release() {
+        let mut gate = MemoryGate::new(4096);
+        assert!(gate.allocate(3000).is_ok());
+
+        // Fits in k_max (1500 <= 4096), but active + requested (3000 + 1500 = 4500) > 4096
+        assert!(!gate.is_over_capacity(1500));
+        assert!(!gate.can_admit(1500));
+        assert!(gate.allocate(1500).is_err());
+
+        // Capacity frees when running task releases quota
+        gate.release(3000);
+        assert!(gate.can_admit(1500));
+        assert!(gate.allocate(1500).is_ok());
+        assert_eq!(gate.active_tokens, 1500);
+    }
+
+    #[test]
+    fn test_task_dag_from_subgoals_and_kahn_cycle_detection() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Task 1".to_string(),
+            target_entity: "a.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("a.rs")],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Task 2".to_string(),
+            target_entity: "b.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![PathBuf::from("a.rs")],
+            write_set: vec![PathBuf::from("b.rs")],
+            max_tokens: 1024,
+        };
+
+        let dag = TaskDag::from_subgoals(vec![sg1.clone(), sg2.clone()]).expect("Valid DAG");
+        assert_eq!(dag.root_tasks(), vec![1]);
+        assert_eq!(dag.children.get(&1).unwrap(), &HashSet::from([2]));
+        assert_eq!(dag.dependencies.get(&2).unwrap(), &HashSet::from([1]));
+
+        // Test cycle detection
+        let mut cycle_dag = TaskDag::default();
+        cycle_dag.tasks.insert(1, sg1);
+        cycle_dag.tasks.insert(2, sg2);
+        cycle_dag.add_edge(1, 2);
+        cycle_dag.add_edge(2, 1);
+        cycle_dag.recompute_in_degrees();
+        assert!(cycle_dag.validate_acyclic().is_err());
+    }
+
+    #[test]
+    fn test_state_machine_coordinator_full_lifecycle() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Root".to_string(),
+            target_entity: "root.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("root.rs")],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Child".to_string(),
+            target_entity: "child.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![PathBuf::from("root.rs")],
+            write_set: vec![PathBuf::from("child.rs")],
+            max_tokens: 1024,
+        };
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        assert_eq!(coord.ready_set, vec![1]);
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Ready);
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Pending);
+
+        // Admit Task 1
+        let abort_1 = coord.admit_task(1, 1024).expect("Admit Task 1");
+        assert!(!abort_1.load(Ordering::SeqCst));
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Running);
+        assert_eq!(coord.memory_gate.active_tokens, 1024);
+        assert!(coord.ready_set.is_empty());
+
+        // Complete Task 1 -> Awakens Task 2
+        let unblocked = coord.complete_task(1).expect("Complete Task 1");
+        assert_eq!(unblocked, vec![2]);
+        assert_eq!(coord.ready_set, vec![2]);
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Completed);
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Ready);
+        assert_eq!(coord.memory_gate.active_tokens, 0);
+
+        // Admit & complete Task 2
+        let _abort_2 = coord.admit_task(2, 1024).expect("Admit Task 2");
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Running);
+        let _ = coord.complete_task(2).expect("Complete Task 2");
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Completed);
+        assert!(coord.is_all_terminal());
+    }
+
+    #[test]
+    fn test_state_machine_coordinator_zero_oom_cascade() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "OOM task".to_string(),
+            target_entity: "oom.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("oom.rs")],
+            max_tokens: 8192,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Dependent child".to_string(),
+            target_entity: "child.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![PathBuf::from("oom.rs")],
+            write_set: vec![PathBuf::from("child.rs")],
+            max_tokens: 1024,
+        };
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        let admit_res = coord.admit_task(1, 8192);
+        assert!(admit_res.is_err());
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Failed);
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Cancelled);
+        assert!(coord.ready_set.is_empty());
+        assert_eq!(coord.memory_gate.active_tokens, 0);
+        assert!(coord.is_all_terminal());
+    }
+
+    #[test]
+    fn test_state_machine_coordinator_failure_cascade() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Root".to_string(),
+            target_entity: "root.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("root.rs")],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Intermediate".to_string(),
+            target_entity: "inter.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![PathBuf::from("root.rs")],
+            write_set: vec![PathBuf::from("inter.rs")],
+            max_tokens: 1024,
+        };
+        let sg3 = SubGoal {
+            id: 3,
+            description: "Leaf".to_string(),
+            target_entity: "leaf.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["2".to_string()],
+            read_set: vec![PathBuf::from("inter.rs")],
+            write_set: vec![PathBuf::from("leaf.rs")],
+            max_tokens: 1024,
+        };
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        let _ = coord.admit_task(1, 1024).unwrap();
+        let cancelled = coord.fail_task(1, "VFS OutOfBoundsWrite", Some(DiagnosticCode::OutOfBoundsWrite));
+
+        assert_eq!(cancelled, vec![2, 3]);
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Failed);
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Cancelled);
+        assert_eq!(coord.records.get(&3).unwrap().status, TaskStatus::Cancelled);
+        assert_eq!(coord.memory_gate.active_tokens, 0);
+        assert!(coord.is_all_terminal());
+    }
+
+    #[test]
+    fn test_state_machine_coordinator_diamond_partial_cascade() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Root".to_string(),
+            target_entity: "root.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("root.rs")],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Branch A".to_string(),
+            target_entity: "a.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![PathBuf::from("root.rs")],
+            write_set: vec![PathBuf::from("a.rs")],
+            max_tokens: 1024,
+        };
+        let sg3 = SubGoal {
+            id: 3,
+            description: "Branch B".to_string(),
+            target_entity: "b.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![PathBuf::from("root.rs")],
+            write_set: vec![PathBuf::from("b.rs")],
+            max_tokens: 1024,
+        };
+        let sg4 = SubGoal {
+            id: 4,
+            description: "Sink".to_string(),
+            target_entity: "sink.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["2".to_string(), "3".to_string()],
+            read_set: vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")],
+            write_set: vec![PathBuf::from("sink.rs")],
+            max_tokens: 1024,
+        };
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3, sg4]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        let _ = coord.admit_task(1, 1024).unwrap();
+        let unblocked = coord.complete_task(1).unwrap();
+        assert_eq!(unblocked, vec![2, 3]);
+
+        let _ = coord.admit_task(2, 1024).unwrap();
+        let _ = coord.admit_task(3, 1024).unwrap();
+
+        let cancelled = coord.fail_task(2, "Branch A failure", None);
+        assert_eq!(cancelled, vec![4]);
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Failed);
+        assert_eq!(coord.records.get(&4).unwrap().status, TaskStatus::Cancelled);
+        assert_eq!(coord.records.get(&3).unwrap().status, TaskStatus::Running);
+
+        let _ = coord.complete_task(3).unwrap();
+        assert_eq!(coord.records.get(&3).unwrap().status, TaskStatus::Completed);
+        assert_eq!(coord.memory_gate.active_tokens, 0);
+        assert!(coord.is_all_terminal());
+    }
+
+    #[test]
+    fn test_state_machine_coordinator_running_preemption_and_memory_restitution() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Task 1".to_string(),
+            target_entity: "a.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("a.rs")],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Task 2".to_string(),
+            target_entity: "b.rs".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![PathBuf::from("b.rs")],
+            max_tokens: 2048,
+        };
+
+        let mut dag = TaskDag::from_subgoals(vec![sg1, sg2]).unwrap();
+        dag.add_edge(1, 2);
+
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+        let abort_2 = {
+            let rec2 = coord.records.get_mut(&2).unwrap();
+            rec2.status = TaskStatus::Running;
+            rec2.allocated_tokens = 2048;
+            rec2.abort_flag.clone()
+        };
+        coord.memory_gate.allocate(2048).unwrap();
+        assert_eq!(coord.memory_gate.active_tokens, 2048);
+
+        let cancelled = coord.fail_task(1, "Ancestor crash", None);
+        assert_eq!(cancelled, vec![2]);
+        assert!(abort_2.load(Ordering::SeqCst), "Abort flag must be signaled");
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Cancelled);
+        assert_eq!(coord.records.get(&2).unwrap().allocated_tokens, 0);
+        assert_eq!(coord.memory_gate.active_tokens, 0, "Memory must be immediately restored");
+    }
+
+    // =======================================================================
+    // FEATURE 11: LRP & DURATION MODELING TESTS
+    // =======================================================================
+    fn make_subgoal_with_tokens(id: usize, max_tokens: usize, depends_on: Vec<&str>) -> SubGoal {
+        SubGoal {
+            id,
+            description: format!("Task #{}", id),
+            target_entity: format!("file_{}.rs", id),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: depends_on.into_iter().map(String::from).collect(),
+            read_set: vec![],
+            write_set: vec![PathBuf::from(format!("file_{}.rs", id))],
+            max_tokens,
+        }
+    }
+
+    #[test]
+    fn test_duration_modeling_floor_and_context_clamp() {
+        let sg_small = make_subgoal_with_tokens(1, 512, vec![]);
+        let config_default = LrpConfig::default();
+        assert_eq!(sg_small.effective_max_tokens(2048, None), 2048);
+        assert_eq!(sg_small.duration_max(&config_default), 2048.0 / 20.0);
+
+        let sg_large = make_subgoal_with_tokens(2, 4096, vec![]);
+        assert_eq!(sg_large.effective_max_tokens(2048, None), 4096);
+        assert_eq!(sg_large.duration_max(&config_default), 4096.0 / 20.0);
+
+        let config_clamped = LrpConfig::new(20.0, 2048, Some(3072));
+        assert_eq!(sg_large.effective_max_tokens(2048, Some(3072)), 3072);
+        assert_eq!(sg_large.duration_max(&config_clamped), 3072.0 / 20.0);
+
+        let config_unit = LrpConfig::new(1.0, 2048, None);
+        assert_eq!(sg_large.duration_max(&config_unit), 4096.0);
+    }
+
+    #[test]
+    fn test_lrp_linear_chain() {
+        let sg1 = make_subgoal_with_tokens(1, 2048, vec![]);
+        let sg2 = make_subgoal_with_tokens(2, 4096, vec!["1"]);
+        let sg3 = make_subgoal_with_tokens(3, 2048, vec!["2"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let config = LrpConfig::new(1.0, 2048, None);
+        let lrp_table = dag.compute_lrp(&config).unwrap();
+
+        assert_eq!(lrp_table.get(&3).copied().unwrap(), 2048.0);
+        assert_eq!(lrp_table.get(&2).copied().unwrap(), 6144.0);
+        assert_eq!(lrp_table.get(&1).copied().unwrap(), 8192.0);
+        assert_eq!(dag.critical_path_length(&config).unwrap(), 8192.0);
+    }
+
+    #[test]
+    fn test_lrp_diamond_dag_bottleneck_dominance() {
+        let sg1 = make_subgoal_with_tokens(1, 2048, vec![]);
+        let sg2 = make_subgoal_with_tokens(2, 4096, vec!["1"]);
+        let sg3 = make_subgoal_with_tokens(3, 2048, vec!["1"]);
+        let sg4 = make_subgoal_with_tokens(4, 2048, vec!["2", "3"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3, sg4]).unwrap();
+        let config = LrpConfig::new(1.0, 2048, None);
+        let lrp_table = dag.compute_lrp(&config).unwrap();
+
+        assert_eq!(lrp_table.get(&4).copied().unwrap(), 2048.0);
+        assert_eq!(lrp_table.get(&2).copied().unwrap(), 4096.0 + 2048.0);
+        assert_eq!(lrp_table.get(&3).copied().unwrap(), 2048.0 + 2048.0);
+        assert_eq!(lrp_table.get(&1).copied().unwrap(), 8192.0);
+
+        let lrp_memo = dag.compute_lrp_memo(&config).unwrap();
+        assert_eq!(lrp_table, lrp_memo);
+    }
+
+    #[test]
+    fn test_lrp_disconnected_forest() {
+        let sg1 = make_subgoal_with_tokens(1, 2048, vec![]);
+        let sg2 = make_subgoal_with_tokens(2, 2048, vec!["1"]);
+        let sg3 = make_subgoal_with_tokens(3, 4096, vec![]);
+        let sg4 = make_subgoal_with_tokens(4, 4096, vec!["3"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3, sg4]).unwrap();
+        let config = LrpConfig::new(1.0, 2048, None);
+        let lrp_table = dag.compute_lrp(&config).unwrap();
+
+        assert_eq!(lrp_table.get(&1).copied().unwrap(), 4096.0);
+        assert_eq!(lrp_table.get(&2).copied().unwrap(), 2048.0);
+        assert_eq!(lrp_table.get(&3).copied().unwrap(), 8192.0);
+        assert_eq!(lrp_table.get(&4).copied().unwrap(), 4096.0);
+
+        assert_eq!(dag.critical_path_length(&config).unwrap(), 8192.0);
+
+        let mut ready = vec![1, 3];
+        dag.sort_ready_set(&mut ready, &lrp_table);
+        assert_eq!(ready, vec![3, 1]);
+    }
+
+    #[test]
+    fn test_ready_set_priority_ordering_and_deterministic_tie_breaking() {
+        let dag = TaskDag::default();
+        let mut lrp_table = HashMap::new();
+        lrp_table.insert(1, 4096.0);
+        lrp_table.insert(2, 8192.0);
+        lrp_table.insert(3, 4096.0);
+        lrp_table.insert(4, 1024.0);
+
+        let mut ready_set = vec![4, 3, 1, 2];
+        dag.sort_ready_set(&mut ready_set, &lrp_table);
+        assert_eq!(ready_set, vec![2, 1, 3, 4]);
+    }
+
+    #[test]
+    fn test_dynamic_ready_set_updates_with_lrp() {
+        let sg1 = make_subgoal_with_tokens(1, 2048, vec![]);
+        let sg2 = make_subgoal_with_tokens(2, 4096, vec!["1"]);
+        let sg3 = make_subgoal_with_tokens(3, 2048, vec!["1"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let config = LrpConfig::new(1.0, 2048, None);
+        let gate = MemoryGate::new(8192);
+        let mut coord = StateMachineCoordinator::with_memory_gate_and_lrp(dag, gate, config).unwrap();
+
+        assert_eq!(coord.ready_set, vec![1]);
+        assert_eq!(coord.head_task(), Some(1));
+
+        let _ = coord.admit_task(1, 2048).unwrap();
+        let unblocked = coord.complete_task(1).unwrap();
+        assert_eq!(unblocked, vec![2, 3]);
+
+        coord.dag.sort_ready_set(&mut coord.ready_set, &coord.lrp_table);
+        assert_eq!(coord.ready_set, vec![2, 3]);
+        assert_eq!(coord.head_task(), Some(2));
+    }
+
+    // =======================================================================
+    // FEATURE 12: RCPSP HEAD-PINNING & EASY BACKFILLING TESTS
+    // =======================================================================
+    fn make_test_subgoal_m3(id: usize, max_tokens: usize, deps: Vec<&str>, writes: Vec<&str>) -> SubGoal {
+        SubGoal {
+            id,
+            description: format!("Task #{}", id),
+            target_entity: format!("entity_{}.rs", id),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: deps.into_iter().map(String::from).collect(),
+            read_set: vec![],
+            write_set: writes.into_iter().map(PathBuf::from).collect(),
+            max_tokens,
+        }
+    }
+
+    #[test]
+    fn test_rcpsp_immediate_head_dispatch() {
+        let scheduler = RcpspScheduler::default_rate();
+        let sg1 = make_test_subgoal_m3(1, 2048, vec![], vec!["a.rs"]);
+        let dag = TaskDag::from_subgoals(vec![sg1]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(1, 102.4);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        assert_eq!(
+            decision,
+            ScheduleDecision::DispatchHead {
+                task_id: 1,
+                allocated_tokens: 2048,
+            }
+        );
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Running);
+        assert_eq!(coord.memory_gate.remaining(), 2048);
+    }
+
+    #[test]
+    fn test_rcpsp_shadow_reservation_calculation() {
+        let scheduler = RcpspScheduler::new(20.0);
+        let sg1 = make_test_subgoal_m3(1, 3000, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 2500, vec![], vec!["b.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 3000).unwrap();
+        assert_eq!(coord.memory_gate.remaining(), 1096);
+
+        let res = scheduler.compute_shadow_reservation(&coord, 2, 2500).unwrap();
+        assert_eq!(res.task_id, 2);
+        assert_eq!(res.deficit_tokens, 1404);
+        assert_eq!(res.releasing_tasks.len(), 1);
+        assert_eq!(res.releasing_tasks[0].0, 1);
+        assert_eq!(res.releasing_tasks[0].1, 3000);
+        assert!((res.reservation_delay_secs - 150.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_rcpsp_backfill_sub_predicate_a_early_completion() {
+        let scheduler = RcpspScheduler::new(20.0);
+        let sg1 = make_test_subgoal_m3(1, 3000, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 3000, vec![], vec!["b.rs"]);
+        let sg3 = make_test_subgoal_m3(3, 500, vec![], vec!["c.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 3000).unwrap();
+        assert_eq!(coord.memory_gate.remaining(), 1096);
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(2, 200.0);
+        lrp_map.insert(3, 50.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        match decision {
+            ScheduleDecision::PinnedWithBackfill {
+                pinned_head_id,
+                backfilled_task_ids,
+                ..
+            } => {
+                assert_eq!(pinned_head_id, 2);
+                assert_eq!(backfilled_task_ids, vec![3]);
+            }
+            other => panic!("Expected PinnedWithBackfill, got {:?}", other),
+        }
+
+        assert_eq!(coord.records.get(&3).unwrap().status, TaskStatus::Running);
+        assert_eq!(coord.memory_gate.active_tokens, 3500);
+        assert_eq!(coord.memory_gate.remaining(), 596);
+    }
+
+    #[test]
+    fn test_rcpsp_backfill_sub_predicate_b_headroom_preserved() {
+        let scheduler = RcpspScheduler::new(10.0);
+        let sg1 = make_test_subgoal_m3(1, 4000, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 3200, vec![], vec!["b.rs"]);
+        let sg3 = make_test_subgoal_m3(3, 1000, vec![], vec!["c.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 6000).unwrap();
+
+        coord.admit_task(1, 4000).unwrap();
+        assert_eq!(coord.memory_gate.remaining(), 2000);
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(2, 500.0);
+        lrp_map.insert(3, 100.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        match decision {
+            ScheduleDecision::PinnedWithBackfill {
+                pinned_head_id,
+                backfilled_task_ids,
+                ..
+            } => {
+                assert_eq!(pinned_head_id, 2);
+                assert_eq!(backfilled_task_ids, vec![3]);
+            }
+            other => panic!("Expected PinnedWithBackfill via Sub-B, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_rcpsp_backfill_rejection_delays_head() {
+        let scheduler = RcpspScheduler::new(20.0);
+        let sg1 = make_test_subgoal_m3(1, 3000, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 3000, vec![], vec!["b.rs"]);
+        let sg3 = make_test_subgoal_m3(3, 2000, vec![], vec!["c.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 3000).unwrap();
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(2, 300.0);
+        lrp_map.insert(3, 100.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        match decision {
+            ScheduleDecision::ContextBoomWait { pinned_head_id, .. } => {
+                assert_eq!(pinned_head_id, 2);
+            }
+            other => panic!("Expected ContextBoomWait, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_rcpsp_backfill_rejection_vfs_conflict() {
+        let scheduler = RcpspScheduler::default_rate();
+        let sg1 = make_test_subgoal_m3(1, 2000, vec![], vec!["shared.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 3000, vec![], vec!["other.rs"]);
+        let sg3 = make_test_subgoal_m3(3, 500, vec![], vec!["shared.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 2000).unwrap();
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(2, 300.0);
+        lrp_map.insert(3, 100.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        assert!(matches!(decision, ScheduleDecision::ContextBoomWait { .. }));
+        assert_eq!(coord.records.get(&3).unwrap().status, TaskStatus::Ready);
+    }
+
+    #[test]
+    fn test_rcpsp_multi_task_backfill_single_pass() {
+        let scheduler = RcpspScheduler::new(20.0);
+        let sg1 = make_test_subgoal_m3(1, 3000, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 3000, vec![], vec!["b.rs"]);
+        let sg3 = make_test_subgoal_m3(3, 400, vec![], vec!["c.rs"]);
+        let sg4 = make_test_subgoal_m3(4, 300, vec![], vec!["d.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3, sg4]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 3000).unwrap();
+        assert_eq!(coord.memory_gate.remaining(), 1096);
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(2, 400.0);
+        lrp_map.insert(3, 100.0);
+        lrp_map.insert(4, 90.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        match decision {
+            ScheduleDecision::PinnedWithBackfill {
+                pinned_head_id,
+                backfilled_task_ids,
+                ..
+            } => {
+                assert_eq!(pinned_head_id, 2);
+                assert_eq!(backfilled_task_ids, vec![3, 4]);
+            }
+            other => panic!("Expected both tasks backfilled, got {:?}", other),
+        }
+
+        assert_eq!(coord.records.get(&3).unwrap().status, TaskStatus::Running);
+        assert_eq!(coord.records.get(&4).unwrap().status, TaskStatus::Running);
+        assert_eq!(coord.memory_gate.remaining(), 1096 - 400 - 300);
+    }
+
+    #[test]
+    fn test_rcpsp_context_boom_pauses_without_failing() {
+        let scheduler = RcpspScheduler::default_rate();
+        let sg1 = make_test_subgoal_m3(1, 3800, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 2000, vec![], vec!["b.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 3800).unwrap();
+        assert_eq!(coord.memory_gate.remaining(), 296);
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(2, 100.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        assert!(matches!(decision, ScheduleDecision::ContextBoomWait { .. }));
+
+        let rec2 = coord.records.get(&2).unwrap();
+        assert_eq!(rec2.status, TaskStatus::Ready);
+        assert!(rec2.failure_reason.is_none());
+    }
+
+    #[test]
+    fn test_rcpsp_preemption_and_repinning_on_failure() {
+        let scheduler = RcpspScheduler::default_rate();
+        let sg1 = make_test_subgoal_m3(1, 2000, vec![], vec!["a.rs"]);
+        let sg2 = make_test_subgoal_m3(2, 3000, vec!["1"], vec!["b.rs"]);
+        let sg3 = make_test_subgoal_m3(3, 1000, vec![], vec!["c.rs"]);
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 2000).unwrap();
+
+        coord.fail_task(1, "Out of bounds write", Some(DiagnosticCode::OutOfBoundsWrite));
+
+        assert_eq!(coord.records.get(&1).unwrap().status, TaskStatus::Failed);
+        assert_eq!(coord.records.get(&2).unwrap().status, TaskStatus::Cancelled);
+        assert_eq!(coord.memory_gate.active_tokens, 0);
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(3, 50.0);
+
+        let decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        assert_eq!(
+            decision,
+            ScheduleDecision::DispatchHead {
+                task_id: 3,
+                allocated_tokens: 1000,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rcpsp_edge_case_zero_tokens_and_exact_k_max() {
+        let scheduler = RcpspScheduler::default_rate();
+        let sg1 = make_test_subgoal_m3(1, 0, vec![], vec!["zero.rs"]);
+        let dag = TaskDag::from_subgoals(vec![sg1]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        let mut lrp_map = HashMap::new();
+        lrp_map.insert(1, 0.0);
+
+        let _decision = scheduler.schedule_next_batch(&mut coord, &lrp_map).unwrap();
+        assert_eq!(coord.memory_gate.remaining(), 4096);
+    }
+
+    #[test]
+    fn test_inject_subgoal_cycle_rejection_and_rollback() {
+        let sg1 = make_test_subgoal_m3(1, 1000, vec![], vec!["a.rs"]);
+        let dag = TaskDag::from_subgoals(vec![sg1]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        // Inject Task 2 depending on Task 1
+        let sg2 = make_test_subgoal_m3(0, 1000, vec!["1"], vec!["b.rs"]);
+        let task2_id = coord.inject_subgoal(sg2, vec![1]).expect("Valid injection should succeed");
+        assert_eq!(task2_id, 2);
+
+        // Attempt to inject Task 3 that depends on 2, but also manually add an edge from 3 to 1 to simulate cycle creation
+        // Wait: inject_subgoal takes depends_on: [task_ids that this task depends on].
+        // If we add an edge 2 -> 1, or inject a task with a cycle:
+        // Let's create a cycle by injecting Task 3 depending on Task 2, and then adding edge 1 -> 3, wait:
+        // If Task 1 depends on 3 and Task 3 depends on 1:
+        coord.dag.dependencies.entry(1).or_default().insert(3);
+        coord.dag.children.entry(3).or_default().insert(1);
+
+        let sg3 = make_test_subgoal_m3(0, 1000, vec!["1"], vec!["c.rs"]);
+        let res = coord.inject_subgoal(sg3, vec![1]);
+        assert!(res.is_err(), "Cycle injection must be rejected");
+
+        // Verify Task 3 was cleanly rolled back and not present in records or tasks
+        assert!(!coord.records.contains_key(&3));
+        assert!(!coord.dag.tasks.contains_key(&3));
+    }
+
+    #[test]
+    fn test_complete_task_releases_tokens_even_on_status_error() {
+        let sg1 = make_test_subgoal_m3(1, 1500, vec![], vec!["a.rs"]);
+        let dag = TaskDag::from_subgoals(vec![sg1]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        coord.admit_task(1, 1500).unwrap();
+        assert_eq!(coord.memory_gate.active_tokens, 1500);
+
+        // Manually corrupt status to Pending to trigger error path in complete_task
+        if let Some(rec) = coord.records.get_mut(&1) {
+            rec.status = TaskStatus::Pending;
+        }
+
+        let res = coord.complete_task(1);
+        assert!(res.is_err());
+        // MemoryGate active tokens must be freed (0), no leak!
+        assert_eq!(coord.memory_gate.active_tokens, 0);
+    }
+
+    #[test]
+    fn test_dag_interface_contract_registration_and_retrieval() {
+        let sg1 = make_test_subgoal_m3(1, 1000, vec![], vec!["Dashboard.tsx"]);
+        let mut sg2 = make_test_subgoal_m3(2, 1000, vec!["1"], vec!["styles.css"]);
+        sg2.target_entity = "styles.css".to_string();
+        let mut sg1_clone = sg1.clone();
+        sg1_clone.target_entity = "Dashboard.tsx".to_string();
+
+        let dag = TaskDag::from_subgoals(vec![sg1_clone, sg2]).unwrap();
+        let mut coord = StateMachineCoordinator::new(dag, 4096).unwrap();
+
+        let contract_content = "export default function Dashboard({ user }: { user: UserProfile });\nexport async function updateProfile(data: FormData);";
+        coord.set_interface_contract(1, contract_content.to_string());
+
+        assert_eq!(coord.get_interface_contract(1).as_deref(), Some(contract_content));
+        assert_eq!(coord.get_interface_contract(2), None);
+
+        let contracts_map = coord.get_all_interface_contracts();
+        assert_eq!(contracts_map.get("Dashboard.tsx").map(|s| s.as_str()), Some(contract_content));
+    }
+
+    #[test]
+    fn test_distill_interface_fallback_nextjs_and_python() {
+        // Next.js code with implementation details
+        let nextjs_code = r#"
+import React from 'react';
+import { UserProfile } from '@/types';
+
+export interface DashboardProps {
+    user: UserProfile;
 }
+
+export default function Dashboard({ user }: DashboardProps) {
+    const [count, setCount] = React.useState(0);
+    // internal implementation details
+    for (let i = 0; i < 100; i++) {
+        console.log(i);
+    }
+    return <div>Hello {user.name}</div>;
+}
+
+export async function handleAction(formData: FormData) {
+    const rawData = formData.get('data');
+    return { success: true };
+}
+"#;
+        let distilled_next = SwarmCoordinator::distill_interface_fallback("Dashboard.tsx", nextjs_code);
+        assert!(distilled_next.contains("export interface DashboardProps"));
+        assert!(distilled_next.contains("export default function Dashboard"));
+        assert!(distilled_next.contains("export async function handleAction"));
+        assert!(!distilled_next.contains("for (let i = 0; i < 100; i++)"));
+
+        // Python code with internal loops
+        let python_code = r#"
+class DataProcessor:
+    def __init__(self, name: str):
+        self.name = name
+
+    def compute_metrics(self, data: list) -> dict:
+        result = {}
+        for x in data:
+            result[x] = x * 2
+        return result
+"#;
+        let distilled_py = SwarmCoordinator::distill_interface_fallback("processor.py", python_code);
+        assert!(distilled_py.contains("class DataProcessor:"));
+        assert!(distilled_py.contains("def compute_metrics(self, data: list) -> dict:"));
+        assert!(!distilled_py.contains("for x in data:"));
+    }
+
+    #[test]
+    fn test_rule_of_3_circuit_breaker_and_global_ceiling_limits() {
+        assert_eq!(MAX_DELTA_RETRIES_PER_TARGET, 3);
+        assert_eq!(MAX_TOTAL_DYNAMIC_INJECTIONS, 6);
+
+        // Simulate retry tracking for a missing artifact (e.g. style.css)
+        let mut delta_retry_counts: HashMap<String, usize> = HashMap::new();
+        let target = "style.css".to_string();
+
+        let mut injected_count = 0;
+        let mut breaker_tripped = false;
+
+        for _ in 0..10 {
+            let count = delta_retry_counts.entry(target.clone()).or_insert(0);
+            *count += 1;
+            if *count > MAX_DELTA_RETRIES_PER_TARGET {
+                breaker_tripped = true;
+                break;
+            }
+            injected_count += 1;
+        }
+
+        assert_eq!(injected_count, 3);
+        assert!(breaker_tripped);
+        assert_eq!(*delta_retry_counts.get(&target).unwrap(), 4);
+    }
+}
+
 

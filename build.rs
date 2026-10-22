@@ -17,6 +17,12 @@ fn main() {
     println!("cargo:rustc-link-lib=static=omni_llama_bridge");
 
     // Linker directives for libllama and libggml
+    if let Ok(custom_dir) = std::env::var("LLAMA_CPP_DIR") {
+        println!("cargo:rustc-link-search=native={}", custom_dir);
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", custom_dir);
+    }
+    println!("cargo:rustc-link-search=native=/usr/local/lib");
+    println!("cargo:rustc-link-search=native=/usr/lib");
     println!("cargo:rustc-link-search=native={}", bin_dir.display());
     println!("cargo:rustc-link-lib=dylib=llama");
     println!("cargo:rustc-link-lib=dylib=ggml");

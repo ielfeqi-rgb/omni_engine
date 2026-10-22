@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -38,6 +49,16 @@ impl ModelDownloader {
     pub fn get_tasks(&self) -> Vec<DownloadTask> {
         let guard = self.tasks.lock();
         guard.values().cloned().collect()
+    }
+
+    pub fn remove_task(&self, id: &str) {
+        let mut guard = self.tasks.lock();
+        guard.remove(id);
+    }
+
+    pub fn clear_completed(&self) {
+        let mut guard = self.tasks.lock();
+        guard.retain(|_, t| !t.is_completed && t.error.is_none());
     }
 
     pub fn start_download(&self, url: String, mut filename: String) -> String {

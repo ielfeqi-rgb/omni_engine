@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 // [GUIDANCE] This module has ZERO tests. It is the main user-facing API endpoint.
 // Add timeout to reqwest client: .timeout(Duration::from_secs(300))
 // Add at least one integration test (mock llama-server or use a real model).
@@ -146,16 +157,23 @@ pub async fn proxy_chat_completion(
     }
 }
 
-pub fn build_prompt(messages: &[ChatMessage]) -> String {
-    let mut prompt = String::new();
+pub fn build_prompt(messages: &[ChatMessage], model: &crate::native_llama::NativeLlamaModel) -> String {
+    let mut system_msg = None;
+    let mut user_msg = String::new();
     for msg in messages {
-        prompt.push_str(&format!("<|im_start|>{}
-{}<|im_end|>
-", msg.role, msg.content));
+        if msg.role == "system" {
+            system_msg = Some(msg.content.as_str());
+        } else if msg.role == "user" {
+            if !user_msg.is_empty() {
+                user_msg.push('\n');
+            }
+            user_msg.push_str(&msg.content);
+        } else if msg.role == "assistant" {
+            user_msg.push_str("\nAssistant: ");
+            user_msg.push_str(&msg.content);
+        }
     }
-    prompt.push_str("<|im_start|>assistant
-");
-    prompt
+    model.format_chat(system_msg, &user_msg)
 }
 
 pub async fn native_chat_completion(
@@ -163,7 +181,7 @@ pub async fn native_chat_completion(
     model: std::sync::Arc<crate::native_llama::NativeLlamaModel>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let is_stream = req.stream.unwrap_or(false);
-    let prompt = build_prompt(&req.messages);
+    let prompt = build_prompt(&req.messages, &model);
     let max_tokens = req.max_tokens.unwrap_or(512) as usize;
     
     let temp = req.temperature.unwrap_or(0.7);
@@ -180,14 +198,14 @@ pub async fn native_chat_completion(
             let tokens = model.tokenize(&prompt, true).map_err(|e| e.to_string())?;
             ctx.eval_tokens(&tokens, 0).map_err(|e| e.to_string())?;
             
-            let mut sampler = crate::native_llama::NativeLlamaSampler::new(&config).map_err(|e| e.to_string())?;
+            let mut sampler = crate::native_llama::NativeLlamaSampler::new(&config, model.n_vocab()).map_err(|e| e.to_string())?;
             let mut generated = String::new();
             
             for _ in 0..max_tokens {
                 let token = ctx.sample(&mut sampler).map_err(|e| e.to_string())?;
                 let piece = model.token_to_piece(token).map_err(|e| e.to_string())?;
                 
-                if piece.contains("<|im_end|>") || piece.contains("</s>") {
+                if piece.is_empty() || model.is_stop_token(token) || model.is_stop_piece(&piece) {
                     break;
                 }
                 
@@ -240,7 +258,7 @@ pub async fn native_chat_completion(
             let _ = tx.send(Err(std::io::Error::new(std::io::ErrorKind::Other, e))); return;
         }
         
-        let mut sampler = match crate::native_llama::NativeLlamaSampler::new(&config) {
+        let mut sampler = match crate::native_llama::NativeLlamaSampler::new(&config, model.n_vocab()) {
             Ok(s) => s,
             Err(e) => { let _ = tx.send(Err(std::io::Error::new(std::io::ErrorKind::Other, e))); return; }
         };
@@ -255,7 +273,7 @@ pub async fn native_chat_completion(
                 Err(e) => { let _ = tx.send(Err(std::io::Error::new(std::io::ErrorKind::Other, e))); return; }
             };
             
-            if piece.contains("<|im_end|>") || piece.contains("</s>") {
+            if piece.is_empty() || model.is_stop_token(token) || model.is_stop_piece(&piece) {
                 break;
             }
             

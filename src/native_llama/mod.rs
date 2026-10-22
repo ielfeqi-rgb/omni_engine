@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 //! Native Llama.cpp C FFI Engine and In-Memory KV-Cache Controller.
 //!
 //! Provides direct, in-process C-level access to transformer model weights,
@@ -7,6 +18,7 @@
 
 use colored::*;
 use serde::{Deserialize, Serialize};
+pub mod auto_detect;
 use std::ffi::CString;
 use std::io::{self, IsTerminal, Write};
 use std::os::raw::{c_char, c_void};
@@ -27,9 +39,9 @@ extern "C" {
     fn omni_llama_disable_logs();
 
     fn omni_llama_backend_init();
-    fn omni_llama_backend_free();
     fn omni_llama_load_model(path: *const c_char, n_gpu_layers: i32) -> *mut c_void;
     fn omni_llama_free_model(model: *mut c_void);
+    fn omni_llama_n_ctx_train(model: *mut c_void) -> i32;
     fn omni_llama_new_context(
         model: *mut c_void,
         n_ctx: i32,
@@ -51,6 +63,10 @@ extern "C" {
         buf: *mut c_char,
         buf_size: i32,
     ) -> i32;
+    fn omni_llama_get_chat_template(model: *mut c_void) -> *const c_char;
+    fn omni_llama_vocab_eos(model: *mut c_void) -> i32;
+    fn omni_llama_vocab_eot(model: *mut c_void) -> i32;
+    fn omni_llama_vocab_is_eog(model: *mut c_void, token: i32) -> bool;
     fn omni_llama_eval_tokens(
         ctx: *mut c_void,
         tokens: *const i32,
@@ -65,7 +81,6 @@ extern "C" {
     fn omni_llama_kv_cache_seq_rm(ctx: *mut c_void, seq_id: i32, p0: i32, p1: i32) -> bool;
     fn omni_llama_kv_cache_seq_cp(ctx: *mut c_void, seq_src: i32, seq_dst: i32, p0: i32, p1: i32);
     fn omni_llama_kv_cache_seq_shift(ctx: *mut c_void, seq_id: i32, p0: i32, p1: i32, delta: i32);
-    fn omni_llama_kv_cache_seq_pos_max(ctx: *mut c_void, seq_id: i32) -> i32;
     fn omni_llama_n_vocab(model: *mut c_void) -> i32;
     fn omni_llama_get_logits(
         ctx: *mut c_void,
@@ -86,7 +101,6 @@ extern "C" {
     );
     fn omni_llama_sampler_add_top_k(chain: *mut c_void, k: i32);
     fn omni_llama_sampler_add_top_p(chain: *mut c_void, p: f32, min_keep: usize);
-    fn omni_llama_sampler_add_min_p(chain: *mut c_void, p: f32, min_keep: usize);
     fn omni_llama_sampler_add_temp(chain: *mut c_void, temp: f32);
     fn omni_llama_sampler_add_dist(chain: *mut c_void, seed: u32);
     fn omni_llama_sampler_add_greedy(chain: *mut c_void);
@@ -94,16 +108,6 @@ extern "C" {
     fn omni_llama_sampler_accept(chain: *mut c_void, token: i32);
     fn omni_llama_sampler_reset(chain: *mut c_void);
     fn omni_llama_sampler_free(chain: *mut c_void);
-    fn omni_llama_sampler_create(
-        temp: f32,
-        top_p: f32,
-        top_k: i32,
-        penalty_repeat: f32,
-        penalty_freq: f32,
-        penalty_present: f32,
-        penalty_last_n: i32,
-        seed: u32,
-    ) -> *mut c_void;
 }
 
 /// Initialize the llama.cpp backend once per process lifecycle.
@@ -118,8 +122,15 @@ pub fn ensure_backend_initialized() {
 
 /// Represents a loaded GGUF transformer model in host / GPU memory.
 pub struct NativeLlamaModel {
-    raw_model: *mut c_void,
-    model_path: String,
+    pub raw_model: *mut c_void,
+    pub model_path: String,
+    pub eos_token: i32,
+    pub n_ctx_train: i32,
+    pub fim_pre: Option<String>,
+    pub fim_suf: Option<String>,
+    pub fim_mid: Option<String>,
+    pub config: auto_detect::OmniModelConfig,
+    tokenize_lock: std::sync::Mutex<()>,
 }
 
 unsafe impl Send for NativeLlamaModel {}
@@ -147,14 +158,98 @@ impl NativeLlamaModel {
 
         info!("Successfully loaded native model weights: {}", path_str);
 
-        Ok(Arc::new(Self {
+        let n_ctx_train = unsafe { omni_llama_n_ctx_train(raw) };
+        info!("Model native context length (n_ctx_train): {}", n_ctx_train);
+
+        let mut arc_model = Arc::new(Self {
             raw_model: raw,
             model_path: path_str,
-        }))
+            eos_token: 2, // Default
+            n_ctx_train,
+            fim_pre: None,
+            fim_suf: None,
+            fim_mid: None,
+            config: auto_detect::OmniModelConfig::default(),
+            tokenize_lock: std::sync::Mutex::new(()),
+        });
+
+        match auto_detect::detect_and_save_model_tokens(&arc_model.model_path, &arc_model) {
+            Ok(config) => {
+                if let Some(m) = Arc::get_mut(&mut arc_model) {
+                    m.eos_token = config.eos_token;
+                    m.fim_pre = config.fim_pre.clone();
+                    m.fim_suf = config.fim_suf.clone();
+                    m.fim_mid = config.fim_mid.clone();
+                    m.config = config;
+                }
+            }
+            Err(e) => {
+                println!("  [WARNING] Auto-detect failed: {}. Defaulting to eos=2", e);
+            }
+        }
+
+        Ok(arc_model)
+    }
+
+    /// Dynamically format chat prompts based on the model's detected template.
+    pub fn format_chat(&self, system: Option<&str>, user: &str) -> String {
+        self.config.format_chat(system, user)
+    }
+
+    /// Dynamically format a completed turn with an Assistant response sealed by the model's native turn_suffix.
+    pub fn format_completed_turn(&self, system: Option<&str>, user: &str, assistant_response: &str) -> String {
+        self.config.format_completed_turn(system, user, assistant_response)
+    }
+
+    /// Dynamically format an observation / environment feedback turn.
+    pub fn format_observation_turn(&self, observation: &str, next_instruction: &str) -> String {
+        self.config.format_observation_turn(observation, next_instruction)
+    }
+
+    /// Dynamically format a post-rollback correction nudge turn.
+    pub fn format_nudge_turn(&self, diagnostic: &str) -> String {
+        self.config.format_nudge_turn(diagnostic)
+    }
+
+    /// Check if a generated text piece matches any detected stop token.
+    pub fn is_stop_piece(&self, piece: &str) -> bool {
+        self.config.is_stop_piece(piece)
+    }
+
+    /// Check if a token ID matches detected stop tokens or is a native End-of-Generation token.
+    pub fn is_stop_token(&self, token_id: i32) -> bool {
+        self.config.is_stop_token(token_id) || self.is_eog(token_id)
+    }
+
+    /// Read the native embedded Jinja chat template directly from GGUF metadata.
+    pub fn get_chat_template(&self) -> Option<String> {
+        let ptr = unsafe { omni_llama_get_chat_template(self.raw_model) };
+        if ptr.is_null() {
+            None
+        } else {
+            let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+            c_str.to_str().ok().map(|s| s.to_string())
+        }
+    }
+
+    /// Native EOS (End-of-Sentence) token ID from GGUF vocab.
+    pub fn vocab_eos(&self) -> i32 {
+        unsafe { omni_llama_vocab_eos(self.raw_model) }
+    }
+
+    /// Native EOT (End-of-Turn) token ID from GGUF vocab.
+    pub fn vocab_eot(&self) -> i32 {
+        unsafe { omni_llama_vocab_eot(self.raw_model) }
+    }
+
+    /// Direct GGUF native query: is this token an End-of-Generation token?
+    pub fn is_eog(&self, token_id: i32) -> bool {
+        unsafe { omni_llama_vocab_is_eog(self.raw_model, token_id) }
     }
 
     /// Tokenize raw text into integer token IDs using the model's native vocabulary.
     pub fn tokenize(&self, text: &str, add_bos: bool) -> Result<Vec<i32>, String> {
+        let _guard = self.tokenize_lock.lock().map_err(|e| format!("Tokenize lock poisoned: {}", e))?;
         let c_text = CString::new(text.as_bytes())
             .map_err(|e| format!("Invalid text string: {}", e))?;
 
@@ -184,6 +279,7 @@ impl NativeLlamaModel {
     }
 
     pub fn token_to_piece(&self, token: i32) -> Result<String, String> {
+        let _guard = self.tokenize_lock.lock().map_err(|e| format!("Tokenize lock poisoned: {}", e))?;
         let mut buf = vec![0u8; 256];
         let len = unsafe {
             omni_llama_token_to_piece(
@@ -381,7 +477,7 @@ unsafe impl Send for NativeLlamaSampler {}
 
 impl NativeLlamaSampler {
     /// Build a new sampler chain based on `SamplingConfig`.
-    pub fn new(config: &SamplingConfig) -> Result<Self, String> {
+    pub fn new(config: &SamplingConfig, n_vocab: usize) -> Result<Self, String> {
         let chain = unsafe { omni_llama_sampler_init_chain() };
         if chain.is_null() {
             return Err("Failed to allocate native llama_sampler_chain (returned null)".to_string());
@@ -393,7 +489,7 @@ impl NativeLlamaSampler {
                 let last_n = if config.penalty_last_n > 0 { config.penalty_last_n } else { 64 };
                 omni_llama_sampler_add_penalties(
                     chain,
-                    151936, // Qwen2.5 vocab size // n_vocab
+                    n_vocab as i32, // dynamic vocab size
                     last_n,
                     config.repetition_penalty,
                     0.0, // penalty_freq
@@ -425,8 +521,8 @@ impl NativeLlamaSampler {
     }
 
     /// Convenience constructor for a greedy sampler.
-    pub fn greedy() -> Result<Self, String> {
-        Self::new(&SamplingConfig::greedy())
+    pub fn greedy(n_vocab: usize) -> Result<Self, String> {
+        Self::new(&SamplingConfig::greedy(), n_vocab)
     }
 
     /// Sample next token from context's last evaluated position (index -1).
@@ -472,6 +568,35 @@ impl Drop for NativeLlamaSampler {
 }
 
 /// An active inference execution context with direct C-level KV-cache manipulation.
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EntropyResult {
+    pub top_1_token: i32,
+    pub top_1_prob: f32,
+    pub top_2_token: i32,
+    pub top_2_prob: f32,
+    pub entropy: f32,
+}
+
+struct ProbItem {
+    token: i32,
+    prob: f32,
+}
+impl Eq for ProbItem {}
+impl PartialEq for ProbItem {
+    fn eq(&self, other: &Self) -> bool { self.token == other.token }
+}
+impl PartialOrd for ProbItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        other.prob.partial_cmp(&self.prob) // min-heap
+    }
+}
+impl Ord for ProbItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
 pub struct NativeLlamaContext {
     raw_ctx: *mut c_void,
     model: Arc<NativeLlamaModel>,
@@ -489,16 +614,30 @@ impl NativeLlamaContext {
             return Ok(());
         }
 
+        // Guard against KV-cache capacity overflow
+        if self.current_cursor + tokens.len() > self.n_ctx {
+            return Err(format!(
+                "KV-cache overflow: cursor ({}) + tokens ({}) exceeds maximum context window n_ctx ({})",
+                self.current_cursor, tokens.len(), self.n_ctx
+            ));
+        }
+
         // Chunk by batch size to respect llama.cpp cparams.n_batch limit
         let chunk_size = self.n_batch.max(64);
+        let mut local_cursor = self.current_cursor;
+
         for chunk in tokens.chunks(chunk_size) {
+            if local_cursor > i32::MAX as usize {
+                return Err("Cursor overflow: exceeds i32::MAX".to_string());
+            }
+
             let res = unsafe {
                 omni_llama_eval_tokens(
                     self.raw_ctx,
                     chunk.as_ptr(),
                     chunk.len() as i32,
                     seq_id,
-                    self.current_cursor as i32,
+                    local_cursor as i32,
                 )
             };
 
@@ -506,9 +645,11 @@ impl NativeLlamaContext {
                 return Err(format!("llama_decode failed with error code: {}", res));
             }
 
-            self.current_cursor += chunk.len();
+            local_cursor += chunk.len();
         }
 
+        // Commit updated cursor only upon complete multi-chunk success
+        self.current_cursor = local_cursor;
         Ok(())
     }
 
@@ -558,6 +699,65 @@ impl NativeLlamaContext {
         Ok(logits)
     }
 
+    pub fn compute_live_entropy(&self) -> Result<EntropyResult, String> {
+        let logits = self.get_logits()?;
+        if logits.is_empty() {
+            return Err("Empty logits array".into());
+        }
+
+        let mut max_l = f32::NEG_INFINITY;
+        for &l in &logits {
+            if l > max_l { max_l = l; }
+        }
+
+        let mut sum_exp = 0.0;
+        let mut exps = Vec::with_capacity(logits.len());
+        for &l in &logits {
+            let e = (l - max_l).exp();
+            sum_exp += e;
+            exps.push(e);
+        }
+
+        let mut heap = std::collections::BinaryHeap::with_capacity(51);
+        for (i, &e) in exps.iter().enumerate() {
+            let p = e / sum_exp;
+            if heap.len() < 50 {
+                heap.push(ProbItem { token: i as i32, prob: p });
+            } else if p > heap.peek().unwrap().prob {
+                heap.push(ProbItem { token: i as i32, prob: p });
+                heap.pop();
+            }
+        }
+
+        let mut top_50 = heap.into_sorted_vec();
+        top_50.reverse(); // Now descending
+
+        let mut entropy = 0.0;
+        for item in &top_50 {
+            if item.prob > 1e-10 {
+                entropy -= item.prob * item.prob.log2();
+            }
+        }
+
+        let (t1, p1, t2, p2) = if top_50.len() >= 2 {
+            (top_50[0].token, top_50[0].prob, top_50[1].token, top_50[1].prob)
+        } else if top_50.len() == 1 {
+            (top_50[0].token, top_50[0].prob, 0, 0.0)
+        } else {
+            (0, 0.0, 0, 0.0)
+        };
+
+        Ok(EntropyResult {
+            top_1_token: t1,
+            top_1_prob: p1,
+            top_2_token: t2,
+            top_2_prob: p2,
+            entropy,
+        })
+    }
+
+
+
     /// Autoregressively generate text from a prompt using a specified `SamplingConfig`.
     pub fn generate_with_sampling(
         &mut self,
@@ -568,7 +768,7 @@ impl NativeLlamaContext {
         let is_term = io::stdout().is_terminal();
         let prompt_tokens = self.model.tokenize(prompt, true)?;
 
-        let mut sampler = NativeLlamaSampler::new(config)?;
+        let mut sampler = NativeLlamaSampler::new(config, self.model.n_vocab())?;
 
         // Ingest prompt tokens into sampler history for repetition penalties
         for &tok in &prompt_tokens {
@@ -590,17 +790,7 @@ impl NativeLlamaContext {
             let next_tok = self.sample(&mut sampler)?;
             let piece = self.model.token_to_piece(next_tok)?;
 
-            // Check EOS tokens across model architectures (<|im_end|>, <|im_start|>, <|endoftext|>, <|eot_id|>, </s>, etc.)
-            if piece.is_empty()
-                || piece.contains("<|im_end|>")
-                || piece.contains("<|im_start|>")
-                || piece.contains("<|endoftext|>")
-                || piece.contains("<|eot_id|>")
-                || piece.contains("</s>")
-                || piece.contains("<end_of_turn>")
-                || piece.contains("### User")
-                || piece.contains("### System")
-            {
+            if piece.is_empty() || self.model.is_stop_token(next_tok) || self.model.is_stop_piece(&piece) {
                 break;
             }
 
@@ -633,15 +823,43 @@ impl NativeLlamaContext {
                 let _ = io::stdout().flush();
             }
 
-            // Loop repetition breaker: guard against infinite token cycle attractor loops
-            let tail_len = 32;
-            if generated.len() >= tail_len * 2 {
-                let tail = &generated[generated.len() - tail_len..];
-                if generated[..generated.len() - tail_len].contains(tail) {
-                    let trimmed = generated[..generated.len() - tail_len].trim_end();
-                    generated = trimmed.to_string();
-                    break;
+            // Guard against KV cache capacity exhaustion
+            if self.current_cursor + 1 >= self.n_ctx {
+                break;
+            }
+
+            // Intelligent loop breaker: guard against infinite token cycle attractor loops
+            // Uses safe UTF-8 character and line analysis to detect repeating cycles without false positives.
+            let chars: Vec<char> = generated.chars().collect();
+            let total_chars = chars.len();
+            let mut loop_detected = false;
+
+            // 1. Check for 3 consecutive identical non-empty lines
+            let recent_lines: Vec<&str> = generated.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+            if recent_lines.len() >= 3 {
+                let n = recent_lines.len();
+                if recent_lines[n - 1] == recent_lines[n - 2] && recent_lines[n - 2] == recent_lines[n - 3] && recent_lines[n - 1].len() >= 4 {
+                    loop_detected = true;
                 }
+            }
+
+            // 2. Check for periodic cycle repetitions (chunk repeated 3 times consecutively at tail)
+            if !loop_detected && total_chars >= 48 {
+                for window in [16, 24, 32, 48, 64] {
+                    if total_chars >= window * 3 {
+                        let w1 = &chars[total_chars - window..];
+                        let w2 = &chars[total_chars - window * 2..total_chars - window];
+                        let w3 = &chars[total_chars - window * 3..total_chars - window * 2];
+                        if w1 == w2 && w2 == w3 {
+                            loop_detected = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if loop_detected {
+                break;
             }
         }
 
@@ -694,21 +912,26 @@ impl NativeLlamaContext {
     /// Embeddings (RoPE) and introduces causal attention contamination. Use exact tail rollback instead.
     pub fn kv_cache_seq_rm(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
         let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
-        if ok {
-            if p1 < 0 || (p1 as usize) >= self.current_cursor {
-                self.current_cursor = p0.max(0) as usize;
-            } else {
-                warn!(
-                    "Middle KV cells excised [{}..{}) for seq {}: warning: non-tail excision without re-rotation leaves RoPE phases unadjusted",
-                    p0, p1, seq_id
-                );
-            }
-            info!(
-                "Physical KV Rollback executed: seq={}, [{}..{}), current_cursor={}",
-                seq_id, p0, p1, self.current_cursor
+        if !ok {
+            return Err(format!(
+                "kv_cache_seq_rm failed for seq={} [{}, {}): llama_kv_cache_seq_rm returned false",
+                seq_id, p0, p1
+            ));
+        }
+
+        if p1 < 0 || (p1 as usize) >= self.current_cursor {
+            self.current_cursor = p0.max(0) as usize;
+        } else {
+            warn!(
+                "Middle KV cells excised [{}..{}) for seq {}: warning: non-tail excision without re-rotation leaves RoPE phases unadjusted",
+                p0, p1, seq_id
             );
         }
-        Ok(ok)
+        info!(
+            "Physical KV Rollback executed: seq={}, [{}..{}), current_cursor={}",
+            seq_id, p0, p1, self.current_cursor
+        );
+        Ok(true)
     }
 
     /// Checkpoint Rollback (Exact Tail Truncation):
@@ -739,21 +962,28 @@ impl NativeLlamaContext {
     /// Use exact tail rollback (`kv_cache_seq_rm(seq_id, p0, -1)` or `rollback_to(checkpoint)`).
     /// Tail rollback preserves untouched prefix $[0, p_0)$ with 100% RoPE and causal integrity,
     /// achieving bitwise logit equivalence and $D_{\text{KL}} = 0.00$ against a cold start.
-    #[deprecated(
-        since = "2.2.0",
-        note = "Mid-span excision causes RoPE phase corruption and causal attention contamination. Use exact tail-rollback via kv_cache_seq_rm(seq_id, p0, -1) or rollback_to(checkpoint)."
-    )]
-    pub fn kv_cache_seq_rm_and_shift(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
-        warn!(
-            "kv_cache_seq_rm_and_shift invoked for seq={}, [{}..{}). Caution: mid-span shifting causes RoPE phase mismatch!",
-            seq_id, p0, p1
-        );
-        if p0 < 0 || p1 <= p0 {
+    /// Excises tokens in the range `[p0, p1)` and atomically shifts all subsequent tokens
+    /// leftward by `p1 - p0` positions to maintain contiguous RoPE packing.
+    /// This method enforces an Attention Sink Protection barrier (`p0 >= 4`) to prevent
+    /// softmax denominator collapse.
+    pub fn rollback_range(&mut self, seq_id: i32, p0: i32, p1: i32) -> Result<bool, String> {
+        if p0 < 4 {
+            return Err(format!(
+                "Attention Sink Protection Violation: p0={} must be >= 4 to protect sink tokens [0..4]",
+                p0
+            ));
+        }
+
+        if p1 <= p0 {
             return Err(format!("Invalid token range: [{}, {})", p0, p1));
         }
+
         let ok = unsafe { omni_llama_kv_cache_seq_rm(self.raw_ctx, seq_id, p0, p1) };
         if !ok {
-            return Ok(false);
+            return Err(format!(
+                "llama_kv_cache_seq_rm failed for seq={} [{}, {})",
+                seq_id, p0, p1
+            ));
         }
 
         if (p1 as usize) >= self.current_cursor {
@@ -761,9 +991,8 @@ impl NativeLlamaContext {
         } else {
             let delta = -(p1 - p0);
             let trail_start = p1;
-            let trail_end = self.current_cursor as i32;
             unsafe {
-                omni_llama_kv_cache_seq_shift(self.raw_ctx, seq_id, trail_start, trail_end, delta);
+                omni_llama_kv_cache_seq_shift(self.raw_ctx, seq_id, trail_start, -1, delta);
             }
             self.current_cursor = (self.current_cursor as i32 + delta).max(0) as usize;
         }

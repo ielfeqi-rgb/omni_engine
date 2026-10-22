@@ -1,7 +1,19 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use colored::Colorize;
 
 /// Result of executing a command in the isolated jail.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,19 +55,46 @@ impl IsolatedJail {
         vfs_files: &[(PathBuf, Vec<u8>)],
         timeout: Duration,
     ) -> Result<JailExecutionResult, String> {
+        Self::run_in_jail_with_input(cmd, vfs_files, timeout, None)
+    }
+
+    /// Securely join base directory with a relative VFS path, preventing directory traversal escapes via `..`
+    pub fn safe_join(base: &Path, rel: &Path) -> Result<PathBuf, String> {
+        let mut clean = PathBuf::new();
+        for component in rel.components() {
+            match component {
+                std::path::Component::Normal(c) => clean.push(c),
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    if !clean.pop() {
+                        return Err(format!("Path traversal rejected (escapes base): {:?}", rel));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let target = base.join(&clean);
+        if !target.starts_with(base) {
+            return Err(format!("Path traversal rejected: {:?}", rel));
+        }
+        Ok(target)
+    }
+
+    /// Run a command inside an isolated sandbox with the provided virtual files materialized
+    /// and optional interactive/mock standard input stream.
+    pub fn run_in_jail_with_input(
+        cmd: &str,
+        vfs_files: &[(PathBuf, Vec<u8>)],
+        timeout: Duration,
+        stdin_input: Option<&[u8]>,
+    ) -> Result<JailExecutionResult, String> {
         let temp_dir = tempfile::tempdir()
             .map_err(|e| format!("Failed to create isolated tempdir: {}", e))?;
         let temp_path = temp_dir.path();
 
         // Materialize VFS files into the isolated scratch directory
         for (rel_path, content) in vfs_files {
-            // Strip any leading slashes or normalize
-            let clean_rel = if rel_path.is_absolute() {
-                rel_path.strip_prefix("/").unwrap_or(rel_path)
-            } else {
-                rel_path.as_path()
-            };
-            let target_path = temp_path.join(clean_rel);
+            let target_path = Self::safe_join(temp_path, rel_path)?;
             if let Some(parent) = target_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
@@ -65,17 +104,48 @@ impl IsolatedJail {
 
         let bwrap_present = Self::is_bwrap_available();
 
-        let _start_time = Instant::now();
+        println!("{}", "  ┌── [ISOLATED SANDBOX EXECUTION] ────────────────────────────────────".bright_cyan());
+        println!("  │ Command   : {}", cmd.bright_yellow().bold());
+        println!("  │ Sandbox   : {}", if bwrap_present { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs)" } else { "Host tempdir fallback" });
+        println!("  │ Staged    : {} file(s) materialized in RAM VFS", vfs_files.len());
+        for (rel, content) in vfs_files {
+            println!("  │   * {} ({} bytes)", rel.display().to_string().bright_white(), content.len());
+        }
+
+        let start_time = Instant::now();
         let (exit_code, stdout, stderr) = if bwrap_present {
-            Self::run_with_bwrap(cmd, temp_path, timeout)?
+            Self::run_with_bwrap(cmd, temp_path, timeout, stdin_input)?
         } else {
-            Self::run_fallback(cmd, temp_path, timeout)?
+            Self::run_fallback(cmd, temp_path, timeout, stdin_input)?
         };
+        let duration = start_time.elapsed();
 
         let combined_output = format!("{}\n{}", stdout, stderr);
         let missing_dep = Self::extract_missing_dependency(&combined_output);
-
         let success = exit_code == Some(0) && missing_dep.is_none();
+
+        println!("  │ Duration  : {:?}", duration);
+        println!("  │ Exit Code : {}", match exit_code {
+            Some(0) => "0 (SUCCESS)".bright_green().to_string(),
+            Some(c) => format!("{} (FAILED)", c).bright_red().to_string(),
+            None => "KILLED / TIMEOUT".bright_yellow().to_string(),
+        });
+        if !stdout.trim().is_empty() {
+            println!("  │ STDOUT    :");
+            for line in stdout.lines() {
+                println!("  │   {}", line);
+            }
+        }
+        if !stderr.trim().is_empty() {
+            println!("  │ STDERR    :");
+            for line in stderr.lines() {
+                println!("  │   {}", line.bright_red());
+            }
+        }
+        if let Some(ref dep) = missing_dep {
+            println!("  │ {} Missing dependency: '{}'", "[DEPENDENCY COLLISION]".bright_yellow().bold(), dep.bright_red().bold());
+        }
+        println!("{}", "  └────────────────────────────────────────────────────────────────────".bright_cyan());
 
         Ok(JailExecutionResult {
             success,
@@ -87,27 +157,21 @@ impl IsolatedJail {
         })
     }
 
-    /// Execute a non-interactive smoke test on a staged script (Python, Shell, etc.)
+    /// Execute a non-interactive smoke test on a staged script (Language-agnostic)
     pub fn smoke_test_script(
         target_file: &str,
         vfs_files: &[(PathBuf, Vec<u8>)],
         timeout: Duration,
     ) -> Result<JailExecutionResult, String> {
-        let cmd = if target_file.ends_with(".py") {
-            let stem = target_file.trim_end_matches(".py");
-            format!(
-                "python3 -c \"import sys, os; sys.path.insert(0, '.'); os.environ['DISPLAY'] = ':99'; import {}\"",
-                stem
-            )
-        } else if target_file.ends_with(".sh") {
-            format!("bash -n {}", target_file)
-        } else if target_file.ends_with(".js") {
-            format!("node --check {}", target_file)
-        } else {
-            // Default generic syntax check or file presence check
-            format!("test -s {}", target_file)
+        let p = Path::new(target_file);
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let cmd = match ext {
+            "py" => format!("python3 {}", target_file),
+            "js" => format!("node {}", target_file),
+            "sh" | "bash" => format!("bash {}", target_file),
+            "rb" => format!("ruby {}", target_file),
+            _ => crate::planner::swarm_coordinator::SwarmCoordinator::resolve_verification_command(target_file),
         };
-
         Self::run_in_jail(&cmd, vfs_files, timeout)
     }
 
@@ -116,6 +180,7 @@ impl IsolatedJail {
         cmd: &str,
         workspace: &Path,
         timeout: Duration,
+        stdin_input: Option<&[u8]>,
     ) -> Result<(Option<i32>, String, String), String> {
         let mut bwrap = Command::new("bwrap");
 
@@ -144,11 +209,18 @@ impl IsolatedJail {
             bwrap.args(["--ro-bind", "/lib64", "/lib64"]);
         }
 
-        // Read-only user local packages (~/.local) so pip installs are accessible in sandbox
+        // Read-only user local packages (~/.local/lib and ~/.local/lib64) so user-installed packages are accessible in sandbox
         if let Ok(home) = std::env::var("HOME") {
-            let user_local = Path::new(&home).join(".local");
-            if user_local.exists() {
-                if let Some(user_local_str) = user_local.to_str() {
+            bwrap.args(["--setenv", "HOME", &home]);
+            let user_local_lib = Path::new(&home).join(".local").join("lib");
+            if user_local_lib.exists() {
+                if let Some(user_local_str) = user_local_lib.to_str() {
+                    bwrap.args(["--ro-bind", user_local_str, user_local_str]);
+                }
+            }
+            let user_local_lib64 = Path::new(&home).join(".local").join("lib64");
+            if user_local_lib64.exists() {
+                if let Some(user_local_str) = user_local_lib64.to_str() {
                     bwrap.args(["--ro-bind", user_local_str, user_local_str]);
                 }
             }
@@ -167,9 +239,16 @@ impl IsolatedJail {
         // Security flags: unshare network, pid, ipc, user; die when parent terminates
         bwrap.args(["--unshare-all", "--die-with-parent"]);
 
-        // Pass headless display env var for GUI scripts
+        // Pass headless display env var, PATH, and unbuffered I/O for Python & subprocesses
         bwrap.args(["--setenv", "DISPLAY", ":99"]);
         bwrap.args(["--setenv", "PYTHONUNBUFFERED", "1"]);
+        bwrap.args(["--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin"]);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            bwrap.process_group(0);
+        }
 
         // Run command via sh
         bwrap.args(["sh", "-c", cmd]);
@@ -177,12 +256,25 @@ impl IsolatedJail {
         bwrap.stdout(Stdio::piped());
         bwrap.stderr(Stdio::piped());
 
-        bwrap.stdin(std::process::Stdio::null());
+        if stdin_input.is_some() {
+            bwrap.stdin(Stdio::piped());
+        } else {
+            bwrap.stdin(Stdio::null());
+        }
+
         let mut child = bwrap
             .spawn()
             .map_err(|e| format!("Failed to spawn bwrap: {}", e))?;
 
-        let (exit_code, stdout, stderr) = Self::wait_with_timeout(&mut child, timeout)?;
+        if let Some(data) = stdin_input {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(data);
+                let _ = stdin.flush();
+            }
+        }
+
+        let (exit_code, stdout, stderr) = Self::wait_with_timeout(&mut child, cmd, timeout)?;
         Ok((exit_code, stdout, stderr))
     }
 
@@ -191,6 +283,7 @@ impl IsolatedJail {
         cmd: &str,
         workspace: &Path,
         timeout: Duration,
+        stdin_input: Option<&[u8]>,
     ) -> Result<(Option<i32>, String, String), String> {
         let mut process = Command::new("sh");
         process.arg("-c").arg(cmd);
@@ -200,18 +293,38 @@ impl IsolatedJail {
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 
-        process.stdin(std::process::Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            process.process_group(0);
+        }
+
+        if stdin_input.is_some() {
+            process.stdin(Stdio::piped());
+        } else {
+            process.stdin(Stdio::null());
+        }
+
         let mut child = process
             .spawn()
             .map_err(|e| format!("Failed to spawn shell fallback: {}", e))?;
 
-        let (exit_code, stdout, stderr) = Self::wait_with_timeout(&mut child, timeout)?;
+        if let Some(data) = stdin_input {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(data);
+                let _ = stdin.flush();
+            }
+        }
+
+        let (exit_code, stdout, stderr) = Self::wait_with_timeout(&mut child, cmd, timeout)?;
         Ok((exit_code, stdout, stderr))
     }
 
     /// Wait for child process with timeout to prevent hung scripts
     fn wait_with_timeout(
         child: &mut std::process::Child,
+        cmd: &str,
         timeout: Duration,
     ) -> Result<(Option<i32>, String, String), String> {
         let start = Instant::now();
@@ -236,6 +349,13 @@ impl IsolatedJail {
                 }
                 Ok(None) => {
                     if start.elapsed() >= timeout {
+                        #[cfg(unix)]
+                        {
+                            let pid = child.id() as libc::pid_t;
+                            unsafe {
+                                let _ = libc::killpg(pid, libc::SIGKILL);
+                            }
+                        }
                         let _ = child.kill();
                         let _ = child.wait();
                         let mut stdout_buf = Vec::new();
@@ -249,11 +369,15 @@ impl IsolatedJail {
                         let out_str = String::from_utf8_lossy(&stdout_buf).to_string();
                         let err_str = String::from_utf8_lossy(&stderr_buf).to_string();
 
-                        // If the process was a server/daemon that started and listened successfully, treat as success!
-                        let is_server_listening = out_str.contains("Running on") || out_str.contains("Serving HTTP")
-                            || err_str.contains("Running on") || err_str.contains("Serving HTTP")
-                            || out_str.contains("Press CTRL+C") || err_str.contains("Press CTRL+C")
-                            || out_str.contains("* Serving Flask") || err_str.contains("* Serving Flask");
+                        // If the command explicitly requested a server daemon and started listening successfully:
+                        let is_server_cmd = cmd.contains("flask") || cmd.contains("http.server") || cmd.contains("uvicorn")
+                            || cmd.contains("gunicorn") || cmd.contains("node ") || cmd.contains("serve");
+                        let is_server_listening = is_server_cmd && (
+                            out_str.contains("Running on http") || out_str.contains("Serving HTTP on")
+                            || err_str.contains("Running on http") || err_str.contains("Serving HTTP on")
+                            || out_str.contains("* Serving Flask app") || err_str.contains("* Serving Flask app")
+                            || out_str.contains("Uvicorn running on") || err_str.contains("Uvicorn running on")
+                        );
 
                         if is_server_listening {
                             return Ok((Some(0), out_str, err_str));
@@ -430,7 +554,7 @@ mod tests {
         let res = IsolatedJail::smoke_test_script(
             "test_script.py",
             &vfs_files,
-            Duration::from_secs(5),
+            Duration::from_secs(15),
         ).expect("Smoke test should run");
 
         assert!(!res.success);
@@ -438,5 +562,19 @@ mod tests {
             res.missing_dependency,
             Some("non_existent_dep_xyz123".to_string())
         );
+    }
+
+    #[test]
+    fn test_safe_join_path_traversal_rejection() {
+        let base = Path::new("/tmp/omni_sandbox_test");
+        let evil_path = Path::new("../../etc/passwd");
+        assert!(IsolatedJail::safe_join(base, evil_path).is_err());
+
+        let nested_evil = Path::new("sub/../../../../etc/shadow");
+        assert!(IsolatedJail::safe_join(base, nested_evil).is_err());
+
+        let valid_path = Path::new("src/main.rs");
+        let target = IsolatedJail::safe_join(base, valid_path).expect("Should be valid");
+        assert_eq!(target, base.join("src/main.rs"));
     }
 }

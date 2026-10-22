@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,8 +70,8 @@ r#"You are Omni Assistant, an intelligent and helpful assistant running on {}.
             tools_desc.push("  * `browser.open(url)`: fetches a web page and projects interactive elements into a clean ASCII grid.");
             tools_desc.push("  * `web.fetch(url)`: performs raw HTTP GET for specific URLs.");
 
-            examples.push(r#"-- Example: Fetching news and saving to file
-local news = browser.search("latest news")
+            examples.push(r#"# Example: Fetching news and saving to file
+news = browser.search("latest news")
 vfs.write("today_news.txt", news)
 print("News fetched and saved to RAM VFS.")"#);
         }
@@ -69,14 +80,14 @@ print("News fetched and saved to RAM VFS.")"#);
             tools_desc.push("  * `terminal.exec(command)`: runs a shell command on the host (e.g. package management, compiler, background launcher).");
             tools_desc.push("  * `terminal.logs(n)`: retrieves the last n lines of execution logs.");
 
-            examples.push(r#"-- Example: Running commands or launching software
+            examples.push(r#"# Example: Running commands or launching software
 terminal.exec("echo 'Launching task...'")
 print("Command dispatched.")"#);
         }
 
         let tools_str = tools_desc.join("\n");
         let examples_str = if examples.is_empty() {
-            "-- Perform file operations\nvfs.write(\"output.txt\", \"data\")".to_string()
+            "# Perform file operations\nvfs.write(\"output.txt\", \"data\")".to_string()
         } else {
             examples.join("\n\n")
         };
@@ -86,18 +97,18 @@ r#"You are Omni Agent, an elite autonomous AI systems engineer running on {}.
 
 [WORKSPACE & PLATFORM]:
 - Platform: {}
-- Embedded Executive Engine: You have direct access to an embedded Lua runtime in memory.
-- Execution Rule: Whenever requested to perform tasks, fetch data, or execute commands, ALWAYS output an executable Lua script inside ```lua ... ```.
+- Embedded Executive Engine: You have direct access to an isolated execution sandbox (Bubblewrap bwrap / RAM tmpfs) with Python 3 and system shell.
+- Execution Rule: Whenever requested to write code, build projects, or execute commands, ALWAYS output production-ready code inside standard markdown code blocks (e.g. ```python ... ```, ```bash ... ```) or tool actions.
 
 [ACTIVE TOOLS SPECIFIC TO THIS GOAL]:
 {}
 
 [EXECUTION EXAMPLES]:
-```lua
+```python
 {}
 ```
 
-Execute with absolute precision. Output executable Lua code blocks to accomplish the task."#,
+Execute with absolute precision. Output clean code blocks to accomplish the task."#,
             os_name,
             platform_rule,
             tools_str,

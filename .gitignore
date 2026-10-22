@@ -11,6 +11,29 @@ target/
 preview_*.png
 RESEARCH_PAPER.pdf
 config/
-models
+models/
 workspace/
+trash/
 GameLoop.py
+*.gguf
+*.bin
+*.omni
+*.omni.json
+bin/*.so*
+bin/llama-server
+bin/omni_engine
+
+# Internal agent workdirs
+.agents/
+
+# Scratch and test workspaces
+*.bak
+*.checkpoint_*
+test_workspace*
+cipher_workspace*
+cipher_test_dedup*
+md2html_*
+output.txt
+*.log
+chat.db
+

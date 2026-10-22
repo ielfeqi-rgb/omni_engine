@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -173,8 +184,8 @@ impl LlamaManager {
         }
     }
 
-    pub fn start(&self, model_name: String, port: u16, threads: usize, _ctx_size: usize) -> Result<u32, String> {
-        let mut proc_guard = self.process.lock();
+    pub fn start(&self, model_name: String, _port: u16, threads: usize, _ctx_size: usize) -> Result<u32, String> {
+        let proc_guard = self.process.lock();
         if proc_guard.is_some() {
             return Err("llama-server engine is already running".to_string());
         }

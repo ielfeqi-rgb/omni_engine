@@ -1,29 +1,23 @@
-// [GUIDANCE] Remove this line after Phase 0 stabilization.
-// It hides ALL dead-code warnings. Remove it, then fix each warning individually.
-// Functions truly kept for future use can get per-item #[allow(dead_code)].
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
 
-mod auth;
-mod causal_memory;
-mod cli;
-mod downloader;
-mod llama_manager;
-mod logger;
-pub mod native_llama;
-mod openai_api;
-mod planner;
-mod sandbox;
-mod system_info;
-mod tui_agent;
-mod web_server;
-mod tui;
-
-use auth::KeyManager;
-use downloader::ModelDownloader;
-use llama_manager::LlamaManager;
-use logger::LogBuffer;
+use omni_engine::auth::KeyManager;
+use omni_engine::cli;
+use omni_engine::downloader::ModelDownloader;
+use omni_engine::llama_manager::LlamaManager;
+use omni_engine::logger::LogBuffer;
+use omni_engine::tui;
+use omni_engine::web_server::{create_router, AppState};
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use web_server::{create_router, AppState};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -89,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("============================================================");
     println!("   :: OMNI AI ENGINE v{} (Sovereign Autonomous Runtime)", env!("CARGO_PKG_VERSION"));
-    println!("   Core: Rust & Lua Sandbox | Causal KV-Cache | Local AI");
+    println!("   Core: Rust Native & Isolated Sandbox | Causal KV-Cache | Local AI");
     println!("============================================================");
 
     let key_manager = KeyManager::new(base_dir.clone());

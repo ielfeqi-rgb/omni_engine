@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Alignment, Rect},
     style::{Color, Modifier, Style},
@@ -48,7 +59,7 @@ pub fn draw_ui(f: &mut Frame, app: &TuiApp) {
     // ==========================================
     // 1. TOP BAR
     // ==========================================
-    let mut top_bar = vec![
+    let top_bar = vec![
         Span::styled(" O M N I ", Style::default().fg(app.config.accent_color).add_modifier(Modifier::BOLD)),
         Span::styled(format!("v{}   ", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
         Span::styled(format!("CPU: {:.0}% | RAM: {:.1}GB   ", app.sys_monitor.cpu_usage, app.sys_monitor.ram_used_gb), Style::default().fg(Color::Rgb(100,100,150))),

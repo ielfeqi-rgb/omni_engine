@@ -1,3 +1,82 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
+use std::collections::VecDeque;
+
+#[derive(Debug, Clone)]
+pub struct DynamicThresholds {
+    pub n_sinks: usize,
+    pub top_k_entropy: usize,
+    pub z_score_trigger: f32,
+    pub bifurcation_margin: f32,
+    pub window_size: usize,
+}
+
+impl Default for DynamicThresholds {
+    fn default() -> Self {
+        Self {
+            n_sinks: 4,
+            top_k_entropy: 50,
+            z_score_trigger: 2.2,
+            bifurcation_margin: 0.12,
+            window_size: 8,
+        }
+    }
+}
+
+pub struct EntropyMonitor {
+    pub thresholds: DynamicThresholds,
+    pub history: VecDeque<f32>,
+}
+
+impl EntropyMonitor {
+    pub fn new(thresholds: DynamicThresholds) -> Self {
+        Self {
+            history: VecDeque::with_capacity(thresholds.window_size),
+            thresholds,
+        }
+    }
+
+    pub fn push_entropy(&mut self, h: f32) {
+        if self.history.len() >= self.thresholds.window_size {
+            self.history.pop_front();
+        }
+        self.history.push_back(h);
+    }
+
+    pub fn analyze_fission(&self, current_entropy: f32, p1: f32, p2: f32) -> Option<String> {
+        if self.history.len() < 3 {
+            return None;
+        }
+
+        let mean = self.history.iter().sum::<f32>() / self.history.len() as f32;
+        let variance = self.history.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / self.history.len() as f32;
+        let std_dev = variance.sqrt();
+
+        if std_dev < 1e-5 {
+            return None;
+        }
+
+        let z_score = (current_entropy - mean) / std_dev;
+        let margin = p1 - p2;
+
+        if z_score > self.thresholds.z_score_trigger && margin < self.thresholds.bifurcation_margin {
+            let msg = format!("[31;1m[CAUSAL SURGERY] FISSION TRIGGERED! Z-Score = {:.2} (Threshold 2.2), Margin = {:.3} (Threshold 0.12)[0m", z_score, margin);
+            Some(msg)
+        } else {
+            None
+        }
+    }
+}
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

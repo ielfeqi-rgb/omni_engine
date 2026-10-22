@@ -1,10 +1,21 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
+    backend::CrosstermBackend,
     Terminal,
 };
 use std::{error::Error, io, time::{Duration, Instant}};
@@ -32,6 +43,15 @@ impl TuiApp {
         }
         // Sort descending by name (since name is timestamp)
         sessions.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Retain only the most recent 50 sessions on disk to prevent unbounded disk accumulation
+        if sessions.len() > 50 {
+            for (_, old_path) in &sessions[50..] {
+                let _ = std::fs::remove_file(old_path);
+            }
+            sessions.truncate(50);
+        }
+
         self.saved_sessions = sessions;
     }
 
@@ -186,9 +206,7 @@ impl Default for TuiApp {
     }
 }
 
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::path::PathBuf;
-use crate::native_llama::NativeLlamaModel;
+use std::sync::mpsc;
 
 pub enum WorkerMessage {
     Token(String),
@@ -224,6 +242,9 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
     
     
 
+    let worker_ctx_size = app.config.context_size;
+    let worker_threads = app.config.cpu_threads;
+
     // Spawn the background worker thread for AI
     std::thread::spawn(move || {
         crate::native_llama::NativeLlamaModel::disable_logs();
@@ -241,6 +262,12 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
         while let Ok(cmd) = rx_cmd.recv() {
             if cmd.starts_with("/LOAD_MODEL ") {
                 let model_name = cmd.trim_start_matches("/LOAD_MODEL ").trim();
+                // [C-3] Prevent path injection / directory traversal attacks
+                if model_name.is_empty() || model_name.contains('/') || model_name.contains('\\') || model_name.contains("..") {
+                    let _ = tx_ui.send(WorkerMessage::LoadFailed(format!("Invalid model name: '{}'", model_name)));
+                    continue;
+                }
+
                 let _ = tx_ui.send(WorkerMessage::LoadStarted(format!("Loading {}...", model_name)));
                 
                 // Free RAM first
@@ -255,7 +282,8 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
 
                 match crate::native_llama::NativeLlamaModel::load(&path, 0) {
                     Ok(m) => {
-                        match m.create_context(8192, 512, 6) {
+                        // [M-2] Apply configured context size and thread count
+                        match m.create_context(worker_ctx_size, 512, worker_threads) {
                             Ok(c) => {
                                 current_ctx = Some(c);
                                 current_model = Some(m);
@@ -275,6 +303,13 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
             }
 
             if cmd.starts_with("/goal ") {
+                // [M-5] Ensure an active model is loaded before attempting swarm launch
+                if active_model_name.is_empty() {
+                    let _ = tx_ui.send(WorkerMessage::Error("No model currently loaded. Please load a model with /model <name> first.".into()));
+                    let _ = tx_ui.send(WorkerMessage::Done);
+                    continue;
+                }
+
                 let goal_text = cmd.trim_start_matches("/goal ").trim();
                 let _ = tx_ui.send(WorkerMessage::Status("Disengaging Chat... Initializing Swarm...".into()));
                 
@@ -284,17 +319,25 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                 
                 let _ = tx_ui.send(WorkerMessage::Token(format!("\n[System]: 🚀 Launching Swarm to execute goal: {}\n", goal_text)));
                 
-                // 2. Spawn Child Process
+                // 2. Spawn Child Process cleanly without panicking on error [H-4]
                 let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("./omni_engine"));
-                let mut child = std::process::Command::new(exe)
+                let spawn_res = std::process::Command::new(exe)
                     .arg("swarm")
                     .arg(goal_text)
                     .arg("--model")
                     .arg(base_dir.join("models").join(&active_model_name))
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .expect("Failed to spawn swarm process");
+                    .spawn();
+
+                let mut child = match spawn_res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx_ui.send(WorkerMessage::Error(format!("Failed to spawn swarm process: {}", e)));
+                        let _ = tx_ui.send(WorkerMessage::Done);
+                        continue;
+                    }
+                };
                     
                 if let Some(stdout) = child.stdout.take() {
                     use std::io::BufRead;
@@ -304,15 +347,18 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 
-                let status = child.wait().unwrap();
-                let _ = tx_ui.send(WorkerMessage::Token(format!("\n[System]: Swarm execution completed with status {}. Reloading chat model...\n", status)));
+                let status_msg = match child.wait() {
+                    Ok(s) => format!("{}", s),
+                    Err(e) => format!("wait error: {}", e),
+                };
+                let _ = tx_ui.send(WorkerMessage::Token(format!("\n[System]: Swarm execution completed with status {}. Reloading chat model...\n", status_msg)));
                 let _ = tx_ui.send(WorkerMessage::Status(format!("Restoring {}", active_model_name)));
                 
-                // 3. Reload Model
+                // 3. Reload Model with configured context size and thread count [M-2]
                 let path = base_dir.join("models").join(&active_model_name);
                 if path.exists() {
                     if let Ok(m) = crate::native_llama::NativeLlamaModel::load(&path, 0) {
-                        if let Ok(c) = m.create_context(8192, 512, 6) {
+                        if let Ok(c) = m.create_context(worker_ctx_size, 512, worker_threads) {
                             current_ctx = Some(c);
                             current_model = Some(m);
                             let _ = tx_ui.send(WorkerMessage::LoadComplete(format!("Model {} restored successfully.", active_model_name)));
@@ -337,16 +383,9 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                 continue;
             }
 
-            // Normal Prompt handling
+            // Normal Prompt handling with NativeLlamaSampler [H-2]
             if let (Some(model), Some(ctx)) = (current_model.as_ref(), current_ctx.as_mut()) {
-                let model_lower = active_model_name.to_lowercase();
-                let formatted_prompt = if model_lower.contains("gemma") {
-                    format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n", cmd.trim())
-                } else if model_lower.contains("llama-3") || model_lower.contains("llama3") {
-                    format!("<|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n", cmd.trim())
-                } else {
-                    format!("<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n", cmd.trim())
-                };
+                let formatted_prompt = model.format_chat(None, cmd.trim());
                 
                 let prompt_tokens = match model.tokenize(&formatted_prompt, true) {
                     Ok(t) => t,
@@ -354,6 +393,24 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                 };
 
                 if ctx.eval_tokens(&prompt_tokens, 0).is_err() { continue; }
+
+                let mut sampler = match crate::native_llama::NativeLlamaSampler::new(
+                    &crate::native_llama::SamplingConfig {
+                        temperature: 0.7,
+                        top_p: 0.9,
+                        top_k: 40,
+                        repetition_penalty: 1.1,
+                        penalty_last_n: 64,
+                        seed: 42,
+                    },
+                    model.n_vocab(),
+                ) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        let _ = tx_ui.send(WorkerMessage::Done);
+                        continue;
+                    }
+                };
 
                 let mut generated = 0;
                 while generated < 512 {
@@ -363,7 +420,7 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                             break;
                         }
                     }
-                    let next_tok = match ctx.sample_greedy() {
+                    let next_tok = match ctx.sample(&mut sampler) {
                         Ok(t) => t,
                         Err(_) => break,
                     };
@@ -372,8 +429,7 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                         Err(_) => break,
                     };
                     
-                    let stop_tokens = ["<|im_end|>", "<|endoftext|>", "</s>", "<eos>", "<end_of_turn>", "<|eot_id|>", "<step_end>"];
-                    if piece.is_empty() || stop_tokens.iter().any(|&s| piece.contains(s)) {
+                    if piece.is_empty() || model.is_stop_token(next_tok) || model.is_stop_piece(&piece) {
                         break;
                     }
 
@@ -391,6 +447,11 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
     });
 
     loop {
+        // [H-1] Bounded message history preventing unbounded memory consumption
+        if app.messages.len() > 2000 {
+            let drain = app.messages.len() - 1500;
+            app.messages.drain(0..drain);
+        }
         terminal.draw(|f| draw_ui(f, &app))?;
 
         // Process any messages from the background worker
@@ -695,9 +756,12 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
             for t in tasks {
                 if !t.is_completed && t.error.is_none() {
                     app.active_downloads.push(t);
-                } else if t.is_completed && t.percent == 100.0 {
-                    // Quick hack to prevent spam: remove it from tasks in Downloader?
-                    // Downloader keeps tasks forever currently. Let's just track if we notified.
+                } else if t.is_completed {
+                    app.messages.push(format!("[System]: Download complete: {}", t.model_name));
+                    app.downloader.remove_task(&t.id);
+                } else if let Some(err) = t.error {
+                    app.messages.push(format!("[System]: Download failed for {}: {}", t.model_name, err));
+                    app.downloader.remove_task(&t.id);
                 }
             }
         }

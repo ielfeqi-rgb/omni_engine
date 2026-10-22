@@ -1,3 +1,14 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use crate::sandbox::MemoryVfs;
@@ -10,7 +21,6 @@ pub enum ExecutiveAction {
     InspectBrowser,
     WriteFile { path: PathBuf, content: String },
     RunSandbox { code: String },
-    RunLua { script: String },
     TerminalExec { command: String },
     TerminalLogs { lines: usize },
     TerminalStatus { job_id: u64 },
@@ -87,18 +97,6 @@ impl ExecutiveHands {
             }
         }
 
-        // Check if model emitted an executable Lua block
-        if let Some(lua_idx) = model_output.find("```lua") {
-            let rest = &model_output[lua_idx + 6..];
-            if let Some(code_end) = rest.find("```") {
-                let lua_script = rest[..code_end].trim();
-                if !lua_script.is_empty() {
-                    return ExecutiveAction::RunLua {
-                        script: lua_script.to_string(),
-                    };
-                }
-            }
-        }
 
         // Check if model emitted a file payload (FILE: <path>\n```...```)
         if let Some(file_idx) = model_output.find("FILE: ") {
@@ -196,32 +194,6 @@ impl ExecutiveHands {
                     success: true,
                     output: format!("SANDBOX_EVAL: Syntax verified (code length: {} bytes)", code.len()),
                     requires_user_confirmation: false,
-                }
-            }
-            ExecutiveAction::RunLua { script } => {
-                let runner = if let Some(term) = &self.terminal {
-                    crate::sandbox::LuaSandboxRunner::with_terminal(self.vfs.clone(), term.clone())
-                } else {
-                    crate::sandbox::LuaSandboxRunner::new(self.vfs.clone())
-                };
-                let result = runner.run_script(&script);
-                if result.success {
-                    let log_summary = if result.output_log.is_empty() {
-                        "Script executed successfully (no stdout log).".to_string()
-                    } else {
-                        result.output_log
-                    };
-                    ExecutionResult {
-                        success: true,
-                        output: format!("LUA_EXEC_SUCCESS:\n{}", log_summary),
-                        requires_user_confirmation: true,
-                    }
-                } else {
-                    ExecutionResult {
-                        success: false,
-                        output: format!("LUA_EXEC_FAILED: {}", result.error.unwrap_or_else(|| "Unknown runtime error".to_string())),
-                        requires_user_confirmation: false,
-                    }
                 }
             }
             ExecutiveAction::TerminalExec { command } => {
@@ -324,119 +296,8 @@ mod tests {
 
         // Verify VFS has the file in RAM
         assert!(vfs.exists(PathBuf::from("src/calc.py")));
-
-        // 3. Parse and execute embedded Lua block
-        let lua_reply = "I will write the file via Lua:\n```lua\nvfs.write(\"output.txt\", \"Generated from Lua\")\nprint(\"Done generating!\")\n```";
-        let lua_action = hands.parse_action(lua_reply);
-        match lua_action {
-            ExecutiveAction::RunLua { script } => {
-                assert!(script.contains("vfs.write"));
-                let lua_res = hands.execute(ExecutiveAction::RunLua { script });
-                assert!(lua_res.success);
-                assert!(lua_res.output.contains("Done generating!"));
-                assert!(vfs.exists(PathBuf::from("output.txt")));
-                assert_eq!(vfs.read_string(PathBuf::from("output.txt")), Some("Generated from Lua".to_string()));
-            }
-            _ => panic!("Expected RunLua action"),
-        }
     }
 
-    #[test]
-    fn test_scenario_1_sales_spreadsheet_via_lua_execution() {
-        let vfs = Arc::new(MemoryVfs::new());
-        let hands = ExecutiveHands::new(vfs.clone(), PathBuf::from("."));
-
-        let model_reply = r#"
-I have synthesized the weekly technology sales breakdown. Executing embedded generation script:
-
-```lua
-local header = "Item,Category,Units Sold,Unit Price USD,Revenue USD\n"
-local rows = {
-    {"ThinkPad X1 Carbon", "Laptops", "15", "1450", "21750"},
-    {"MacBook Pro 16", "Laptops", "8", "2400", "19200"},
-    {"iPhone 15 Pro", "Phones", "30", "999", "29970"},
-    {"Galaxy S24 Ultra", "Phones", "25", "1199", "29975"},
-    {"Dell UltraSharp 27", "Monitors", "40", "450", "18000"},
-    {"LG UltraFine 32", "Monitors", "12", "850", "10200"}
-}
-
-local content = header
-local total_revenue = 0
-for i, row in ipairs(rows) do
-    content = content .. row[1] .. "," .. row[2] .. "," .. row[3] .. "," .. row[4] .. "," .. row[5] .. "\n"
-    total_revenue = total_revenue + tonumber(row[5])
-end
-content = content .. "TOTAL,,,," .. tostring(total_revenue) .. "\n"
-
-vfs.write("sales_q3_summary.csv", content)
-print("Sales spreadsheet successfully compiled into RAM VFS. Total Revenue: $" .. tostring(total_revenue))
-```
-"#;
-
-        let action = hands.parse_action(model_reply);
-        assert!(matches!(action, ExecutiveAction::RunLua { .. }));
-
-        let result = hands.execute(action);
-        assert!(result.success);
-        assert!(result.requires_user_confirmation);
-        assert!(result.output.contains("Total Revenue: $129095"));
-
-        assert!(vfs.exists(PathBuf::from("sales_q3_summary.csv")));
-        let csv_data = vfs.read_string(PathBuf::from("sales_q3_summary.csv")).expect("CSV must exist in VFS");
-        assert!(csv_data.contains("ThinkPad X1 Carbon"));
-        assert!(csv_data.contains("TOTAL,,,,129095"));
-    }
-
-    #[test]
-    fn test_scenario_2_wikipedia_tesla_investigation_and_article() {
-        let vfs = Arc::new(MemoryVfs::new());
-        let hands = ExecutiveHands::new(vfs.clone(), PathBuf::from("."));
-
-        let model_reply = r#"
-Conducting biographical research on Nikola Tesla and formatting a structured journalistic article:
-
-```lua
--- Step 1: Synthesize journalistic article based on researched historical telemetry
-local article = "================================================================================\n"
-article = article .. "INVESTIGATIVE DOSSIER: THE ARCHITECT OF THE ELECTRIC AGE\n"
-article = article .. "Subject: Nikola Tesla (1856 - 1943)\n"
-article = article .. "Focus: Alternating Current, Polyphase Induction, and The War of Currents\n"
-article = article .. "================================================================================\n\n"
-
-article = article .. "SECTION 1: ORIGINS AND THE VISION OF REVOLUTION\n"
-article = article .. "Born in 1856 in modern-day Croatia, Nikola Tesla possessed a photographic imagination\n"
-article = article .. "that transformed abstract theoretical physics into functional industrial machinery.\n\n"
-
-article = article .. "SECTION 2: THE ALTERNATING CURRENT TRIUMPH\n"
-article = article .. "Upon arriving in the United States in 1884, Tesla confronted the fundamental limitations\n"
-article = article .. "of Thomas Edison's direct current (DC) systems. Partnering with George Westinghouse in 1888,\n"
-article = article .. "Tesla demonstrated that Polyphase AC could transmit high-voltage power across thousands\n"
-article = article .. "of miles with negligible loss, laying the absolute foundation for modern civilization.\n\n"
-
-article = article .. "SECTION 3: ARCHIVAL SUMMARY & CONCLUSION\n"
-article = article .. "Tesla's legacy extends beyond motors into radio transmission, resonant transformers,\n"
-article = article .. "and visionary wireless telemetry.\n\n"
-article = article .. "Report compiled in RAM VFS for archival approval.\n"
-
--- Step 2: Write out to VFS as document
-vfs.write("nikola_tesla_investigative_article.doc", article)
-print("Nikola Tesla investigative report successfully staged in RAM VFS.")
-```
-"#;
-
-        let action = hands.parse_action(model_reply);
-        assert!(matches!(action, ExecutiveAction::RunLua { .. }));
-
-        let result = hands.execute(action);
-        assert!(result.success);
-        assert!(result.output.contains("Nikola Tesla investigative report successfully staged"));
-        assert!(result.requires_user_confirmation);
-
-        assert!(vfs.exists(PathBuf::from("nikola_tesla_investigative_article.doc")));
-        let doc = vfs.read_string(PathBuf::from("nikola_tesla_investigative_article.doc")).expect("Doc must exist in VFS");
-        assert!(doc.contains("INVESTIGATIVE DOSSIER: THE ARCHITECT OF THE ELECTRIC AGE"));
-        assert!(doc.contains("Polyphase AC"));
-    }
 
     #[test]
     fn test_terminal_bridge_action_parsing_and_execution() {

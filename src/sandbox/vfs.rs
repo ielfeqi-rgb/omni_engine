@@ -1,6 +1,97 @@
+// ============================================================================
+// [SOVEREIGN ENGINE CONSTITUTION - INVIOLABLE SAFETY DIRECTIVE]
+// STRICT ARCHITECTURAL RULE:
+// It is strictly forbidden, under any circumstances or for any reason whatsoever,
+// to remove, comment out, bypass, or weaken `#![deny(unused_must_use)]` from
+// this file or ANY other .rs file in this codebase.
+// All fallible operations, Results, and Options must be explicitly handled.
+// Zero silent error swallowing under the rug. This engine is built to endure for decades.
+// ============================================================================
+#![deny(unused_must_use)]
+
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum VfsBoundaryError {
+    UnauthorizedWrite { path: PathBuf, write_set: Vec<PathBuf> },
+    UnauthorizedRead { path: PathBuf, read_set: Vec<PathBuf> },
+    UnauthorizedDelete { path: PathBuf, write_set: Vec<PathBuf> },
+    UnauthorizedPatch { path: PathBuf, write_set: Vec<PathBuf> },
+}
+
+impl std::fmt::Display for VfsBoundaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnauthorizedWrite { path, write_set } => {
+                write!(
+                    f,
+                    "VFS boundary violation: unauthorized write to '{}'. Permitted write_set: {:?}",
+                    path.display(),
+                    write_set
+                )
+            }
+            Self::UnauthorizedRead { path, read_set } => {
+                write!(
+                    f,
+                    "VFS boundary violation: unauthorized read from '{}'. Permitted read_set: {:?}",
+                    path.display(),
+                    read_set
+                )
+            }
+            Self::UnauthorizedDelete { path, write_set } => {
+                write!(
+                    f,
+                    "VFS boundary violation: unauthorized delete of '{}'. Permitted write_set: {:?}",
+                    path.display(),
+                    write_set
+                )
+            }
+            Self::UnauthorizedPatch { path, write_set } => {
+                write!(
+                    f,
+                    "VFS boundary violation: unauthorized patch of '{}'. Permitted write_set: {:?}",
+                    path.display(),
+                    write_set
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for VfsBoundaryError {}
+
+#[allow(dead_code)]
+impl VfsBoundaryError {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::UnauthorizedWrite { path, .. }
+            | Self::UnauthorizedRead { path, .. }
+            | Self::UnauthorizedDelete { path, .. }
+            | Self::UnauthorizedPatch { path, .. } => path.as_path(),
+        }
+    }
+
+    pub fn allowed_set(&self) -> &[PathBuf] {
+        match self {
+            Self::UnauthorizedWrite { write_set, .. }
+            | Self::UnauthorizedDelete { write_set, .. }
+            | Self::UnauthorizedPatch { write_set, .. } => write_set.as_slice(),
+            Self::UnauthorizedRead { read_set, .. } => read_set.as_slice(),
+        }
+    }
+
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::UnauthorizedWrite { .. } => "VFS_UNAUTHORIZED_WRITE",
+            Self::UnauthorizedRead { .. } => "VFS_UNAUTHORIZED_READ",
+            Self::UnauthorizedDelete { .. } => "VFS_UNAUTHORIZED_DELETE",
+            Self::UnauthorizedPatch { .. } => "VFS_UNAUTHORIZED_PATCH",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileChangeType {
@@ -10,6 +101,7 @@ pub enum FileChangeType {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StagedDiff {
     pub path: PathBuf,
     pub change_type: FileChangeType,
@@ -17,6 +109,7 @@ pub struct StagedDiff {
     pub new_content: Option<String>,
 }
 
+#[allow(dead_code)]
 impl StagedDiff {
     pub fn unified_diff(&self) -> String {
         match (&self.original_content, &self.new_content) {
@@ -69,9 +162,205 @@ impl MemoryVfs {
         p.to_path_buf()
     }
 
+    /// Lexically normalizes a path for consistent in-memory storage and boundary enforcement:
+    /// - Expands `~` to user $HOME.
+    /// - Drops current-directory components (`.`).
+    /// - Resolves parent-directory components (`..`) lexically against preceding segments.
+    /// - Prevents root breakout when parent components attempt to ascend past the root.
+    /// - Normalizes empty paths to `PathBuf::from(".")`.
+    pub fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
+        let resolved = Self::resolve_path(path);
+        let mut components = Vec::new();
+
+        for comp in resolved.components() {
+            match comp {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if let Some(last) = components.last() {
+                        if !matches!(last, Component::RootDir | Component::Prefix(_) | Component::ParentDir) {
+                            components.pop();
+                            continue;
+                        }
+                    }
+                    components.push(comp);
+                }
+                _ => {
+                    components.push(comp);
+                }
+            }
+        }
+
+        let mut normalized = PathBuf::new();
+        for c in components {
+            normalized.push(c.as_os_str());
+        }
+
+        if normalized.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            normalized
+        }
+    }
+
+    /// Checks whether `path` is permitted by `allowed_set`.
+    pub fn is_path_in_set<P: AsRef<Path>>(path: P, allowed_set: &[PathBuf]) -> bool {
+        let norm_path = Self::normalize_path(path.as_ref());
+        let clean_path_str = norm_path.to_string_lossy();
+        let stripped_path = clean_path_str.trim_start_matches('/');
+
+        allowed_set.iter().any(|allowed| {
+            let norm_allowed = Self::normalize_path(allowed);
+            let clean_allowed_str = norm_allowed.to_string_lossy();
+            let stripped_allowed = clean_allowed_str.trim_start_matches('/');
+
+            if norm_path == norm_allowed || stripped_path == stripped_allowed {
+                return true;
+            }
+
+            if norm_path.starts_with(&norm_allowed) || Path::new(stripped_path).starts_with(stripped_allowed) {
+                return true;
+            }
+
+            false
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn write_file_checked<P: AsRef<Path>>(
+        &self,
+        path: P,
+        content: &[u8],
+        write_set: &[PathBuf],
+    ) -> Result<(), VfsBoundaryError> {
+        let p = path.as_ref();
+        if !Self::is_path_in_set(p, write_set) {
+            return Err(VfsBoundaryError::UnauthorizedWrite {
+                path: p.to_path_buf(),
+                write_set: write_set.to_vec(),
+            });
+        }
+        self.write_file(p, content);
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn read_file_checked<P: AsRef<Path>>(
+        &self,
+        path: P,
+        read_set: Option<&[PathBuf]>,
+    ) -> Result<Option<Vec<u8>>, VfsBoundaryError> {
+        let p = path.as_ref();
+        if let Some(set) = read_set {
+            if !Self::is_path_in_set(p, set) {
+                return Err(VfsBoundaryError::UnauthorizedRead {
+                    path: p.to_path_buf(),
+                    read_set: set.to_vec(),
+                });
+            }
+        }
+        Ok(self.read_file(p))
+    }
+
+    #[allow(dead_code)]
+    pub fn read_string_checked<P: AsRef<Path>>(
+        &self,
+        path: P,
+        read_set: Option<&[PathBuf]>,
+    ) -> Result<Option<String>, VfsBoundaryError> {
+        self.read_file_checked(path, read_set)
+            .map(|opt| opt.and_then(|bytes| String::from_utf8(bytes).ok()))
+    }
+
+    #[allow(dead_code)]
+    pub fn delete_file_checked<P: AsRef<Path>>(
+        &self,
+        path: P,
+        write_set: &[PathBuf],
+    ) -> Result<(), VfsBoundaryError> {
+        let p = path.as_ref();
+        if !Self::is_path_in_set(p, write_set) {
+            return Err(VfsBoundaryError::UnauthorizedDelete {
+                path: p.to_path_buf(),
+                write_set: write_set.to_vec(),
+            });
+        }
+        self.delete_file(p);
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn patch_file_checked<P: AsRef<Path>>(
+        &self,
+        path: P,
+        patch: &str,
+        write_set: &[PathBuf],
+    ) -> Result<String, VfsBoundaryError> {
+        let p = path.as_ref();
+        if !Self::is_path_in_set(p, write_set) {
+            return Err(VfsBoundaryError::UnauthorizedPatch {
+                path: p.to_path_buf(),
+                write_set: write_set.to_vec(),
+            });
+        }
+
+        if let Some(target_start) = patch.find("<<<<<<< TARGET") {
+            let after_target = &patch[target_start + 14..];
+            if let Some(sep) = after_target.find("=======") {
+                let target_snippet = after_target[..sep].trim_matches('\n');
+                let after_sep = &after_target[sep + 7..];
+                if let Some(end) = after_sep.find(">>>>>>>") {
+                    let replacement_snippet = after_sep[..end].trim_matches('\n');
+                    let _ = self.patch_file(p, target_snippet, replacement_snippet);
+                    return Ok(self.read_string(p).unwrap_or_default());
+                }
+            }
+        }
+
+        if patch.contains("TARGET:") && patch.contains("REPLACEMENT:") {
+            let parts: Vec<&str> = patch.split('|').collect();
+            let mut target = None;
+            let mut replacement = None;
+            for part in parts {
+                let trimmed = part.trim();
+                if trimmed.starts_with("TARGET:") {
+                    target = Some(trimmed.trim_start_matches("TARGET:").trim());
+                } else if trimmed.starts_with("REPLACEMENT:") {
+                    replacement = Some(trimmed.trim_start_matches("REPLACEMENT:").trim());
+                }
+            }
+            if let (Some(t), Some(r)) = (target, replacement) {
+                let _ = self.patch_file(p, t, r);
+                return Ok(self.read_string(p).unwrap_or_default());
+            }
+        }
+
+        if !self.exists(p) {
+            self.write_file(p, patch.as_bytes());
+        }
+        Ok(self.read_string(p).unwrap_or_default())
+    }
+
+    #[allow(dead_code)]
+    pub fn patch_snippet_checked<P: AsRef<Path>>(
+        &self,
+        path: P,
+        target: &str,
+        replacement: &str,
+        write_set: &[PathBuf],
+    ) -> Result<bool, VfsBoundaryError> {
+        let p = path.as_ref();
+        if !Self::is_path_in_set(p, write_set) {
+            return Err(VfsBoundaryError::UnauthorizedPatch {
+                path: p.to_path_buf(),
+                write_set: write_set.to_vec(),
+            });
+        }
+        Ok(self.patch_file(p, target, replacement).unwrap_or(false))
+    }
+
     /// Preload or mount a real file from host into RAM sandbox (read-only copy)
     pub fn preload_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let mut original = self.original_snapshots.write();
         let mut active = self.files.write();
         original.insert(path_buf.clone(), content.to_vec());
@@ -80,14 +369,14 @@ impl MemoryVfs {
 
     /// Model writes or edits a file inside the isolated RAM VFS
     pub fn write_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let mut active = self.files.write();
         active.insert(path_buf, content.to_vec());
     }
 
     /// Take a baseline snapshot of a specific file in active VFS for diffing
     pub fn snapshot_file<P: AsRef<Path>>(&self, path: P) {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let active = self.files.read();
         if let Some(content) = active.get(&path_buf) {
             let mut original = self.original_snapshots.write();
@@ -97,7 +386,7 @@ impl MemoryVfs {
 
     /// Read file content from RAM VFS
     pub fn read_file<P: AsRef<Path>>(&self, path: P) -> Option<Vec<u8>> {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let active = self.files.read();
         active.get(&path_buf).cloned()
     }
@@ -109,14 +398,14 @@ impl MemoryVfs {
 
     /// Check if file exists in RAM VFS
     pub fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let active = self.files.read();
         active.contains_key(&path_buf)
     }
 
     /// Delete file inside RAM VFS
     pub fn delete_file<P: AsRef<Path>>(&self, path: P) -> bool {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let mut active = self.files.write();
         active.remove(&path_buf).is_some()
     }
@@ -135,14 +424,14 @@ impl MemoryVfs {
 
     /// Returns byte size of a file in VFS
     pub fn file_size<P: AsRef<Path>>(&self, path: P) -> usize {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let active = self.files.read();
         active.get(&path_buf).map(|b| b.len()).unwrap_or(0)
     }
 
     /// Surgically patch a file in RAM VFS by replacing the first occurrence of `target` with `replacement`
     pub fn patch_file<P: AsRef<Path>>(&self, path: P, target: &str, replacement: &str) -> Result<bool, String> {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let mut active = self.files.write();
         let bytes = active.get(&path_buf).ok_or_else(|| format!("File not found in VFS: {}", path_buf.display()))?;
         let content_str = String::from_utf8(bytes.clone())
@@ -159,7 +448,7 @@ impl MemoryVfs {
 
     /// Generate a unified line-by-line diff for a specific file between original snapshot and active VFS
     pub fn diff_file<P: AsRef<Path>>(&self, path: P) -> Option<String> {
-        let path_buf = Self::resolve_path(path);
+        let path_buf = Self::normalize_path(path);
         let active = self.files.read();
         let original = self.original_snapshots.read();
 
@@ -289,6 +578,17 @@ impl MemoryVfs {
         diffs
     }
 
+    /// Take an in-memory snapshot of all active files in VFS
+    pub fn take_snapshot(&self) -> HashMap<PathBuf, Vec<u8>> {
+        self.files.read().clone()
+    }
+
+    /// Restore all active files in VFS to a previously captured snapshot
+    pub fn restore_snapshot(&self, snapshot: HashMap<PathBuf, Vec<u8>>) {
+        let mut active = self.files.write();
+        *active = snapshot;
+    }
+
     /// Commit staged diffs to actual host disk ONLY upon explicit user confirmation.
     pub fn commit_to_host(&self, user_authorized: bool) -> Result<usize, String> {
         self.commit_to_dir(None, user_authorized)
@@ -336,6 +636,81 @@ impl MemoryVfs {
         let mut original = self.original_snapshots.write();
         let active = self.files.read();
         *original = active.clone();
+
+        Ok(committed)
+    }
+
+    /// Commit ONLY explicitly verified deliverables to host disk.
+    /// If user_authorized is false or verified_paths is empty, does not write unverified files.
+    pub fn commit_verified_files(
+        &self,
+        target_dir: Option<&Path>,
+        verified_paths: &[PathBuf],
+        user_authorized: bool,
+    ) -> Result<usize, String> {
+        if !user_authorized {
+            return Err("Authorization Denied: Cannot commit sandbox VFS to host disk without user approval".to_string());
+        }
+
+        if verified_paths.is_empty() {
+            return Ok(0);
+        }
+
+        let diffs = self.generate_staged_diffs();
+        let mut committed = 0;
+
+        for diff in &diffs {
+            let is_verified = verified_paths.iter().any(|vp| {
+                let norm_vp = Self::normalize_path(vp);
+                let norm_diff = Self::normalize_path(&diff.path);
+                norm_vp == norm_diff
+                    || diff.path.ends_with(vp)
+                    || vp.ends_with(&diff.path)
+                    || diff.path.file_name() == vp.file_name()
+            });
+
+            if !is_verified {
+                continue;
+            }
+
+            let target_path = if diff.path.is_absolute() {
+                Self::resolve_path(&diff.path)
+            } else if let Some(base) = target_dir {
+                base.join(diff.path.file_name().unwrap_or(diff.path.as_os_str()))
+            } else {
+                Self::resolve_path(&diff.path)
+            };
+
+            match diff.change_type {
+                FileChangeType::Created | FileChangeType::Modified => {
+                    if let Some(parent) = target_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Some(content) = self.read_file(&diff.path) {
+                        std::fs::write(&target_path, content)
+                            .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
+                        committed += 1;
+                    }
+                }
+                FileChangeType::Deleted => {
+                    if target_path.exists() {
+                        std::fs::remove_file(&target_path)
+                            .map_err(|e| format!("Failed to remove host file {:?}: {}", target_path, e))?;
+                        committed += 1;
+                    }
+                }
+            }
+        }
+
+        // Update original snapshots to reflect committed state for verified files
+        let mut original = self.original_snapshots.write();
+        let active = self.files.read();
+        for vp in verified_paths {
+            let norm_vp = Self::normalize_path(vp);
+            if let Some(content) = active.get(&norm_vp) {
+                original.insert(norm_vp, content.clone());
+            }
+        }
 
         Ok(committed)
     }
@@ -433,5 +808,217 @@ mod tests {
         let written_file = target_dir.join("calc.py");
         assert!(written_file.exists());
         assert_eq!(std::fs::read_to_string(&written_file).unwrap(), "print(42)\n");
+    }
+
+    #[test]
+    fn test_vfs_boundary_error_display_and_traits() {
+        let ws = vec![PathBuf::from("src/app.py"), PathBuf::from("styles.css")];
+        let rs = vec![PathBuf::from("config.json")];
+
+        let err_write = VfsBoundaryError::UnauthorizedWrite {
+            path: PathBuf::from("secret.key"),
+            write_set: ws.clone(),
+        };
+        assert!(err_write.to_string().contains("unauthorized write to 'secret.key'"));
+        assert_eq!(err_write.path(), Path::new("secret.key"));
+        assert_eq!(err_write.allowed_set(), ws.as_slice());
+        assert_eq!(err_write.error_code(), "VFS_UNAUTHORIZED_WRITE");
+
+        let err_read = VfsBoundaryError::UnauthorizedRead {
+            path: PathBuf::from("db.sqlite"),
+            read_set: rs.clone(),
+        };
+        assert!(err_read.to_string().contains("unauthorized read from 'db.sqlite'"));
+        assert_eq!(err_read.error_code(), "VFS_UNAUTHORIZED_READ");
+
+        let err_del = VfsBoundaryError::UnauthorizedDelete {
+            path: PathBuf::from("protected.rs"),
+            write_set: ws.clone(),
+        };
+        assert!(err_del.to_string().contains("unauthorized delete of 'protected.rs'"));
+
+        let err_patch = VfsBoundaryError::UnauthorizedPatch {
+            path: PathBuf::from("kernel.c"),
+            write_set: ws.clone(),
+        };
+        assert!(err_patch.to_string().contains("unauthorized patch of 'kernel.c'"));
+
+        // Verify std::error::Error trait bound
+        let _: &dyn std::error::Error = &err_write;
+    }
+
+    #[test]
+    fn test_path_normalization_lexical_resolution() {
+        // Redundant current directory
+        assert_eq!(MemoryVfs::normalize_path("./src/main.rs"), PathBuf::from("src/main.rs"));
+        assert_eq!(MemoryVfs::normalize_path("src/./main.rs"), PathBuf::from("src/main.rs"));
+
+        // Parent directory traversal
+        assert_eq!(MemoryVfs::normalize_path("src/utils/../main.rs"), PathBuf::from("src/main.rs"));
+        assert_eq!(MemoryVfs::normalize_path("a/b/c/../../d.rs"), PathBuf::from("a/d.rs"));
+
+        // Boundary escape attempt
+        let escaped = MemoryVfs::normalize_path("src/../../outside.txt");
+        assert!(escaped.ends_with("outside.txt"));
+        assert_ne!(escaped, PathBuf::from("src/outside.txt"));
+
+        // Consecutive parent directory traversal
+        assert_eq!(MemoryVfs::normalize_path("../../secret.txt"), PathBuf::from("../../secret.txt"));
+        assert_eq!(MemoryVfs::normalize_path("../../../a/b"), PathBuf::from("../../../a/b"));
+        assert_eq!(MemoryVfs::normalize_path("a/../../secret.txt"), PathBuf::from("../secret.txt"));
+        assert!(!MemoryVfs::is_path_in_set("../../secret.txt", &[PathBuf::from("secret.txt")]));
+
+        // Empty path
+        assert_eq!(MemoryVfs::normalize_path(""), PathBuf::from("."));
+    }
+
+    #[test]
+    fn test_normalize_path_consecutive_parent_dirs_security() {
+        assert_eq!(MemoryVfs::normalize_path("../../secret.txt"), PathBuf::from("../../secret.txt"));
+        assert_eq!(MemoryVfs::normalize_path("../../../a/b"), PathBuf::from("../../../a/b"));
+        assert_eq!(MemoryVfs::normalize_path("a/../../secret.txt"), PathBuf::from("../secret.txt"));
+        assert!(!MemoryVfs::is_path_in_set("../../secret.txt", &[PathBuf::from("secret.txt")]));
+    }
+
+    #[test]
+    fn test_write_file_checked_enforcement() {
+        let vfs = MemoryVfs::new();
+        let write_set = vec![PathBuf::from("src/app.py"), PathBuf::from("output/")];
+
+        // 1. Authorized write
+        let res_ok = vfs.write_file_checked("src/app.py", b"print(1)", &write_set);
+        assert!(res_ok.is_ok());
+        assert_eq!(vfs.read_string("src/app.py").unwrap(), "print(1)");
+
+        // 2. Authorized write with normalized path
+        let res_norm = vfs.write_file_checked("./src/app.py", b"print(2)", &write_set);
+        assert!(res_norm.is_ok());
+        assert_eq!(vfs.read_string("src/app.py").unwrap(), "print(2)");
+
+        // 3. Authorized directory prefix write
+        let res_dir = vfs.write_file_checked("output/data.csv", b"id,val", &write_set);
+        assert!(res_dir.is_ok());
+        assert_eq!(vfs.read_string("output/data.csv").unwrap(), "id,val");
+
+        // 4. Unauthorized write rejection
+        let res_err = vfs.write_file_checked("evil.sh", b"rm -rf /", &write_set);
+        assert!(matches!(res_err, Err(VfsBoundaryError::UnauthorizedWrite { .. })));
+        if let Err(VfsBoundaryError::UnauthorizedWrite { path, write_set: ws }) = res_err {
+            assert_eq!(path, PathBuf::from("evil.sh"));
+            assert_eq!(ws, write_set);
+        }
+        assert!(!vfs.exists("evil.sh"));
+    }
+
+    #[test]
+    fn test_read_file_checked_enforcement() {
+        let vfs = MemoryVfs::new();
+        vfs.write_file("public.txt", b"public data");
+        vfs.write_file("secret.txt", b"secret data");
+
+        let read_set = vec![PathBuf::from("public.txt")];
+
+        // 1. Unrestricted read (read_set: None)
+        assert_eq!(
+            vfs.read_file_checked("secret.txt", None).unwrap().unwrap(),
+            b"secret data"
+        );
+
+        // 2. Authorized read (read_set: Some)
+        assert_eq!(
+            vfs.read_file_checked("public.txt", Some(&read_set)).unwrap().unwrap(),
+            b"public data"
+        );
+        assert_eq!(
+            vfs.read_string_checked("./public.txt", Some(&read_set)).unwrap().unwrap(),
+            "public data"
+        );
+
+        // 3. Authorized read of non-existent file in allowed set
+        let empty_allowed = vec![PathBuf::from("nonexistent.txt")];
+        assert_eq!(
+            vfs.read_file_checked("nonexistent.txt", Some(&empty_allowed)).unwrap(),
+            None
+        );
+
+        // 4. Unauthorized read rejection
+        let unauth = vfs.read_file_checked("secret.txt", Some(&read_set));
+        assert!(matches!(unauth, Err(VfsBoundaryError::UnauthorizedRead { .. })));
+        if let Err(VfsBoundaryError::UnauthorizedRead { path, read_set: rs }) = unauth {
+            assert_eq!(path, PathBuf::from("secret.txt"));
+            assert_eq!(rs, read_set);
+        }
+    }
+
+    #[test]
+    fn test_delete_file_checked_enforcement() {
+        let vfs = MemoryVfs::new();
+        vfs.write_file("cache.tmp", b"cache");
+        vfs.write_file("prod.db", b"data");
+
+        let write_set = vec![PathBuf::from("cache.tmp")];
+
+        // 1. Authorized delete
+        assert!(vfs.delete_file_checked("cache.tmp", &write_set).is_ok());
+        assert!(!vfs.exists("cache.tmp"));
+
+        // 2. Unauthorized delete
+        let unauth = vfs.delete_file_checked("prod.db", &write_set);
+        assert!(matches!(unauth, Err(VfsBoundaryError::UnauthorizedDelete { .. })));
+        assert!(vfs.exists("prod.db"));
+    }
+
+    #[test]
+    fn test_patch_file_checked_enforcement_and_formats() {
+        let vfs = MemoryVfs::new();
+        let target_file = PathBuf::from("service.py");
+        vfs.write_file(&target_file, b"PORT = 8080\nDEBUG = False\n");
+
+        let write_set = vec![target_file.clone()];
+
+        // 1. Unified diff marker patch
+        let patch1 = "<<<<<<< TARGET\nPORT = 8080\n=======\nPORT = 9000\n>>>>>>>";
+        let patched1 = vfs.patch_file_checked(&target_file, patch1, &write_set).unwrap();
+        assert!(patched1.contains("PORT = 9000"));
+        assert_eq!(vfs.read_string(&target_file).unwrap(), "PORT = 9000\nDEBUG = False\n");
+
+        // 2. Key-value format patch
+        let patch2 = "TARGET: DEBUG = False | REPLACEMENT: DEBUG = True";
+        let patched2 = vfs.patch_file_checked(&target_file, patch2, &write_set).unwrap();
+        assert!(patched2.contains("DEBUG = True"));
+        assert_eq!(vfs.read_string(&target_file).unwrap(), "PORT = 9000\nDEBUG = True\n");
+
+        // 3. patch_snippet_checked
+        assert!(vfs.patch_snippet_checked(&target_file, "PORT = 9000", "PORT = 3000", &write_set).unwrap());
+        assert!(vfs.read_string(&target_file).unwrap().contains("PORT = 3000"));
+
+        // 4. Unauthorized patch
+        let unauth = vfs.patch_file_checked("unauth.py", patch1, &write_set);
+        assert!(matches!(unauth, Err(VfsBoundaryError::UnauthorizedPatch { .. })));
+    }
+
+    #[test]
+    fn test_concurrent_checked_operations() {
+        use std::sync::Arc;
+        let vfs = Arc::new(MemoryVfs::new());
+        let write_set = vec![PathBuf::from("shared.log")];
+
+        vfs.write_file_checked("shared.log", b"init\n", &write_set).unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let v = Arc::clone(&vfs);
+            let ws = write_set.clone();
+            handles.push(std::thread::spawn(move || {
+                let msg = format!("worker_{}\n", i);
+                v.write_file_checked("shared.log", msg.as_bytes(), &ws).unwrap();
+                let read = v.read_file_checked("shared.log", Some(&ws)).unwrap();
+                assert!(read.is_some());
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 }

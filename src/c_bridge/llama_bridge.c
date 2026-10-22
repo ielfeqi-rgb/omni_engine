@@ -8,12 +8,24 @@
 #include <math.h>
 
 #include "include/llama.h"
+#include "include/ggml-backend.h"
 
 // ---------------------------------------------------------------------------
 // Backend Lifecycle
 // ---------------------------------------------------------------------------
 
+static void omni_ensure_backends_loaded(void) {
+    static bool loaded = false;
+    if (loaded) return;
+    loaded = true;
+    ggml_backend_load_all();
+    ggml_backend_load_all_from_path("bin");
+    ggml_backend_load_all_from_path("../bin");
+    ggml_backend_load_all_from_path("target/release");
+}
+
 void omni_llama_backend_init(void) {
+    omni_ensure_backends_loaded();
     llama_backend_init();
 }
 
@@ -27,6 +39,7 @@ void omni_llama_backend_free(void) {
 
 struct llama_model * omni_llama_load_model(const char * path, int n_gpu_layers) {
     if (!path) return NULL;
+    omni_ensure_backends_loaded();
     struct llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;
     return llama_model_load_from_file(path, mparams);
@@ -42,11 +55,12 @@ void omni_llama_free_model(struct llama_model * model) {
 // Context Management
 // ---------------------------------------------------------------------------
 
-struct llama_context * omni_llama_new_context(
+struct llama_context * omni_llama_new_context_ext(
     struct llama_model * model,
     int n_ctx,
     int n_batch,
-    int n_threads
+    int n_threads,
+    int n_seq_max
 ) {
     if (!model) return NULL;
     struct llama_context_params cparams = llama_context_default_params();
@@ -54,7 +68,17 @@ struct llama_context * omni_llama_new_context(
     cparams.n_batch = (n_batch > 0) ? n_batch : 512;
     cparams.n_threads = (n_threads > 0) ? n_threads : 4;
     cparams.n_threads_batch = cparams.n_threads;
+    cparams.n_seq_max = (n_seq_max > 0) ? n_seq_max : 1;
     return llama_init_from_model(model, cparams);
+}
+
+struct llama_context * omni_llama_new_context(
+    struct llama_model * model,
+    int n_ctx,
+    int n_batch,
+    int n_threads
+) {
+    return omni_llama_new_context_ext(model, n_ctx, n_batch, n_threads, 1);
 }
 
 void omni_llama_free_context(struct llama_context * ctx) {
@@ -98,6 +122,29 @@ int omni_llama_token_to_piece(
         buf[written] = '\0';
     }
     return written;
+}
+
+const char * omni_llama_get_chat_template(struct llama_model * model) {
+    if (!model) return NULL;
+    return llama_model_chat_template(model, NULL);
+}
+
+int32_t omni_llama_vocab_eos(struct llama_model * model) {
+    if (!model) return -1;
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    return vocab ? (int32_t)llama_vocab_eos(vocab) : -1;
+}
+
+int32_t omni_llama_vocab_eot(struct llama_model * model) {
+    if (!model) return -1;
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    return vocab ? (int32_t)llama_vocab_eot(vocab) : -1;
+}
+
+bool omni_llama_vocab_is_eog(struct llama_model * model, int32_t token) {
+    if (!model) return false;
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    return vocab ? llama_vocab_is_eog(vocab, (llama_token)token) : false;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,22 +219,31 @@ int omni_llama_get_logits(struct llama_context * ctx, struct llama_model * model
 }
 
 // ---------------------------------------------------------------------------
-// REAL KV-CACHE MANIPULATION API
+// REAL KV-CACHE / MEMORY MANIPULATION API
 // ---------------------------------------------------------------------------
 
 int omni_llama_kv_cache_used_cells(struct llama_context * ctx) {
     if (!ctx) return -1;
-    return (int)llama_get_kv_cache_used_cells(ctx);
+    llama_memory_t mem = llama_get_memory(ctx);
+    if (!mem) return 0;
+    llama_pos p = llama_memory_seq_pos_max(mem, 0);
+    return (p >= 0) ? (int)(p + 1) : 0;
 }
 
 int omni_llama_kv_cache_token_count(struct llama_context * ctx) {
     if (!ctx) return -1;
-    return (int)llama_get_kv_cache_token_count(ctx);
+    llama_memory_t mem = llama_get_memory(ctx);
+    if (!mem) return 0;
+    llama_pos p = llama_memory_seq_pos_max(mem, 0);
+    return (p >= 0) ? (int)(p + 1) : 0;
 }
 
 void omni_llama_kv_cache_clear(struct llama_context * ctx) {
     if (ctx) {
-        llama_kv_cache_clear(ctx);
+        llama_memory_t mem = llama_get_memory(ctx);
+        if (mem) {
+            llama_memory_clear(mem, true);
+        }
     }
 }
 
@@ -198,7 +254,9 @@ bool omni_llama_kv_cache_seq_rm(
     int p1
 ) {
     if (!ctx) return false;
-    return llama_kv_cache_seq_rm(ctx, (llama_seq_id)seq_id, (llama_pos)p0, (llama_pos)p1);
+    llama_memory_t mem = llama_get_memory(ctx);
+    if (!mem) return false;
+    return llama_memory_seq_rm(mem, (llama_seq_id)seq_id, (llama_pos)p0, (llama_pos)p1);
 }
 
 void omni_llama_kv_cache_seq_cp(
@@ -209,7 +267,10 @@ void omni_llama_kv_cache_seq_cp(
     int p1
 ) {
     if (ctx) {
-        llama_kv_cache_seq_cp(ctx, (llama_seq_id)seq_src, (llama_seq_id)seq_dst, (llama_pos)p0, (llama_pos)p1);
+        llama_memory_t mem = llama_get_memory(ctx);
+        if (mem) {
+            llama_memory_seq_cp(mem, (llama_seq_id)seq_src, (llama_seq_id)seq_dst, (llama_pos)p0, (llama_pos)p1);
+        }
     }
 }
 
@@ -221,13 +282,18 @@ void omni_llama_kv_cache_seq_shift(
     int delta
 ) {
     if (ctx) {
-        llama_kv_cache_seq_add(ctx, (llama_seq_id)seq_id, (llama_pos)p0, (llama_pos)p1, (llama_pos)delta);
+        llama_memory_t mem = llama_get_memory(ctx);
+        if (mem) {
+            llama_memory_seq_add(mem, (llama_seq_id)seq_id, (llama_pos)p0, (llama_pos)p1, (llama_pos)delta);
+        }
     }
 }
 
 int omni_llama_kv_cache_seq_pos_max(struct llama_context * ctx, int seq_id) {
     if (!ctx) return -1;
-    return (int)llama_kv_cache_seq_pos_max(ctx, (llama_seq_id)seq_id);
+    llama_memory_t mem = llama_get_memory(ctx);
+    if (!mem) return -1;
+    return (int)llama_memory_seq_pos_max(mem, (llama_seq_id)seq_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +344,9 @@ void omni_llama_sampler_add_penalties(
         last_n = 64;
     }
 
+    int32_t nv = (n_vocab > 0) ? n_vocab : 256000;
     struct llama_sampler * smpl = llama_sampler_init_penalties(
+        nv,
         last_n,
         penalty_repeat,
         penalty_freq,
@@ -486,4 +554,9 @@ static void dummy_log_callback(enum ggml_log_level level, const char * text, voi
 
 void omni_llama_disable_logs(void) {
     llama_log_set(dummy_log_callback, NULL);
+}
+
+int omni_llama_n_ctx_train(struct llama_model * model) {
+    if (!model) return 0;
+    return (int)llama_model_n_ctx_train(model);
 }
