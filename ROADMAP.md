@@ -1,44 +1,71 @@
 # Omni Engine Development Roadmap
 
-This document outlines the strategic architectural milestones for Omni Engine, following the stabilization of the v2.1.0 Sovereign Runtime. The roadmap strictly adheres to the "Opt-in Complexity" philosophy; core automation stability will not be compromised for presentation or peripheral features.
+This document outlines the strategic architectural milestones for Omni Engine, building upon the empirically verified foundation established in **v2.1.0 (Sovereign Runtime)**.
+
+Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosophy: we do not pursue superficial AI buzzwords. Every milestone directly expands execution throughput, language coverage, and deterministic code safety on local commodity hardware.
 
 ---
 
-## Phase 1: Observability & Presentation (v2.2.0)
-*Targeting human-computer interaction (HCI) and swarm observability.*
-
-- [ ] **Sovereign TUI (Terminal User Interface)**
-  - Implement a highly concurrent `ratatui`-based interface running on a detached presentation thread.
-  - Architecture: Zero-overhead opt-in design triggered exclusively via `--tui` flag (or `run_tui.sh`), preserving the strict `stdout` pipeline for legacy scripts.
-- [ ] **Real-Time Swarm Telemetry**
-  - Live TUI sidebar mapping the execution tree of System 1 Workers.
-  - Hardware & Causal-DAG KV-cache usage gauges (VRAM/RAM visualization).
-- [ ] **Async I/O Decoupling**
-  - Physical separation of the user input prompt from standard output streams to prevent async text collisions during active swarm generation.
-
----
-
-## Phase 2: Memory & Modality (v2.3.0)
-*Targeting context horizon limits and data ingestion capabilities.*
-
-- [ ] **Long-term Episodic Memory (RAG)**
-  - Implement a lightweight, embedded Vector Database (e.g., SQLite-VSS or local LanceDB) for cross-session persistent memory.
-  - Enable the Thinker to autonomously query past successful strategies (Ancestral Inheritance across reboots).
-- [ ] **Multi-Modal Vision Hooks**
-  - Seamless integration with Vision-Language Models (e.g., LLaVA natively via `llama.cpp` bindings).
-  - Allow the sandbox to capture screenshots or ingest user images, expanding the Thinker's sensory input beyond pure text.
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                   Omni Engine Evolution Trajectory                     │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+    ┌───────────────────────────────┼───────────────────────────────┐
+    ▼                               ▼                               ▼
+[v2.2.0: Hardware Acceleration]    [v2.3.0: Multilingual AST]      [v2.4.0: Local Git Integration]
+* Dynamic CUDA / Metal Auto-Link   * Tree-Sitter for TS/Rust/Go     * Ephemeral Git Branching
+* 3.8 tok/s -> 40 tok/s on GPU     * Universal Contract Distiller   * Atomic Conventional Commits
+* 8GB RAM Floor Preserved          * AST-guided Regression Isolation* Zero-Network Local Workflows
+```
 
 ---
 
-## Phase 3: Distributed Intelligence (v3.0.0)
-*Targeting compute bottlenecks and enterprise scalability.*
+## Milestone 1: Dynamic Hardware Acceleration (v2.2.0)
+*Target: Multiplying throughput from 3.8 tok/s to 40+ tok/s while preserving the 8GB RAM CPU sovereign baseline.*
 
-- [ ] **Networked Distributed Swarm**
-  - Evolve the Swarm Coordinator to dispatch System 1 Workers over a network layer (gRPC or WebSockets) to physically separate machines/nodes.
-  - Enables massive parallel execution without being bottlenecked by the local host's CPU/RAM.
-- [ ] **Third-Party Plugin Ecosystem**
-  - Stabilize an official Sandbox SDK.
-  - Allow developers to write untrusted `.lua` or compiled `.so` plugins that can be safely loaded into the Bubblewrap jail dynamically.
+- [ ] **Heterogeneous Dynamic C-FFI Dispatch**
+  - Implement runtime hardware discovery probe: automatically inspect host for Nvidia CUDA, Apple Silicon Metal, or Vulkan compute units.
+  - Dynamically dlopen GPU backend libraries (`libggml-cuda.so`, `libggml-metal.so`) from `./bin/` without requiring recompilation of the Rust binary.
+- [ ] **Adaptive KV-Cache Paging**
+  - Layer unified memory paging between GPU VRAM and host RAM, maintaining the zero-OOM memory gate ($K_{max}$) across hybrid hardware.
+- [ ] **Zero-GPU Fallback Resilience**
+  - Seamless, zero-latency fallback to pure AVX-512/AVX2 CPU execution if GPU memory is saturated or unavailable.
 
 ---
-> **Architectural Principle:** *If it ain't broke, don't fix it.* Every feature above must be designed as a decoupled layer. The core text-in/text-out autonomous loop established in v2.1.0 remains the immutable heart of the engine.
+
+## Milestone 2: Multilingual AST Contract Synthesis (v2.3.0)
+*Target: Scaling the Zero-Wipe Invariant and $O(1)$ Context Isolation to large polyglot enterprise codebases.*
+
+- [ ] **Universal Tree-Sitter Contract Distiller**
+  - Extend `distill_interface_contract` beyond Python/JavaScript to full AST grammar support for **TypeScript**, **Rust**, **Go**, and **C++**.
+  - Extract public type definitions, trait implementations, and API signatures into compact 25-line contracts, ensuring worker attention remains clamped ($O(1)$ complexity) across 50,000+ line repositories.
+- [ ] **AST-Guided Dependency Graph & Targeted Testing**
+  - Construct an in-memory directed acyclic graph (DAG) of caller-callee relationships across files.
+  - When modifying a function, automatically identify and execute only the specific test suites covering that function's callers.
+
+---
+
+## Milestone 3: Sovereign Git Patch & Branch Materialization (v2.4.0)
+*Target: Bridging the in-memory RAM VFS cleanroom directly into professional Git workflows.*
+
+- [ ] **Ephemeral Cleanroom Git Worktrees**
+  - Automatically checkout ephemeral local Git worktrees (`omni/task-<id>`) for worker staging.
+  - Commits to host disk occur as clean, atomic Git commits with verifiable Conventional Commit messages and test pass logs.
+- [ ] **Automated Interactive Diffs & Rebase Verification**
+  - Surface visual interactive Git diffs in the TUI console before finalizing commits.
+  - Allow developers to accept, reject, or amend specific line hunks directly from the terminal.
+
+---
+
+## Milestone 4: Persistent Long-Horizon Refactoring Swarms (v3.0.0)
+*Target: Multi-day codebase migrations and autonomous architectural refactoring.*
+
+- [ ] **Cross-Session Causal DAG Checkpointing**
+  - Serialize and snapshot the Causal Memory DAG into local SQLite storage, enabling the swarm to pause, reboot, and resume complex multi-day refactorings without re-planning.
+- [ ] **Monolith Decomposition Protocol**
+  - Introduce an autonomous migration planner capable of breaking down monolithic codebases into modular micro-packages file-by-file with continuous cleanroom verification.
+
+---
+
+> **Guiding Invariant:** *The core text-in/verified-software-out autonomous loop, the Zero-Wipe Invariant, and `#![deny(unused_must_use)]` remain immutable across all versions.*

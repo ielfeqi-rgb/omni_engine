@@ -1,0 +1,20 @@
+# Omni Engine (v2.1.0)
+> The Sovereign, In-Process Autonomous Software Engineering Runtime
+
+## Overview
+Omni Engine is an offline, zero-cloud multi-agent coding engine written in Rust with in-process C-FFI (llama.cpp). It operates as an autonomous compiler swarm delivering tested, verified multi-file software directly to host disk.
+
+## Documentation Index
+- [AGENTS.md](AGENTS.md): Full autonomous agent integration specification, tool calling schemas, and invariant contracts.
+- [README.md](README.md): Architecture overview, 7 sovereign pillars, and human developer quickstart.
+- [REQUIREMENTS.md](REQUIREMENTS.md): System requirements, upstream llama.cpp version (Build 11429), and dynamic linkage details.
+- [ROADMAP.md](ROADMAP.md): Realistic systems engineering milestones and acceleration backends.
+- [docs/EXECUTIVE_README_FOR_CEO.md](docs/EXECUTIVE_README_FOR_CEO.md): Strategic leadership dossier (Task Completion vs. Typing Speed).
+- [docs/OMNI_EMPIRICAL_PROOF_DOSSIER.md](docs/OMNI_EMPIRICAL_PROOF_DOSSIER.md): Hardware telemetry benchmarks, latency measurements, and 2-turn live proof.
+
+## Core CLI Usage
+- `omni_engine run "<goal>" --output-dir <dir> --review`: Synthesize new multi-file project from scratch.
+- `omni_engine modify "<goal>" --dir <dir> --output-dir <dir> --review`: Incrementally extend existing codebase with Zero-Wipe Invariant.
+- `omni_engine tui`: Launch full-screen graphical Terminal Dashboard (Ratatui).
+- `omni_engine console`: Launch interactive REPL console shell.
+- `omni_engine serve --port 8090`: Launch local Web UI and OpenAI-compatible HTTP proxy API.
