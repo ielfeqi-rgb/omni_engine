@@ -29,6 +29,10 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
         return Ok(false);
     }
 
+    if args.iter().any(|a| a == "--allow-unsandboxed") {
+        std::env::set_var("OMNI_ALLOW_UNSANDBOXED", "1");
+    }
+
     let cmd = args[1].as_str();
 
     match cmd {
@@ -205,6 +209,9 @@ SWARM & CODEBASE OPTIONS (for 'run', 'modify', 'swarm', 'goal'):
     -y, --yes                   Auto-approve missing dependency triage during healing.
     --no                        Auto-reject external dependencies (forces standard library).
     --bwrap                     Enforce Linux Bubblewrap sandbox isolation for test execution.
+    --allow-unsandboxed         Explicitly allow unisolated host execution if Bubblewrap
+                                (bwrap) is missing or forbidden by kernel namespaces.
+                                By default, Omni Engine fails closed to protect host integrity.
 
 OPTIONS FOR 'start':
     --port <PORT>               Port for llama-server (default: 8081)

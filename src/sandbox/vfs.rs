@@ -627,7 +627,12 @@ impl MemoryVfs {
             let target_path = if diff.path.is_absolute() {
                 Self::resolve_path(&diff.path)
             } else if let Some(base) = target_dir {
-                base.join(diff.path.file_name().unwrap_or(diff.path.as_os_str()))
+                match crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &diff.path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(format!("Commit aborted due to illegal relative path in diff {:?}: {}", diff.path, e));
+                    }
+                }
             } else {
                 Self::resolve_path(&diff.path)
             };
@@ -635,6 +640,13 @@ impl MemoryVfs {
                 FileChangeType::Created | FileChangeType::Modified => {
                     if let Some(parent) = target_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
+                    }
+                    // Prevent symlink traversal attack (e.g. malicious symlink pointing to ~/.ssh or /etc)
+                    if let Ok(meta) = std::fs::symlink_metadata(&target_path) {
+                        if meta.file_type().is_symlink() {
+                            std::fs::remove_file(&target_path)
+                                .map_err(|e| format!("Security Violation: Refusing to follow existing host symlink {:?}: {}", target_path, e))?;
+                        }
                     }
                     if let Some(content) = self.read_file(&diff.path) {
                         std::fs::write(&target_path, content)

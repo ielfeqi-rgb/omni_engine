@@ -124,13 +124,22 @@ impl IsolatedJail {
         }
 
         let bwrap_present = Self::is_bwrap_available();
+        let allow_unsandboxed = std::env::var("OMNI_ALLOW_UNSANDBOXED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
         println!("{}", "  ┌── [ISOLATED SANDBOX EXECUTION] ────────────────────────────────────".bright_cyan());
         println!("  │ Command   : {}", cmd.bright_yellow().bold());
-        println!("  │ Sandbox   : {}", if bwrap_present { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs)" } else { "Host tempdir fallback [UNISOLATED]" });
+        println!("  │ Sandbox   : {}", if bwrap_present { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs, new-session)" } else { "Host tempdir fallback [UNISOLATED]" });
         if !bwrap_present {
+            if !allow_unsandboxed {
+                eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: Linux Bubblewrap ('bwrap') is missing or namespace creation is blocked.".bright_red().bold());
+                eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host system.".bright_yellow());
+                eprintln!("{}", "  │     To explicitly permit unisolated host execution at your own risk, pass --allow-unsandboxed or set OMNI_ALLOW_UNSANDBOXED=1.".dimmed());
+                return Err("SECURITY VIOLATION [Fail-Closed]: Bubblewrap sandbox unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
+            }
             eprintln!("{}", "  │ [!] SECURITY WARNING: Linux Bubblewrap ('bwrap') was not found in PATH.".bright_red().bold());
-            eprintln!("{}", "  │     Execution is running unisolated in host tempdir. Install bubblewrap for full kernel sandbox:".bright_yellow());
+            eprintln!("{}", "  │     Execution is running unisolated in host tempdir because --allow-unsandboxed is active:".bright_yellow());
             eprintln!("{}", "  │     -> sudo apt install bubblewrap (or dnf install bubblewrap)".dimmed());
         }
         println!("  │ Staged    : {} file(s) materialized in RAM VFS", vfs_files.len());
@@ -143,13 +152,25 @@ impl IsolatedJail {
             match Self::run_with_bwrap(cmd, temp_path, timeout, stdin_input) {
                 Ok((code, out, err)) => {
                     if err.contains("Operation not permitted") || err.contains("Failed RTM_NEWADDR") {
+                        if !allow_unsandboxed {
+                            return Err(format!(
+                                "SECURITY VIOLATION [Fail-Closed]: Bubblewrap sandbox execution failed due to kernel policy restrictions ({}). Untrusted execution blocked. Pass --allow-unsandboxed to permit unisolated host fallback.",
+                                err.trim()
+                            ));
+                        }
                         let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
                         (f_code, f_out, f_err, false)
                     } else {
                         (code, out, err, true)
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    if !allow_unsandboxed {
+                        return Err(format!(
+                            "SECURITY VIOLATION [Fail-Closed]: Bubblewrap execution encountered an unrecoverable error: {}. Untrusted execution blocked. Pass --allow-unsandboxed to permit unisolated host fallback.",
+                            e
+                        ));
+                    }
                     let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
                     (f_code, f_out, f_err, false)
                 }
@@ -227,26 +248,26 @@ impl IsolatedJail {
         // Read-only system mounts
         bwrap.args(["--ro-bind", "/usr", "/usr"]);
         if Path::new("/etc").exists() {
-            bwrap.args(["--ro-bind", "/etc", "/etc"]);
+            bwrap.args(["--ro-bind-try", "/etc", "/etc"]);
         }
 
         // Symlinks or binds for root bin/lib directories
         if Path::new("/bin").is_symlink() {
             bwrap.args(["--symlink", "usr/bin", "/bin"]);
         } else if Path::new("/bin").exists() {
-            bwrap.args(["--ro-bind", "/bin", "/bin"]);
+            bwrap.args(["--ro-bind-try", "/bin", "/bin"]);
         }
 
         if Path::new("/lib").is_symlink() {
             bwrap.args(["--symlink", "usr/lib", "/lib"]);
         } else if Path::new("/lib").exists() {
-            bwrap.args(["--ro-bind", "/lib", "/lib"]);
+            bwrap.args(["--ro-bind-try", "/lib", "/lib"]);
         }
 
         if Path::new("/lib64").is_symlink() {
             bwrap.args(["--symlink", "usr/lib64", "/lib64"]);
         } else if Path::new("/lib64").exists() {
-            bwrap.args(["--ro-bind", "/lib64", "/lib64"]);
+            bwrap.args(["--ro-bind-try", "/lib64", "/lib64"]);
         }
 
         // Read-only user local packages (~/.local/lib and ~/.local/lib64) so user-installed packages are accessible in sandbox
@@ -255,13 +276,13 @@ impl IsolatedJail {
             let user_local_lib = Path::new(&home).join(".local").join("lib");
             if user_local_lib.exists() {
                 if let Some(user_local_str) = user_local_lib.to_str() {
-                    bwrap.args(["--ro-bind", user_local_str, user_local_str]);
+                    bwrap.args(["--ro-bind-try", user_local_str, user_local_str]);
                 }
             }
             let user_local_lib64 = Path::new(&home).join(".local").join("lib64");
             if user_local_lib64.exists() {
                 if let Some(user_local_str) = user_local_lib64.to_str() {
-                    bwrap.args(["--ro-bind", user_local_str, user_local_str]);
+                    bwrap.args(["--ro-bind-try", user_local_str, user_local_str]);
                 }
             }
         }
@@ -276,8 +297,9 @@ impl IsolatedJail {
         bwrap.args(["--bind", ws_str, "/workspace"]);
         bwrap.args(["--chdir", "/workspace"]);
 
-        // Security flags: unshare network, pid, ipc, user; die when parent terminates
-        bwrap.args(["--unshare-all", "--die-with-parent"]);
+        // Security flags: unshare network, pid, ipc, user; die when parent terminates;
+        // --new-session creates a new process group/session detached from TTY, preventing TIOCSTI keystroke injection.
+        bwrap.args(["--unshare-all", "--die-with-parent", "--new-session"]);
 
         // Pass headless display env var, PATH, and unbuffered I/O for Python & subprocesses
         bwrap.args(["--setenv", "DISPLAY", ":99"]);
