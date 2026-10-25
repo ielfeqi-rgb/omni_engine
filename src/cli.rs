@@ -73,7 +73,7 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
             handle_causal_test(&args[2..], &base_dir);
             Ok(true)
         }
-        "run" | "swarm" => {
+        "run" | "swarm" | "goal" => {
             let swarm_args = args[2..].to_vec();
             let swarm_dir = base_dir.clone();
             let _ = tokio::task::spawn_blocking(move || {
@@ -81,8 +81,21 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
             }).await;
             Ok(true)
         }
-        "console" | "tui" | "interactive" | "shell" => {
+        "modify" | "refactor" | "patch" => {
+            let mut swarm_args = args[2..].to_vec();
+            swarm_args.push("--modify".to_string());
+            let swarm_dir = base_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                handle_swarm(&swarm_args, &swarm_dir);
+            }).await;
+            Ok(true)
+        }
+        "console" | "interactive" | "shell" => {
             run_interactive_console(base_dir).await?;
+            Ok(true)
+        }
+        "tui" | "dashboard" | "-tui" | "--tui" => {
+            crate::tui::run_tui().await?;
             Ok(true)
         }
 
@@ -102,24 +115,86 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
 pub fn print_help() {
     println!(r#"
 ================================================================================
-   :: OMNI AI ENGINE - Terminal CLI & Engine Controller
+   :: OMNI AI ENGINE (v2.1.0) - Sovereign Autonomous Agentic Runtime & Controller
 ================================================================================
+DESCRIPTION:
+    Omni Engine is a sovereign, 100% local, offline multi-agent software engineering
+    runtime written in Rust with direct in-process C-FFI inference (llama.cpp).
+    Designed to build, refactor, and test full-stack multi-file projects on commodity
+    hardware (e.g. 8GB RAM laptops, pure CPU) with deterministic zero-wipe safety.
+
 USAGE:
     omni_engine [COMMAND] [OPTIONS]
 
-COMMANDS:
-    status                      Display system hardware specs & llama-server status
-    models                      List all installed GGUF models in models/ directory
-    start <model> [OPTIONS]     Start llama-server with the specified GGUF model
-    stop                        Stop the currently running llama-server
-    ask "<prompt>" [OPTIONS]    Send a single prompt to the running engine and print reply
-    chat                        Start an interactive multi-turn chat session in the terminal
-    run "<goal>" [OPTIONS]      Execute autonomous mission with live KV-cache rollback and sandboxed execution
-    keys <subcommand>           Manage API keys (list, new, revoke)
-    kv-test [model]             Run physical KV-cache manipulation test (seq_rm, seq_cp, clear)
-    causal-test [model]         Run live Causal DAG & Self-Healing recovery benchmark on hardware
-    serve [OPTIONS]             Launch the full Web UI and OpenAI HTTP proxy server
+CORE COMMANDS:
+    run "<goal>" [OPTIONS]      Build a multi-file software system from scratch.
+                                (Aliases: 'swarm', 'goal')
+                                Decomposes goal into a Causal DAG, executes parallel
+                                workers in isolated RAM VFS, and commits to disk only
+                                after deterministic cleanroom verification passes.
 
+    modify "<goal>" [OPTIONS]   Incrementally refactor or extend an existing codebase.
+                                (Aliases: 'refactor', 'patch')
+                                Enforces the Zero-Wipe Invariant: existing logic and AST
+                                symbols are 100% preserved. Generates surgical line diffs
+                                (+lines / -0 regressions) without destructive rewrites.
+
+    tui                         Launch the full-screen graphical Terminal Dashboard (Ratatui).
+                                (Aliases: 'dashboard', '--tui', '-tui')
+                                Visual control center: live RAM/CPU monitors, model selector,
+                                server configuration, and real-time execution logs.
+
+    console                     Launch the interactive terminal console REPL.
+                                (Aliases: 'interactive', 'shell')
+                                Allows live model switching, interactive config tuning,
+                                direct goal dispatch, and runtime telemetry inspection.
+
+    chat                        Start an interactive multi-turn conversational dialogue
+                                directly in the terminal via direct in-process C-FFI.
+
+    ask "<prompt>" [OPTIONS]    Send a single-shot headless prompt to the local engine
+                                and stream/print the generated response to stdout.
+
+    status                      Display hardware vitals: CPU cores, RAM RSS buffer,
+                                swap paging activity, and active model server status.
+
+    models                      List all installed GGUF models in models/ directory with
+                                architecture types, quantization levels, and file sizes.
+
+    start <model> [OPTIONS]     Start background llama-server with specified GGUF model.
+    stop                        Stop the currently running background llama-server.
+    keys <subcommand>           Manage local API keys: 'keys list', 'keys new <name>',
+                                and 'keys revoke <id>'.
+    kv-test [model]             Run physical in-process KV-cache surgical manipulation
+                                benchmark on hardware (seq_rm, seq_cp, clear).
+    causal-test [model]         Run live Causal DAG rollback & self-healing benchmark.
+                                (Alias: 'ablation')
+    serve [OPTIONS]             Launch Web UI and OpenAI-compatible HTTP proxy server
+                                (serves /v1/chat/completions locally for external tools).
+
+SWARM & CODEBASE OPTIONS (for 'run', 'modify', 'swarm', 'goal'):
+    --review, --review-plan     Enable Interactive Plan Review & Human-in-the-Loop Steering.
+                                Thinker displays architectural plan card before workers
+                                write any code. User can approve ('yes') or steer ('no <critique>'),
+                                triggering instant Causal KV-Rollback on unapproved drafts.
+
+    --dir, -i <DIR>             Target directory of the existing codebase to inspect.
+                                Preloads existing source files into RAM VFS before planning.
+                                (Aliases: '--project-dir', '--input-dir')
+
+    --output-dir, -o <DIR>      Destination directory for cleanroom-verified deliverables
+                                (default: ./workspace). (Alias: '--workspace')
+
+    --model <PATH>              Single unified GGUF model for both Thinker (Orchestrator)
+                                and Workers. Highly recommended for 8GB RAM host systems.
+
+    --orchestrator <PATH>       Explicit GGUF model path for System 2 Architecture Thinker.
+    --worker <PATH>             Explicit GGUF model path for System 1 Parallel Workers.
+    --subgoals <N>              Maximum subgoals/tasks decomposed in DAG (default: 3).
+    --steps <N>                 Maximum worker self-healing attempts per task (default: 5).
+    -y, --yes                   Auto-approve missing dependency triage during healing.
+    --no                        Auto-reject external dependencies (forces standard library).
+    --bwrap                     Enforce Linux Bubblewrap sandbox isolation for test execution.
 
 OPTIONS FOR 'start':
     --port <PORT>               Port for llama-server (default: 8081)
@@ -140,14 +215,32 @@ GENERAL OPTIONS:
     -h, --help                  Show this help guide
     -v, --version               Show engine version
 
+SOVEREIGN ARCHITECTURAL INVARIANTS:
+    * Zero-Wipe Guarantee:      In 'modify' mode, existing functions and AST nodes are strictly
+                                preserved. Destructive complete-file rewrites are rejected.
+    * Causal KV-Rollback:       Unapproved plans or syntax errors are excised from KV-cache
+                                in ~6ms without re-prompting or losing prior valid context.
+    * RAM VFS Isolation:        Code generation and execution occur in memory. Host disk is
+                                touched ONLY after 100% cleanroom compiler/verifier pass.
+    * O(1) Context Isolation:   Dependencies are distilled into concise type/API signatures
+                                (distill_interface_contract), maintaining fixed worker context
+                                (1,500-2,500 tokens) even on large repositories (50+ files).
+
 EXAMPLES:
-    omni_engine status
-    omni_engine models
-    omni_engine start qwen-0.5b.gguf --ctx 2048
-    omni_engine ask "What is quantum computing?"
-    omni_engine chat
-    omni_engine stop
-    omni_engine serve
+    1. Create a new project from scratch with human plan review:
+       omni_engine run "Build a modular Task Tracker in Python with SQLite" --review --output-dir ./task_tracker
+
+    2. Incrementally add a feature to an existing project without wiping old code:
+       omni_engine modify "Add priority levels and JSON export" --dir ./task_tracker --output-dir ./task_tracker --review
+
+    3. Fully automated headless generation (ideal for CI/CD or agent tool calls):
+       omni_engine run "Build an AES-256 encryption CLI in Rust" -y --output-dir ./aes_cli
+
+    4. Start interactive console with model and configuration management:
+       omni_engine console
+
+    5. Verify system hardware vitals and RAM RSS headroom:
+       omni_engine status
 ================================================================================
 "#);
 }
@@ -745,23 +838,50 @@ pub fn handle_swarm(args: &[String], base_dir: &PathBuf) {
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         println!(r#"
 ================================================================================
-   :: OMNI ENGINE - Autonomous Dual-Model Search Swarm
+   :: OMNI ENGINE - Autonomous Swarm & Codebase Modification Runtime
 ================================================================================
 USAGE:
-    omni_engine swarm "<query/research goal>" [OPTIONS]
+    omni_engine run "<goal>" [OPTIONS]       # Build new multi-file project
+    omni_engine modify "<goal>" [OPTIONS]    # Incrementally extend/refactor codebase
 
-OPTIONS:
-    --model <PATH>            Use single model for both orchestrator and workers
-    --orchestrator <PATH>     Path to System 2 Orchestrator model GGUF
-    --worker <PATH>           Path to System 1 Swarm Worker model GGUF
-    --subgoals <N>            Maximum sub-goals to decompose (default: 3)
-    --steps <N>               Maximum steps per worker (default: 5)
-    --models-dir <DIR>        Directory containing GGUF models
-    --output-dir <DIR>        Directory to write generated output files (default: ./workspace)
+COMMAND ALIASES:
+    'run'    <=> 'swarm', 'goal'
+    'modify' <=> 'refactor', 'patch'
+
+SWARM OPTIONS:
+    --review, --review-plan     Enable Interactive Plan Review & Human Steering.
+                                Thinker presents DAG architecture card before code
+                                generation. Approve with 'yes' or steer with 'no <text>'.
+
+    --dir, -i <DIR>             Target directory of existing codebase to inspect.
+                                Preloads existing source files into RAM VFS before planning.
+                                (Aliases: '--project-dir', '--input-dir')
+
+    --output-dir, -o <DIR>      Directory to write verified deliverables (default: ./workspace).
+                                (Alias: '--workspace')
+
+    --model <PATH>              Single unified GGUF model for both Thinker & Workers
+                                (Highly recommended for 8GB RAM commodity laptops).
+
+    --orchestrator <PATH>       Explicit GGUF model path for System 2 Architecture Thinker.
+    --worker <PATH>             Explicit GGUF model path for System 1 Swarm Workers.
+    --subgoals <N>              Maximum subgoals/tasks decomposed in DAG (default: 3).
+    --steps <N>                 Maximum worker self-healing attempts per task (default: 5).
+    --models-dir <DIR>          Directory containing GGUF models (default: ./models).
+    -y, --yes                   Auto-approve missing dependency triage during healing.
+    --no                        Auto-reject external dependencies (forces standard library).
+    --bwrap                     Enforce Linux Bubblewrap sandbox isolation for tests.
+
+CORE INVARIANTS:
+    * Zero-Wipe Invariant:      In 'modify' mode, all existing working logic and AST
+                                symbols are 100% preserved. Surgical diffs only (+/-).
+    * Causal KV-Rollback:       Faulty code or rejected plans are rolled back in ~6ms.
+    * RAM VFS Isolation:        Disk is touched ONLY when cleanroom tests pass 100%.
 
 EXAMPLES:
-    omni_engine swarm "latest developments in room temperature superconductors"
-    omni_engine swarm "build a distributed key-value store in Rust" --output-dir ./my_project
+    omni_engine run "Build a REST API in Python with SQLite" --review --output-dir ./my_api
+    omni_engine modify "Add priority levels and JSON export" --dir ./my_api --output-dir ./my_api --review
+    omni_engine run "Build an AES-256 CLI tool in Rust" -y --output-dir ./aes_tool
 ================================================================================
 "#);
         return;
@@ -774,11 +894,35 @@ EXAMPLES:
     let mut max_subgoals = 3;
     let mut max_steps = 5;
     let mut models_dir = base_dir.join("models");
+    let mut input_dir: Option<PathBuf> = None;
     let mut output_dir: Option<PathBuf> = Some(PathBuf::from("./workspace"));
+    let mut auto_approve_deps: Option<bool> = None;
+    let mut is_modify_mode = false;
+    let mut review_plan = false;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--review" | "--review-plan" | "--interactive-plan" => {
+                review_plan = true;
+                i += 1;
+            }
+            "--modify" | "--refactor" | "--patch" => {
+                is_modify_mode = true;
+                i += 1;
+            }
+            "-y" | "--yes" => {
+                auto_approve_deps = Some(true);
+                i += 1;
+            }
+            "--no" => {
+                auto_approve_deps = Some(false);
+                i += 1;
+            }
+            "--input-dir" | "--project-dir" | "--dir" | "-i" if i + 1 < args.len() => {
+                input_dir = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
             "--model" if i + 1 < args.len() => {
                 custom_model = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
@@ -830,14 +974,24 @@ EXAMPLES:
         return;
     }
 
+    if output_dir == Some(PathBuf::from("./workspace")) {
+        if let Some(ref in_dir) = input_dir {
+            output_dir = Some(in_dir.clone());
+        }
+    }
+
     let config = if let Some(m) = custom_model {
         crate::planner::SwarmConfig {
             orchestrator_model_path: m.clone(),
             worker_model_path: m,
             max_subgoals,
             max_steps_per_worker: max_steps,
+            input_dir,
             output_dir,
             verbose: true,
+            auto_approve_deps,
+            is_modify_mode,
+            review_plan,
         }
     } else if let Some((o, w)) = resolve_swarm_models(base_dir, &models_dir, orch_path, worker_path) {
         crate::planner::SwarmConfig {
@@ -845,8 +999,12 @@ EXAMPLES:
             worker_model_path: w,
             max_subgoals,
             max_steps_per_worker: max_steps,
+            input_dir,
             output_dir,
             verbose: true,
+            auto_approve_deps,
+            is_modify_mode,
+            review_plan,
         }
     } else {
         eprintln!("[-] No GGUF models detected.");
@@ -1108,17 +1266,31 @@ fn print_session_header(session: &InteractiveSession) {
 fn print_console_help() {
     use colored::*;
     println!("\n{}", ":: OMNI ENGINE CONSOLE COMMAND REFERENCE".bright_yellow().bold());
-    println!("  {}", "─".repeat(70));
-    println!("  {:<28} {}", "<any prompt or goal>".bright_green().bold(), "Type your task directly to launch the autonomous swarm");
-    println!("  {:<28} {}", "run <goal>".bright_cyan().bold(), "Explicitly execute autonomous swarm for any mission or task");
-    println!("  {:<28} {}", "chat".bright_white().bold(), "Direct native C-FFI conversational dialogue with active model");
-    println!("  {:<28} {}", "models".bright_white().bold(), "Interactively choose unified model or dual-model split");
-    println!("  {:<28} {}", "config".bright_white().bold(), "Interactive menu to adjust subgoals, worker attempts, and output dir");
-    println!("  {:<28} {}", "status".bright_white().bold(), "Inspect system RAM, CPU cores, and engine status");
-    println!("  {:<28} {}", "kv-test".bright_white().bold(), "Run live physical KV-cache manipulation test on hardware");
-    println!("  {:<28} {}", "clear".bright_white().bold(), "Clear the terminal screen");
-    println!("  {:<28} {}", "help / ?".bright_white().bold(), "Display this command guide");
-    println!("  {:<28} {}\n", "exit / quit".bright_white().bold(), "Exit the interactive console back to bash");
+    println!("  {}", "═".repeat(78).dimmed());
+
+    println!("  {}", "AUTONOMOUS EXECUTION MODES:".bright_white().bold());
+    println!("  {:<32} {}", "<any goal or prompt>".bright_green().bold(), "Directly launch autonomous swarm to build a multi-file project");
+    println!("  {:<32} {}", "run <goal> [--review]".bright_cyan().bold(), "Explicitly generate a full-stack system from scratch in RAM VFS");
+    println!("  {:<32} {}", "modify <goal> [--review]".bright_magenta().bold(), "Incrementally refactor existing codebase with Zero-Wipe Invariant");
+
+    println!("\n  {}", "HUMAN-IN-THE-LOOP STEERING:".bright_white().bold());
+    println!("  {:<32} {}", "--review / --review-plan", "Display plan card before code generation. Approve ('yes') or");
+    println!("  {:<32} {}", "", "critique ('no <text>') to trigger instant Causal KV-Rollback");
+
+    println!("\n  {}", "ARCHITECTURE & CONFIGURATION:".bright_white().bold());
+    println!("  {:<32} {}", "tui / dashboard".bright_white().bold(), "Open the full-screen graphical Terminal Dashboard (Ratatui)");
+    println!("  {:<32} {}", "models".bright_white().bold(), "Interactively switch between Unified RAM Model and Dual-Model Split");
+    println!("  {:<32} {}", "config".bright_white().bold(), "Tune planning depth (subgoals), worker retry budget, and workspace dir");
+
+    println!("\n  {}", "INTERACTIVE DIALOGUE & HARDWARE DIAGNOSTICS:".bright_white().bold());
+    println!("  {:<32} {}", "chat".bright_white().bold(), "Direct native C-FFI conversational dialogue with active model in RAM");
+    println!("  {:<32} {}", "status".bright_white().bold(), "Inspect CPU threads, RAM RSS memory buffer, Swap, and engine state");
+    println!("  {:<32} {}", "kv-test".bright_white().bold(), "Run live physical KV-cache manipulation test on host hardware");
+
+    println!("\n  {}", "SESSION CONTROLS:".bright_white().bold());
+    println!("  {:<32} {}", "clear / cls".bright_white().bold(), "Clear terminal screen and re-render session status header");
+    println!("  {:<32} {}", "help / ?".bright_white().bold(), "Display this interactive console command guide");
+    println!("  {:<32} {}\n", "exit / quit".bright_white().bold(), "Exit interactive console session back to host shell");
 }
 
 fn handle_interactive_models(session: &mut InteractiveSession, base_dir: &Path) {
@@ -1314,7 +1486,7 @@ fn handle_interactive_config(session: &mut InteractiveSession, base_dir: &Path) 
     }
 }
 
-fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
+fn execute_interactive_swarm(session: &InteractiveSession, goal: &str, is_modify: bool) {
     use colored::*;
 
     let (orch, worker) = match (&session.orchestrator_path, &session.worker_path) {
@@ -1330,11 +1502,19 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str) {
         worker_model_path: worker,
         max_subgoals: session.max_subgoals,
         max_steps_per_worker: session.max_steps_per_worker,
+        input_dir: Some(session.output_dir.clone()),
         output_dir: Some(session.output_dir.clone()),
         verbose: true,
+        auto_approve_deps: None,
+        is_modify_mode: is_modify,
+        review_plan: true,
     };
 
-    println!("\n[*] Initializing Sovereign Swarm for: {}", goal.bright_yellow().bold());
+    if is_modify {
+        println!("\n[*] Initializing Sovereign Swarm (MODIFICATION & EXTENSION MODE) for: {}", goal.bright_magenta().bold());
+    } else {
+        println!("\n[*] Initializing Sovereign Swarm for: {}", goal.bright_yellow().bold());
+    }
     let coordinator = match crate::planner::SwarmCoordinator::new(config) {
         Ok(c) => c,
         Err(e) => {
@@ -1522,7 +1702,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             let mut parts = trimmed_line.splitn(2, ' ');
             let first = parts.next().unwrap_or("").to_lowercase();
             match first.as_str() {
-                "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" => {
+                "modify" | "refactor" | "patch" | "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" | "tui" | "dashboard" => {
                     (first, parts.next().unwrap_or("").trim())
                 }
                 _ => {
@@ -1565,6 +1745,36 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                     handle_kv_test(&[], &test_dir);
                 }).await;
             }
+            "tui" | "dashboard" => {
+                if let Err(e) = crate::tui::run_tui().await {
+                    eprintln!("[-] TUI error: {}", e);
+                }
+                print!("\x1B[2J\x1B[1;1H");
+                print_session_header(&session);
+            }
+            "modify" | "refactor" | "patch" => {
+                let raw_goal = if !rest_args.is_empty() {
+                    rest_args.to_string()
+                } else {
+                    print!(">> Enter modification / refactor goal: ");
+                    let _ = io::stdout().flush();
+                    let mut g = String::new();
+                    let _ = io::stdin().read_line(&mut g);
+                    g.trim().to_string()
+                };
+
+                let goal = clean_goal_string(&raw_goal);
+                if goal.is_empty() {
+                    println!("[!] Goal cannot be empty.");
+                    continue;
+                }
+
+                let session_clone = session.clone();
+                let goal_clone = goal.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    execute_interactive_swarm(&session_clone, &goal_clone, true);
+                }).await;
+            }
             "run" | "goal" | "swarm" => {
                 let raw_goal = if !rest_args.is_empty() {
                     rest_args.to_string()
@@ -1585,7 +1795,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                 let session_clone = session.clone();
                 let goal_clone = goal.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    execute_interactive_swarm(&session_clone, &goal_clone);
+                    execute_interactive_swarm(&session_clone, &goal_clone, false);
                 }).await;
             }
             unknown => {

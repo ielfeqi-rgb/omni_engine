@@ -34,15 +34,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     };
 
-    // TUI Opt-in Layer
-    if args.contains(&"--tui".to_string()) {
+    // TUI Opt-in Layer (Full-Screen Graphical Terminal Dashboard)
+    if args.contains(&"--tui".to_string())
+        || args.contains(&"-tui".to_string())
+        || (args.len() > 1 && (args[1] == "tui" || args[1] == "dashboard"))
+    {
         return tui::run_tui().await;
     }
 
     // If CLI command is provided and handled, exit cleanly
     if args.len() > 1 && args[1] != "serve" {
         let mut cli_args = args.clone();
-        cli_args.retain(|a| a != "--tui"); // just in case
+        cli_args.retain(|a| a != "--tui" && a != "-tui"); // just in case
         if cli::handle_cli(&cli_args, &base_dir).await? {
             return Ok(());
         }

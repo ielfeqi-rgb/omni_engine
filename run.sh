@@ -8,10 +8,10 @@ if ! command -v bwrap >/dev/null 2>&1; then
     echo "[*] For full unprivileged container isolation, install bubblewrap: 'sudo dnf install bubblewrap' or 'sudo apt install bubblewrap'."
 fi
 
-if [ -f "$SCRIPT_DIR/bin/omni_engine" ]; then
-    exec "$SCRIPT_DIR/bin/omni_engine" "$@"
-elif [ -f "$SCRIPT_DIR/target/release/omni_engine" ]; then
+if [ -f "$SCRIPT_DIR/target/release/omni_engine" ]; then
     exec "$SCRIPT_DIR/target/release/omni_engine" "$@"
+elif [ -f "$SCRIPT_DIR/bin/omni_engine" ]; then
+    exec "$SCRIPT_DIR/bin/omni_engine" "$@"
 else
     echo "[-] Error: omni_engine binary not found."
     exit 1

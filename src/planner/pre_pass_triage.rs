@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_dual_system_tri_plan_synthesis() {
-        let intent = PrePassTriage::evaluate("Download news from internet and save to /home/hema/today_news.txt");
+        let intent = PrePassTriage::evaluate("Download news from internet and save to /tmp/today_news.txt");
         assert!(intent.is_execution_task);
         let plan = intent.dual_system_plan.expect("DualSystemPlan should be generated");
         assert!(plan.plan_a.contains("browser.search"));

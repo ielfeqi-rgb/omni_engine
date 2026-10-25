@@ -30,6 +30,9 @@ bin/omni_engine
 *.bak
 *.checkpoint_*
 test_workspace*
+test_webapp*
+refactor_*
+benchmark_suite/
 cipher_workspace*
 cipher_test_dedup*
 md2html_*

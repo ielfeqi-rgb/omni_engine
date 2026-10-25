@@ -50,7 +50,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
     // Print Cinematic Claude-Style Header
     println!();
     println!("{}", "╭─────────────────────────────────────────────────────────────────────────────╮".cyan());
-    println!("{}", "│                         OMNI AGENTIC TERMINAL v2.0                          │".cyan().bold());
+    println!("{}", format!("│                         OMNI AGENTIC TERMINAL v{}                         │", env!("CARGO_PKG_VERSION")).cyan().bold());
     println!("{}", "│         Pure WASM Sandbox  •  In-Memory VFS  •  Terminal Browser Lens        │".cyan());
     println!("{}", "╰─────────────────────────────────────────────────────────────────────────────╯".cyan());
     println!("  {} {}   {} {}", "Model:".bold(), active_model.green(), "Endpoint:".bold(), format!("http://127.0.0.1:{}", port).dimmed());
@@ -441,15 +441,15 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
 
 fn render_help_screen() {
     println!();
-    println!("{}", "  ╭─────────────────────── AVAILABLE COMMANDS ───────────────────────╮".bright_cyan());
-    println!("  │  {}          Send a prompt or instruction to the model    │", "‹‹‹ <prompt>".bold());
-    println!("  │  {}             Display active 2D Terminal ASCII Browser Lens│", "/browser    ".bright_yellow());
-    println!("  │  {}                 Inspect staged virtual files in RAM Sandbox  │", "/vfs        ".bright_yellow());
-    println!("  │  {}              Interactive review & write diffs to disk     │", "/commit     ".bright_yellow());
-    println!("  │  {}              Display system hardware, model and port      │", "/status     ".bright_yellow());
-    println!("  │  {}               Wipe conversation history context            │", "/clear      ".bright_yellow());
-    println!("  │  {}                Exit interactive terminal session            │", "/exit       ".bright_yellow());
-    println!("{}", "  ╰──────────────────────────────────────────────────────────────────╯".bright_cyan());
+    println!("{}", "  ╭──────────────────────────────── AVAILABLE AGENT COMMANDS ────────────────────────────────╮".bright_cyan());
+    println!("  │  {}          Send prompt with Speculative Intent Probing & Auto-warmup  │", "‹‹‹ <prompt>".bold());
+    println!("  │  {}             Display active 2D Terminal ASCII Browser Lens for web tasks│", "/browser    ".bright_yellow());
+    println!("  │  {}                 Inspect staged candidate files & diffs in RAM VFS Sandbox  │", "/vfs        ".bright_yellow());
+    println!("  │  {}              Commit staged files to disk with Zero-Wipe Invariant check │", "/commit     ".bright_yellow());
+    println!("  │  {}              Display system hardware, active GGUF model, and memory RSS │", "/status     ".bright_yellow());
+    println!("  │  {}               Wipe conversation history & reset Causal KV-Cache context  │", "/clear      ".bright_yellow());
+    println!("  │  {}                Exit interactive terminal session back to shell            │", "/exit       ".bright_yellow());
+    println!("{}", "  ╰──────────────────────────────────────────────────────────────────────────────────────────╯".bright_cyan());
     println!();
 }
 

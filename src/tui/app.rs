@@ -189,7 +189,7 @@ impl Default for TuiApp {
             config: crate::tui::config::OmniConfig::load(),
             input: Input::default(),
             messages: vec![
-                "[System]: Omni Engine v2.2.0 Sovereign Runtime Initialized.".into(),
+                format!("[System]: Omni Engine v{} Sovereign Runtime Initialized.", env!("CARGO_PKG_VERSION")).into(),
                 "[Thinker]: Awaiting your directives...".into(),
             ],
             tick_count: 0,

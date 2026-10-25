@@ -295,16 +295,16 @@ fn run_pillar_3_kv_cache(model_path: &Path) -> Option<Pillar3Results> {
     let mut ctx1 = model.create_context(n_ctx, n_batch, 4).unwrap();
     ctx1.eval_tokens(&prefix_tokens, 0).unwrap();
     let t0 = Instant::now();
-    ctx1.eval_tokens(&new_tokens, prefix_tokens.len() as i32).unwrap();
+    ctx1.eval_tokens(&new_tokens, 0).unwrap();
     let monotonic_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // 2. Omni Engine Causal Rollback (Slice KV-cache suffix and re-evaluate ONLY new tokens)
     let mut ctx2 = model.create_context(n_ctx, n_batch, 4).unwrap();
     ctx2.eval_tokens(&prefix_tokens, 0).unwrap();
-    ctx2.eval_tokens(&wrong_tokens, prefix_tokens.len() as i32).unwrap();
+    ctx2.eval_tokens(&wrong_tokens, 0).unwrap();
     let t1 = Instant::now();
     let _ = ctx2.kv_cache_seq_rm(0, prefix_tokens.len() as i32, -1);
-    ctx2.eval_tokens(&new_tokens, prefix_tokens.len() as i32).unwrap();
+    ctx2.eval_tokens(&new_tokens, 0).unwrap();
     let rollback_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
     // 3. Competitor Cold Restart (Re-evaluate entire context from token 0)
@@ -349,8 +349,12 @@ fn run_live_multifile_generation(model_path: &Path, base_dir: &Path) {
         worker_model_path: model_path.to_path_buf(),
         max_subgoals: 3,
         max_steps_per_worker: 3,
+        input_dir: None,
         output_dir: Some(output_dir.clone()),
         verbose: true,
+        auto_approve_deps: None,
+        is_modify_mode: false,
+        review_plan: false,
     };
 
     let coordinator = match SwarmCoordinator::new(config) {

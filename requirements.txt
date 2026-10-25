@@ -1,0 +1,29 @@
+# ==============================================================================
+#  Omni Engine - External Engine Linkage & Build Specifications
+# ==============================================================================
+#  ARCHITECTURE DIRECTIVE:
+#  Omni Engine is distributed as a pure, lightweight sovereign engine runtime.
+#  It contains NO bundled model weights (0GB models) and NO proprietary llama.cpp
+#  source forks. The engine links dynamically in memory (In-Process C-FFI) against
+#  upstream llama.cpp shared libraries.
+# ==============================================================================
+
+# Core Upstream Inference Engine (Dynamic C-FFI Shared Libraries)
+# Repository: https://github.com/ggerganov/llama.cpp
+# Tag / Version: v0.6.0 (Build 11429, Commit d81235049)
+# Required Shared Objects: libllama.so, libggml.so, libggml-base.so, libggml-cpu.so
+llama-cpp-upstream==0.6.0+b11429
+
+# Linux Sandbox Container Isolation (Mandatory for W = ∅ Cleanroom Testing)
+bubblewrap>=0.8.0
+
+# Native Host Toolchains (Required ONLY when building from source)
+rustc>=1.80.0
+cargo>=1.80.0
+cmake>=3.20.0
+clang>=14.0.0 # or gcc>=11.4.0
+
+# Runtime Model Format:
+# Standard GGUF quantized models (e.g. Qwen2.5-Coder-1.5B, Qwen3-4B).
+# Stored locally under ./models/ or ~/.omni/models/.
+# Zero cloud dependencies. Zero API keys. 100% sovereign.

@@ -103,11 +103,11 @@ graph TD
 
 | النظام الفرعي | الملف المصدري | الوظيفة والإنجاز |
 | :--- | :--- | :--- |
-| **MicroSurgeon** | [`src/planner/surgeon.rs`](file:///home/hema/Downloads/files\(1\)/omni_engine/src/planner/surgeon.rs) | وكيل جراحي سريع الزوال؛ يتدخل لتصحيح أسطر محددة ناتجة عن أخطاء المترجم (Compiler Oracle) عبر استنساخ السياق الموضعي، ثم ينهي عمله دون ترك أي أثر في شجرة الذاكرة الرئيسية. |
-| **Terminal Oracle** | [`src/planner/oracle.rs`](file:///home/hema/Downloads/files\(1\)/omni_engine/src/planner/oracle.rs) | مدقق تنفيذي معزول يختبر تشغيل الأوامر والأكواد داخل الحاوية الآمنة ويلتقط التدفق المشترك `stdout/stderr` لتغذية دورة التنقيح. |
-| **Refinement Loop** | [`src/planner/refinement_loop.rs`](file:///home/hema/Downloads/files\(1\)/omni_engine/src/planner/refinement_loop.rs) | دورة ذاتية التصحيح تجمع بين التحليل الثابت (Static Analysis)، والتدخل الجراحي، والتحقق السلوكي عبر موجهات أخطاء لا تتجاوز 3 محاولات تركيبية ومحاولتين سلوكيتيْن. |
+| **MicroSurgeon** | [`src/planner/surgeon.rs`](src/planner/surgeon.rs) | وكيل جراحي سريع الزوال؛ يتدخل لتصحيح أسطر محددة ناتجة عن أخطاء المترجم (Compiler Oracle) عبر استنساخ السياق الموضعي، ثم ينهي عمله دون ترك أي أثر في شجرة الذاكرة الرئيسية. |
+| **Terminal Oracle** | [`src/planner/oracle.rs`](src/planner/oracle.rs) | مدقق تنفيذي معزول يختبر تشغيل الأوامر والأكواد داخل الحاوية الآمنة ويلتقط التدفق المشترك `stdout/stderr` لتغذية دورة التنقيح. |
+| **Refinement Loop** | [`src/planner/refinement_loop.rs`](src/planner/refinement_loop.rs) | دورة ذاتية التصحيح تجمع بين التحليل الثابت (Static Analysis)، والتدخل الجراحي، والتحقق السلوكي عبر موجهات أخطاء لا تتجاوز 3 محاولات تركيبية ومحاولتين سلوكيتيْن. |
 | **Epistemic Apoptosis** | `src/causal_memory/` | الموت المعرفي المبرمج؛ عند وصول الوكيل إلى طريق مسدود (3 إخفاقات متتالية)، يتم إعدام السياق الملوث واستخراج الخلاصة الموروثة كرموز خام (Raw Ancestral Tokens) وحقنها في رأس انتباه الجيل التالي في غضون **23.45 مللي ثانية**. |
-| **Chamber Verification & Auto-Detect** | [`src/native_llama/auto_detect.rs`](file:///home/hema/Downloads/files\(1\)/omni_engine/src/native_llama/auto_detect.rs) | نظام متعدد الطبقات يكتشف تلقائياً عائلة النموذج (ChatML, Llama-3, Phi-4, Spark-X2.5, Gemma) ورموز التوقف والـ FIM، وينفذ اختبار prefill تجريبي لحظي، ويحفظ الإعدادات في ملف سيادي `.omni.json`. |
+| **Chamber Verification & Auto-Detect** | [`src/native_llama/auto_detect.rs`](src/native_llama/auto_detect.rs) | نظام متعدد الطبقات يكتشف تلقائياً عائلة النموذج (ChatML, Llama-3, Phi-4, Spark-X2.5, Gemma) ورموز التوقف والـ FIM، وينفذ اختبار prefill تجريبي لحظي، ويحفظ الإعدادات في ملف سيادي `.omni.json`. |
 | **Speculative Intent Prober** | `src/planner/pre_pass_triage.rs` | مسبار فائق السرعة يتعرف على نمط المهمة ولغتها (يدعم العربية والإنجليزية) في غضون **10.68 ميكروثانية**، مع تجهيز قنوات الـ PTY ومساحات الـ VFS في **450 نانوثانية**. |
 
 ---

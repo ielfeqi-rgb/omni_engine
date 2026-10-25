@@ -1,28 +1,35 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "release/**" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "release/**" ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  build_and_test:
+    name: Build & Verify Suite
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Download test model
+
+    - name: Set up Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Debug & Release
+      run: |
+        cargo build --verbose
+        cargo build --release --verbose
+
+    - name: Download Verification GGUF Model
       run: |
         mkdir -p models
         curl -L -o models/qwen-0.5b.gguf https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-    - name: Run tests
+
+    - name: Execute Full Unit & Invariant Test Suite
       env:
         LD_LIBRARY_PATH: ${{ github.workspace }}/bin
       run: cargo test --verbose

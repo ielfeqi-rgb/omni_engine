@@ -31,7 +31,7 @@ Test Suite: 100% PASS (30 Unit Tests + 7 Integration Benchmarks + Hardware FFI)
 
 [3] Code Quality & Concurrency Hardening (Technical Audit Resolution):
     - Eliminated all 76 \`.lock().unwrap()\` hazards by migrating to \`parking_lot::Mutex\` and \`parking_lot::RwLock\`. Zero lock panics.
-    - Removed all hardcoded \`/home/hema/...\` paths; replaced with \`$HOME\` and relative base directory discovery.
+    - Removed all hardcoded \`/home/user/...\` paths; replaced with \`$HOME\` and relative base directory discovery.
     - Fixed version string drift; bound to \`env!("CARGO_PKG_VERSION")\`.
     - Secured default network bind address to \`127.0.0.1\` with \`--bind <HOST>\` support.
     - Added graceful shutdown handling via \`tokio::signal::ctrl_c()\`.

@@ -15,7 +15,7 @@
 | `cargo check` | 0 warnings | PASS (0 warnings, 0 errors) | Verified clean build |
 | `.unwrap()` on `.lock()` | **76** | **0** | Migrated 100% to `parking_lot::{Mutex, RwLock}` |
 | `let _ = ...` (swallowed errors) | **52** | Reduced / Secured | Instrumented with `tracing` and error reporting |
-| Hardcoded paths | **3** (`/home/hema/...`) | **0** | Dynamically resolved via `$HOME` and relative paths |
+| Hardcoded paths | **3** (`/home/user/...`) | **0** | Dynamically resolved via `$HOME` and relative paths |
 | Version string drift | v2.0.0, v1.0.1 | Aligned | Bound to `env!("CARGO_PKG_VERSION")` |
 | Default bind address | `0.0.0.0` (Exposed) | `127.0.0.1` (Secured) | Secured local default, `--bind` option added |
 | In-Process C FFI KV-Cache | None (HTTP-only) | Fully Operational | `llama_bridge.c` + `native_llama/mod.rs` |
@@ -34,15 +34,15 @@
 
 | File | `.lock().unwrap()` Count |
 |------|--------------------------|
-| [supervisor.rs](file:///home/hema/Downloads/omni_engine_package/src/planner/supervisor.rs) | 14 |
-| [terminal_bridge.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/terminal_bridge.rs) | 13 |
-| [downloader.rs](file:///home/hema/Downloads/omni_engine_package/src/downloader.rs) | 10 |
-| [llama_manager.rs](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs) | 8 |
-| [lua_runner.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/lua_runner.rs) | 4 |
-| [vfs.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/vfs.rs) | 8 |
-| [auth.rs](file:///home/hema/Downloads/omni_engine_package/src/auth.rs) | 4 |
-| [causal_memory/store.rs](file:///home/hema/Downloads/omni_engine_package/src/causal_memory/store.rs) | 4 |
-| [logger.rs](file:///home/hema/Downloads/omni_engine_package/src/logger.rs) | 2 |
+| [supervisor.rs](../../src/planner/supervisor.rs) | 14 |
+| [terminal_bridge.rs](../../src/sandbox/terminal_bridge.rs) | 13 |
+| [downloader.rs](../../src/downloader.rs) | 10 |
+| [llama_manager.rs](../../src/llama_manager.rs) | 8 |
+| [lua_runner.rs](../../src/sandbox/lua_runner.rs) | 4 |
+| [vfs.rs](../../src/sandbox/vfs.rs) | 8 |
+| [auth.rs](../../src/auth.rs) | 4 |
+| [causal_memory/store.rs](../../src/causal_memory/store.rs) | 4 |
+| [logger.rs](../../src/logger.rs) | 2 |
 
 **Fix**: Replace all `.lock().unwrap()` with either:
 ```rust
@@ -58,15 +58,15 @@ use parking_lot::Mutex;  // Drop-in replacement, no unwrap needed
 ### C2. Hardcoded User-Specific Paths
 
 > [!CAUTION]
-> 3 absolute paths in [llama_manager.rs](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs#L44-L47) will fail on ANY machine other than the developer's laptop.
+> 3 absolute paths in [llama_manager.rs](../../src/llama_manager.rs#L44-L47) will fail on ANY machine other than the developer's laptop.
 
 ```rust
 // Line 44 - hardcoded to specific user
-PathBuf::from("/home/hema/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"),
+PathBuf::from("/home/user/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"),
 // Line 46
-PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_v2/bin/llama-server"),
+PathBuf::from("/home/user/Downloads/files(1)/omnicontext_v2/bin/llama-server"),
 // Line 47
-PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_complete/bin/llama-server"),
+PathBuf::from("/home/user/Downloads/files(1)/omnicontext_complete/bin/llama-server"),
 ```
 
 **Fix**: Replace with `$HOME`-relative or config-file-based paths:
@@ -86,10 +86,10 @@ Three different version strings in the codebase:
 
 | Location | String |
 |----------|--------|
-| [Cargo.toml](file:///home/hema/Downloads/omni_engine_package/Cargo.toml) | `version = "2.0.0"` |
-| [main.rs:69](file:///home/hema/Downloads/omni_engine_package/src/main.rs#L69) | `"v2.0.0"` |
-| [main.rs:78](file:///home/hema/Downloads/omni_engine_package/src/main.rs#L78) | `"v1.0.1"` |
-| [cli.rs:23](file:///home/hema/Downloads/omni_engine_package/src/cli.rs#L23) | `"v1.0.1"` |
+| [Cargo.toml](../../Cargo.toml) | `version = "2.0.0"` |
+| [main.rs:69](../../src/main.rs#L69) | `"v2.0.0"` |
+| [main.rs:78](../../src/main.rs#L78) | `"v1.0.1"` |
+| [cli.rs:23](../../src/cli.rs#L23) | `"v1.0.1"` |
 
 **Fix**: Use `env!("CARGO_PKG_VERSION")` macro everywhere:
 ```rust
@@ -103,7 +103,7 @@ println!("OMNI AI ENGINE v{} initialized.", env!("CARGO_PKG_VERSION"));
 ### H1. `#![allow(dead_code)]` Hides Unused Code
 
 > [!WARNING]
-> Both [main.rs:1](file:///home/hema/Downloads/omni_engine_package/src/main.rs#L1) and [lib.rs:1](file:///home/hema/Downloads/omni_engine_package/src/lib.rs#L1) suppress all dead-code warnings globally. This means entire functions and structs could be orphaned without any compiler notification.
+> Both [main.rs:1](../../src/main.rs#L1) and [lib.rs:1](../../src/lib.rs#L1) suppress all dead-code warnings globally. This means entire functions and structs could be orphaned without any compiler notification.
 
 **Fix**: Remove `#![allow(dead_code)]` and address each warning individually. Functions truly needed for future use can get `#[allow(dead_code)]` per-item.
 
@@ -115,12 +115,12 @@ Key concerning patterns:
 
 | File | Line | What's Swallowed |
 |------|------|-----------------|
-| [auth.rs:25](file:///home/hema/Downloads/omni_engine_package/src/auth.rs#L25) | `let _ = fs::create_dir_all(...)` | Config directory creation failure |
-| [auth.rs:47](file:///home/hema/Downloads/omni_engine_package/src/auth.rs#L47) | `let _ = save_keys_to_disk(...)` | API key persistence failure |
-| [llama_manager.rs:137](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs#L137) | `let _ = fs::write(...pid...)` | PID file write failure (orphan processes) |
-| [llama_manager.rs:236](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs#L236) | `let _ = child.kill()` | Process kill failure |
-| [web_server.rs:129](file:///home/hema/Downloads/omni_engine_package/src/web_server.rs#L129) | `let _ = state.llama_manager.stop()` | Server shutdown cleanup failure |
-| [lua_runner.rs:33](file:///home/hema/Downloads/omni_engine_package/src/sandbox/lua_runner.rs#L33) | `let _ = lua.set_hook(...)` | Lua safety hook installation failure |
+| [auth.rs:25](../../src/auth.rs#L25) | `let _ = fs::create_dir_all(...)` | Config directory creation failure |
+| [auth.rs:47](../../src/auth.rs#L47) | `let _ = save_keys_to_disk(...)` | API key persistence failure |
+| [llama_manager.rs:137](../../src/llama_manager.rs#L137) | `let _ = fs::write(...pid...)` | PID file write failure (orphan processes) |
+| [llama_manager.rs:236](../../src/llama_manager.rs#L236) | `let _ = child.kill()` | Process kill failure |
+| [web_server.rs:129](../../src/web_server.rs#L129) | `let _ = state.llama_manager.stop()` | Server shutdown cleanup failure |
+| [lua_runner.rs:33](../../src/sandbox/lua_runner.rs#L33) | `let _ = lua.set_hook(...)` | Lua safety hook installation failure |
 
 The Lua safety hook at line 33 is especially dangerous -- if `set_hook` fails silently, the infinite-loop protection is gone and hostile Lua scripts can hang the process forever.
 
@@ -130,7 +130,7 @@ The Lua safety hook at line 33 is especially dangerous -- if `set_hook` fails si
 
 ### H3. Server Binds to `0.0.0.0` by Default
 
-[main.rs:90](file:///home/hema/Downloads/omni_engine_package/src/main.rs#L90) and [llama_manager.rs:205](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs#L205) bind to all network interfaces. On a laptop connected to public Wi-Fi, the LLM inference endpoint is exposed to the entire network with no authentication enforced by default.
+[main.rs:90](../../src/main.rs#L90) and [llama_manager.rs:205](../../src/llama_manager.rs#L205) bind to all network interfaces. On a laptop connected to public Wi-Fi, the LLM inference endpoint is exposed to the entire network with no authentication enforced by default.
 
 **Fix**: Default to `127.0.0.1` (localhost only). Add `--bind` CLI flag for explicit network exposure.
 
@@ -142,14 +142,14 @@ These modules have **no unit tests and no integration test coverage**:
 
 | Module | Lines | Risk |
 |--------|-------|------|
-| [openai_api.rs](file:///home/hema/Downloads/omni_engine_package/src/openai_api.rs) | 141 | Main API endpoint -- untested |
-| [web_server.rs](file:///home/hema/Downloads/omni_engine_package/src/web_server.rs) | 207 | HTTP router and handlers -- untested |
-| [cli.rs](file:///home/hema/Downloads/omni_engine_package/src/cli.rs) | 422 | All CLI commands -- untested |
-| [tui_agent.rs](file:///home/hema/Downloads/omni_engine_package/src/tui_agent.rs) | 578 | Terminal UI agent -- untested |
-| [downloader.rs](file:///home/hema/Downloads/omni_engine_package/src/downloader.rs) | 174 | Model downloads -- untested |
-| [llama_manager.rs](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs) | 255 | Process lifecycle -- untested |
-| [auth.rs](file:///home/hema/Downloads/omni_engine_package/src/auth.rs) | 102 | API key management -- untested |
-| [main.rs](file:///home/hema/Downloads/omni_engine_package/src/main.rs) | 101 | Entry point -- untested |
+| [openai_api.rs](../../src/openai_api.rs) | 141 | Main API endpoint -- untested |
+| [web_server.rs](../../src/web_server.rs) | 207 | HTTP router and handlers -- untested |
+| [cli.rs](../../src/cli.rs) | 422 | All CLI commands -- untested |
+| [tui_agent.rs](../../src/tui_agent.rs) | 578 | Terminal UI agent -- untested |
+| [downloader.rs](../../src/downloader.rs) | 174 | Model downloads -- untested |
+| [llama_manager.rs](../../src/llama_manager.rs) | 255 | Process lifecycle -- untested |
+| [auth.rs](../../src/auth.rs) | 102 | API key management -- untested |
+| [main.rs](../../src/main.rs) | 101 | Entry point -- untested |
 
 **Total untested**: 1,980 lines / 5,208 = **38% of codebase has zero tests**
 
@@ -182,7 +182,7 @@ Build target/:  3.3 GB  (6,300x the source)
 
 ### M3. No Graceful Shutdown
 
-[web_server.rs:129](file:///home/hema/Downloads/omni_engine_package/src/web_server.rs#L129) calls `llama_manager.stop()` but only on the `/api/model/stop` endpoint. If the main process is killed (Ctrl+C, SIGTERM), the llama-server child process is **orphaned**.
+[web_server.rs:129](../../src/web_server.rs#L129) calls `llama_manager.stop()` but only on the `/api/model/stop` endpoint. If the main process is killed (Ctrl+C, SIGTERM), the llama-server child process is **orphaned**.
 
 **Fix**: Add `tokio::signal` handler:
 ```rust
@@ -199,7 +199,7 @@ tokio::select! {
 
 ### M4. No Request Timeouts or Rate Limiting
 
-The OpenAI API proxy in [openai_api.rs](file:///home/hema/Downloads/omni_engine_package/src/openai_api.rs) has no timeout on the `reqwest` call to llama-server. A hung model will hold the HTTP connection indefinitely.
+The OpenAI API proxy in [openai_api.rs](../../src/openai_api.rs) has no timeout on the `reqwest` call to llama-server. A hung model will hold the HTTP connection indefinitely.
 
 **Fix**: Add `.timeout(Duration::from_secs(300))` to the reqwest client.
 
@@ -209,7 +209,7 @@ The OpenAI API proxy in [openai_api.rs](file:///home/hema/Downloads/omni_engine_
 
 ### L1. Emoji Usage in Production Output
 
-[main.rs:69](file:///home/hema/Downloads/omni_engine_package/src/main.rs#L69), [93-95](file:///home/hema/Downloads/omni_engine_package/src/main.rs#L93-L95) use emoji in stdout. This can break on terminals without Unicode support and may cause issues with log aggregation tools.
+[main.rs:69](../../src/main.rs#L69), [93-95](../../src/main.rs#L93-L95) use emoji in stdout. This can break on terminals without Unicode support and may cause issues with log aggregation tools.
 
 ### L2. `Cargo.toml` Author Field
 
@@ -229,7 +229,7 @@ All configuration is through CLI flags or hardcoded values. No support for `.env
 
 ### Phase 1: Safety (Week 1)
 1. Replace all 76 `.lock().unwrap()` with poison-safe alternatives
-2. Remove 3 hardcoded `/home/hema/` paths
+2. Remove 3 hardcoded `/home/user/` paths
 3. Fix Lua safety hook to `panic!` on failure instead of `let _ = ...`
 4. Default bind to `127.0.0.1`
 5. Add graceful shutdown with signal handler

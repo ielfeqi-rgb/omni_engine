@@ -21,9 +21,9 @@ Remove it, then fix each warning individually.
 
 ```rust
 // DELETE these 3 lines:
-PathBuf::from("/home/hema/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"),
-PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_v2/bin/llama-server"),
-PathBuf::from("/home/hema/Downloads/files(1)/omnicontext_complete/bin/llama-server"),
+PathBuf::from("/home/user/Downloads/files(1)/M.A.R.K.E.T/bin/llama-server"),
+PathBuf::from("/home/user/Downloads/files(1)/omnicontext_v2/bin/llama-server"),
+PathBuf::from("/home/user/Downloads/files(1)/omnicontext_complete/bin/llama-server"),
 ```
 
 **Why**: These only work on YOUR laptop. Replace with:

@@ -30,8 +30,12 @@ fn test_live_acceptance_feedback_swarm() {
         worker_model_path: model_path.clone(),
         max_subgoals: 3,
         max_steps_per_worker: 3,
+        input_dir: None,
         output_dir: Some(output_dir.clone()),
         verbose: true,
+        auto_approve_deps: None,
+        is_modify_mode: false,
+        review_plan: false,
     };
 
     let coordinator = SwarmCoordinator::new(config)

@@ -131,7 +131,7 @@ impl DiagnosticCode {
                 format!("Patch failed for '{}': {}. Ensure the exact target snippet exists in the file before patching.", target_entity, err)
             }
             DiagnosticCode::FileNotDeleted => {
-                format!("File '{}' was not deleted from VFS. Call vfs.delete(\"{}\") or execute rm via terminal.", target_entity, target_entity)
+                format!("File '{}' was not deleted. Use `os.remove(\"{}\")` in Python or execute `rm {}` via terminal.", target_entity, target_entity, target_entity)
             }
             DiagnosticCode::DiffEmpty => {
                 format!("Modification on '{}' produced zero diff. Ensure the target lines are actually changed.", target_entity)
@@ -159,6 +159,128 @@ impl DiagnosticCode {
 pub enum DependencyChoice {
     InstallAndRetry,
     UseAlternative,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostPackageManager {
+    Dnf,
+    Apt,
+    Pacman,
+    Zypper,
+    Apk,
+    Brew,
+    Winget,
+    Pip,
+}
+
+impl HostPackageManager {
+    /// Detect the primary package manager available on the host system dynamically.
+    pub fn detect() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            if std::path::Path::new("C:\\Program Files\\WindowsApps").exists() {
+                return HostPackageManager::Winget;
+            }
+            return HostPackageManager::Pip;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if std::path::Path::new("/opt/homebrew/bin/brew").exists()
+                || std::path::Path::new("/usr/local/bin/brew").exists()
+            {
+                return HostPackageManager::Brew;
+            }
+            return HostPackageManager::Pip;
+        }
+
+        #[cfg(unix)]
+        {
+            if std::path::Path::new("/usr/bin/dnf").exists() || std::path::Path::new("/bin/dnf").exists() {
+                HostPackageManager::Dnf
+            } else if std::path::Path::new("/usr/bin/apt-get").exists() || std::path::Path::new("/bin/apt-get").exists() {
+                HostPackageManager::Apt
+            } else if std::path::Path::new("/usr/bin/pacman").exists() || std::path::Path::new("/bin/pacman").exists() {
+                HostPackageManager::Pacman
+            } else if std::path::Path::new("/usr/bin/zypper").exists() || std::path::Path::new("/bin/zypper").exists() {
+                HostPackageManager::Zypper
+            } else if std::path::Path::new("/sbin/apk").exists() || std::path::Path::new("/bin/apk").exists() {
+                HostPackageManager::Apk
+            } else {
+                HostPackageManager::Pip
+            }
+        }
+    }
+
+    /// Build the idiomatic installation command for the detected package manager
+    pub fn build_install_command(&self, dep: &str) -> String {
+        match self {
+            HostPackageManager::Dnf => {
+                if dep == "tkinter" {
+                    "sudo dnf install -y python3-tkinter || pip install --user tk".to_string()
+                } else {
+                    format!(
+                        "sudo dnf install -y python3-{} || python3 -m pip install --user {} || pip install --user {}",
+                        dep, dep, dep
+                    )
+                }
+            }
+            HostPackageManager::Apt => {
+                if dep == "tkinter" {
+                    "sudo apt-get update && sudo apt-get install -y python3-tk || pip install --user tk".to_string()
+                } else {
+                    format!(
+                        "sudo apt-get update && sudo apt-get install -y python3-{} || python3 -m pip install --user {} || pip install --user {}",
+                        dep, dep, dep
+                    )
+                }
+            }
+            HostPackageManager::Pacman => {
+                if dep == "tkinter" {
+                    "sudo pacman -S --noconfirm tk || pip install --user tk".to_string()
+                } else {
+                    format!(
+                        "sudo pacman -S --noconfirm python-{} || python3 -m pip install --user {} || pip install --user {}",
+                        dep, dep, dep
+                    )
+                }
+            }
+            HostPackageManager::Zypper => {
+                if dep == "tkinter" {
+                    "sudo zypper install -y python3-tk || pip install --user tk".to_string()
+                } else {
+                    format!(
+                        "sudo zypper install -y python3-{} || python3 -m pip install --user {} || pip install --user {}",
+                        dep, dep, dep
+                    )
+                }
+            }
+            HostPackageManager::Apk => {
+                format!(
+                    "apk add --no-cache py3-{} || python3 -m pip install --user {}",
+                    dep, dep
+                )
+            }
+            HostPackageManager::Brew => {
+                format!(
+                    "brew install {} || python3 -m pip install --user {}",
+                    dep, dep
+                )
+            }
+            HostPackageManager::Winget => {
+                format!(
+                    "python -m pip install --user {} || pip install --user {}",
+                    dep, dep
+                )
+            }
+            HostPackageManager::Pip => {
+                format!(
+                    "python3 -m pip install --user {} || pip install --user {} || pip install {}",
+                    dep, dep, dep
+                )
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1692,8 +1814,12 @@ pub struct SwarmConfig {
     pub worker_model_path: PathBuf,
     pub max_subgoals: usize,
     pub max_steps_per_worker: usize,
+    pub input_dir: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
     pub verbose: bool,
+    pub auto_approve_deps: Option<bool>,
+    pub is_modify_mode: bool,
+    pub review_plan: bool,
 }
 
 impl SwarmConfig {
@@ -1747,8 +1873,12 @@ impl SwarmConfig {
             worker_model_path: worker,
             max_subgoals: 3,
             max_steps_per_worker: 5,
+            input_dir: None,
             output_dir: None,
             verbose: true,
+            auto_approve_deps: None,
+            is_modify_mode: false,
+            review_plan: false,
         })
     }
 }
@@ -1784,6 +1914,68 @@ impl SwarmCoordinator {
             vfs: Arc::new(MemoryVfs::new()),
             terminal,
         })
+    }
+
+    /// Resolves an existing file on the host machine across configured directories:
+    /// 1. input_dir (if specified)
+    /// 2. output_dir (if specified)
+    /// 3. Current working directory
+    pub fn resolve_existing_file(&self, relative_path: &Path) -> Option<PathBuf> {
+        // 1. Check in input_dir
+        if let Some(ref in_dir) = self.config.input_dir {
+            let candidate = in_dir.join(relative_path);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+        // 2. Check in output_dir
+        if let Some(ref out_dir) = self.config.output_dir {
+            let candidate = out_dir.join(relative_path);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+        // 3. Check relative to current working directory
+        if relative_path.exists() {
+            return Some(relative_path.to_path_buf());
+        }
+        None
+    }
+
+    /// Preloads existing project deliverables into the in-memory Virtual Filesystem (VFS).
+    /// Used in Modify / Incremental Extension mode or when an input_dir is specified to
+    /// ensure existing working code is immediately accessible for workers without disk races.
+    pub fn preload_existing_workspace_files(&self) {
+        let dirs_to_scan = [self.config.input_dir.as_ref(), self.config.output_dir.as_ref()];
+        let mut loaded = 0;
+        for dir_opt in dirs_to_scan {
+            if let Some(dir) = dir_opt {
+                if dir.is_dir() {
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                if fname.starts_with('.') || fname.ends_with(".log") || fname == "README.md" {
+                                    continue;
+                                }
+                                let relative = PathBuf::from(&fname);
+                                if !self.vfs.exists(&relative) {
+                                    if let Ok(bytes) = std::fs::read(&path) {
+                                        self.vfs.preload_file(&relative, &bytes);
+                                        loaded += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if loaded > 0 {
+            let files: Vec<String> = self.vfs.list_files().iter().map(|p| p.to_string_lossy().to_string()).collect();
+            println!("  [WORKSPACE PRELOAD] Preloaded {} existing deliverable(s) into RAM VFS: [{}]", loaded, files.join(", ").bright_cyan());
+        }
     }
 
     /// Constructs an analytical MemoryGate calibrated for the worker model geometry and quantization.
@@ -2125,19 +2317,81 @@ impl SwarmCoordinator {
         );
         println!("{}\n", "=".repeat(80).bright_blue());
 
+        // PHASE 0: Preload existing workspace deliverables in Modify / Incremental mode
+        if self.config.is_modify_mode || self.config.input_dir.is_some() {
+            self.preload_existing_workspace_files();
+        }
+
         // PHASE 1: System 2 Orchestrator Plan Synthesis
         println!("  [THINKER PLAN] Formulating execution sub-tasks...");
-        let subgoals = self.orchestrate_plan(user_goal)?;
+        let mut current_goal = user_goal.to_string();
+        let mut subgoals = self.orchestrate_plan(&current_goal)?;
 
-        println!("  [PLAN] Generated {} sub-task(s):", subgoals.len().to_string().bright_yellow());
-        for sg in &subgoals {
-            println!("   - Task #{}: {} (Target: {})", sg.id, sg.description.bright_white(), sg.target_entity.bright_cyan());
+        // PHASE 1.1: Interactive Plan Review & Steering (Human-in-the-Loop Governance)
+        if self.config.review_plan {
+            let mut iteration = 1;
+            loop {
+                self.render_plan_preview(&current_goal, &subgoals);
+                print!("  [PLAN REVIEW v{}] Approve? [yes / no <critique>]: ", iteration);
+                use std::io::{self, Write};
+                io::stdout().flush().unwrap_or(());
+
+                let mut input = String::new();
+                let bytes_read = match io::stdin().read_line(&mut input) {
+                    Ok(n) => n,
+                    Err(_) => 0,
+                };
+                if bytes_read == 0 {
+                    println!("  [!] End of input detected. Proceeding with current plan.");
+                    break;
+                }
+                let trimmed = input.trim();
+                let lower = trimmed.to_lowercase();
+
+                if lower == "yes" || lower == "y" || lower == "ok" || lower == "نعم" || lower == "تمام" || lower == "اه" || lower == "ايوه" {
+                    println!("\n  {} Plan sealed into Causal Memory. Suffix debate rolled back.", "[PLAN SEALED]".bright_green().bold());
+                    println!("  {} Executing approved golden architecture...\n", ">>".bright_yellow());
+                    break;
+                } else if lower.starts_with("no") || lower.starts_with("n ") || lower.starts_with("لا") {
+                    let critique = if let Some(stripped) = trimmed.strip_prefix("no") {
+                        stripped.trim().trim_start_matches(':').trim()
+                    } else if let Some(stripped) = trimmed.strip_prefix("No") {
+                        stripped.trim().trim_start_matches(':').trim()
+                    } else if let Some(stripped) = trimmed.strip_prefix("n ") {
+                        stripped.trim()
+                    } else if let Some(stripped) = trimmed.strip_prefix("N ") {
+                        stripped.trim()
+                    } else if let Some(stripped) = trimmed.strip_prefix("لا") {
+                        stripped.trim().trim_start_matches(':').trim()
+                    } else {
+                        trimmed
+                    };
+
+                    iteration += 1;
+                    println!("\n  [STEERING RECEIVED] \"{}\"", critique.bright_yellow());
+                    println!("  [CAUSAL KV-ROLLBACK] Excising unapproved draft plan from KV-Cache...");
+                    println!("  [THINKER RE-PLAN v{}] Incorporating steering constraints into architecture...", iteration);
+
+                    current_goal = format!(
+                        "{}\n[MANDATORY ARCHITECTURAL CRITIQUE & USER STEERING: {}]",
+                        user_goal, critique
+                    );
+                    subgoals = self.orchestrate_plan(&current_goal)?;
+                } else {
+                    println!("  [!] Unrecognized response. Please type '{}' to proceed, or '{}' to adjust.", "yes".bright_green(), "no <critique>".bright_yellow());
+                }
+            }
+        } else {
+            println!("  [PLAN] Generated {} sub-task(s):", subgoals.len().to_string().bright_yellow());
+            for sg in &subgoals {
+                println!("   - Task #{}: {} (Target: {})", sg.id, sg.description.bright_white(), sg.target_entity.bright_cyan());
+            }
+            println!();
         }
-        println!();
 
         // PHASE 1.5: Generate Global Contract (Blackboard)
         println!("  [THINKER BLACKBOARD] Synthesizing Global Contract for DAG Agents...");
-        let global_contract = self.generate_global_contract(user_goal, &subgoals).unwrap_or_else(|_| "No strict contract.".to_string());
+        let global_contract = self.generate_global_contract(&current_goal, &subgoals).unwrap_or_else(|_| "No strict contract.".to_string());
         println!("  [CONTRACT]: {}\n", global_contract.bright_magenta());
 
         // PHASE 2: System 1 Swarm Execution with State Machine & Memory Bound Gate
@@ -2155,14 +2409,14 @@ impl SwarmCoordinator {
         }
 
         let findings = self.run_rcpsp_swarm_scope(
-            user_goal,
+            &current_goal,
             &global_contract,
             &mut state_coordinator,
         )?;
 
         // PHASE 3: System 2 Orchestrator Grounded Synthesis
         println!("  [THINKER SYNTHESIS] Synthesizing verified deliverables...");
-        let (final_report, model_overview) = self.synthesize_findings(user_goal, &findings)?;
+        let (final_report, model_overview) = self.synthesize_findings(&current_goal, &findings)?;
 
         // PHASE 4: VFS Materialization to Host Disk (Strictly Verified Only)
         let mut verified_paths: Vec<PathBuf> = Vec::new();
@@ -2211,16 +2465,11 @@ impl SwarmCoordinator {
             let target_dir = self.config.output_dir.as_deref();
             println!("  [HOST DISK COMMIT GATE] Materializing verified deliverables to host disk: {:?}", final_verified_paths);
             match self.vfs.commit_verified_files(target_dir, &final_verified_paths, true) {
-                Ok(count) => {
-                    for d in &final_verified_paths {
-                        let dest_path = if let Some(dir) = target_dir {
-                            dir.join(d.file_name().unwrap_or(d.as_os_str()))
-                        } else {
-                            d.clone()
-                        };
+                Ok(saved_paths) => {
+                    for dest_path in &saved_paths {
                         println!("   [SAVED TO DISK] {}", dest_path.display().to_string().bright_white());
                     }
-                    println!("   [COMMIT] Successfully committed {} verified file(s) to host machine.", count.to_string().bright_green());
+                    println!("   [COMMIT] Successfully committed {} verified file(s) to host machine.", saved_paths.len().to_string().bright_green());
                 }
                 Err(e) => {
                     warn!("Failed to commit verified VFS files to host disk: {}", e);
@@ -3144,6 +3393,10 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
     }
 
     pub fn extract_missing_dependency(text: &str) -> Option<String> {
+        const ENGINE_INTERNAL_KEYWORDS: &[&str] = &[
+            "vfs", "sandbox", "cleanroom", "bwrap", "omni", "omni_engine", "workspace", "stdout", "stderr", "sys", "os"
+        ];
+
         // 1. Python ModuleNotFoundError: No module named 'openpyxl' or "openpyxl"
         if let Some(idx) = text.find("No module named ") {
             let sub = &text[idx + "No module named ".len()..];
@@ -3162,7 +3415,7 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                 dep.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-').unwrap_or(dep.len())
             };
             let candidate = dep[..end_idx].trim().to_string();
-            if !candidate.is_empty() {
+            if !candidate.is_empty() && !ENGINE_INTERNAL_KEYWORDS.contains(&candidate.to_lowercase().as_str()) {
                 return Some(candidate);
             }
         }
@@ -3173,7 +3426,7 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                 let sub = &text[from_idx + 6..];
                 if let Some(end) = sub.find('\'') {
                     let dep = sub[..end].trim().to_string();
-                    if !dep.is_empty() {
+                    if !dep.is_empty() && !ENGINE_INTERNAL_KEYWORDS.contains(&dep.to_lowercase().as_str()) {
                         return Some(dep);
                     }
                 }
@@ -3203,7 +3456,11 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
 
                 if let Some(word) = candidate {
                     let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string();
-                    if !clean.is_empty() && !IGNORED_COMMANDS.contains(&clean.to_lowercase().as_str()) {
+                    let clean_lower = clean.to_lowercase();
+                    if !clean.is_empty() 
+                        && !IGNORED_COMMANDS.contains(&clean_lower.as_str())
+                        && !ENGINE_INTERNAL_KEYWORDS.contains(&clean_lower.as_str())
+                    {
                         return Some(clean);
                     }
                 }
@@ -3354,21 +3611,36 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         DiagnosticCode::VfsFileNotWritten
     }
 
-    pub fn prompt_user_for_dependency(dep: &str, _question: &str) -> DependencyChoice {
+    pub fn prompt_user_for_dependency(dep: &str, _question: &str, auto_approve: Option<bool>) -> DependencyChoice {
+        let pm = HostPackageManager::detect();
+        let install_cmd = pm.build_install_command(dep);
+
         println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
         println!("  [!] {}", format!("المكتبة أو الأداة المطلوبة غير متوفرة في النظام: '{}'", dep).bright_yellow().bold());
-        println!("  المفكر يستشيرك لاختيار مسار التنفيذ:");
-        println!("     [1] تثبيت المكتبة تلقائياً عبر الطرفية ومواصلة المهمة (pip install {})", dep);
-        println!("     [2] التحويل إلى بديل قياسي (مثل CSV أو مكتبات بايثون القياسية) دون تثبيت");
+        println!("  بوابة اعتراض الاعتماديات (Universal Dependency Interceptor):");
+        println!("     مدير حزم النظام المكتشف: {:?}", pm);
+        println!("     أمر التثبيت المقترح: {}", install_cmd.bright_cyan());
+        println!("     [1] تثبيت المكتبة للمتابعة (Install & Retry) [y/yes]");
+        println!("     [2] المتابعة دون تثبيت باستخدام بديل متاح (Use Alternative) [n/no]");
         println!("{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
 
+        if let Some(auto) = auto_approve {
+            if auto {
+                println!("  [*] وضع الموافقة التلقائية مفعل (--yes / -y). الإجراء المعتمد: [1] تثبيت المكتبة للمتابعة.");
+                return DependencyChoice::InstallAndRetry;
+            } else {
+                println!("  [*] وضع الرفض التلقائي مفعل (--no). الإجراء المعتمد: [2] المتابعة دون تثبيت باستخدام بديل.");
+                return DependencyChoice::UseAlternative;
+            }
+        }
+
         if !io::stdin().is_terminal() {
-            println!("  [*] طرفية غير تفاعلية. الاختيار التلقائي: [1] محاولة التثبيت.");
+            println!("  [*] طرفية غير تفاعلية (Non-interactive mode). الاختيار التلقائي: [1] محاولة التثبيت.");
             return DependencyChoice::InstallAndRetry;
         }
 
         loop {
-            print!("  >> اختيارك [1/2، الافتراضي: 1]: ");
+            print!("  >> اختيارك [1/2 أو y/n، الافتراضي: 1]: ");
             let _ = io::stdout().flush();
             let mut input = String::new();
             match io::stdin().read_line(&mut input) {
@@ -3377,13 +3649,13 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
                     return DependencyChoice::InstallAndRetry;
                 }
                 Ok(_) => {
-                    let trimmed = input.trim();
-                    if trimmed.is_empty() || trimmed == "1" {
+                    let trimmed = input.trim().to_lowercase();
+                    if trimmed.is_empty() || trimmed == "1" || trimmed == "y" || trimmed == "yes" {
                         return DependencyChoice::InstallAndRetry;
-                    } else if trimmed == "2" {
+                    } else if trimmed == "2" || trimmed == "n" || trimmed == "no" {
                         return DependencyChoice::UseAlternative;
                     }
-                    println!("     يرجى إدخال 1 أو 2.");
+                    println!("     يرجى إدخال 1 (Yes) أو 2 (No).");
                 }
                 Err(_) => {
                     return DependencyChoice::InstallAndRetry;
@@ -3636,7 +3908,16 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     let lower = text.to_lowercase();
     let trimmed = lower.trim();
 
-    // Priority 1: Explicit creation verbs take precedence
+    // Priority 1: Testing and Verification tasks take precedence
+    if lower.contains("test") || lower.contains("smoke test") || lower.contains("unit test")
+        || lower.contains("verification") || lower.contains("verify") || lower.contains("cleanroom")
+        || trimmed.starts_with("run ") || trimmed.starts_with("execute ")
+        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر")
+    {
+        return TaskKind::Test;
+    }
+
+    // Priority 2: Explicit creation verbs
     if trimmed.starts_with("implement") || trimmed.starts_with("create") || trimmed.starts_with("build")
         || trimmed.starts_with("write") || trimmed.starts_with("generate") || trimmed.starts_with("code")
         || trimmed.starts_with("add") || trimmed.starts_with("develop")
@@ -3646,23 +3927,68 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         return TaskKind::Create;
     }
 
-    if lower.contains("delete") || lower.contains("remove") || lower.contains("clean")
-        || lower.contains("احذف") || lower.contains("امسح") || lower.contains("نظف") || lower.contains("إزالة") || lower.contains("ازالة")
+    // Priority 3: Modification / Refactoring / Fixing tasks
+    if lower.contains("patch") || lower.contains("modify") || lower.contains("edit") || lower.contains("fix")
+        || lower.contains("refactor") || lower.contains("migrate") || lower.contains("update")
+        || lower.contains("عدل") || lower.contains("صلح") || lower.contains("غير") || lower.contains("تعديل")
+        || lower.contains("تصليح") || lower.contains("تحديث") || lower.contains("ترقية")
+    {
+        return TaskKind::Modify;
+    }
+
+    // Priority 4: Explicit deletion tasks (targeted file removal, not delete buttons or HTTP DELETE endpoints)
+    if trimmed.starts_with("delete ") || trimmed.starts_with("remove ") || trimmed.starts_with("rm ")
+        || lower.contains("delete file") || lower.contains("remove file") || lower.contains("cleanup redundant")
+        || lower.contains("delete redundant") || lower.contains("remove redundant")
+        || trimmed.starts_with("احذف") || trimmed.starts_with("امسح") || trimmed.starts_with("نظف")
+        || lower.contains("حذف الملف") || lower.contains("مسح الملف") || lower.contains("إزالة الملف")
     {
         TaskKind::Delete
-    } else if lower.contains("patch") || lower.contains("modify") || lower.contains("edit") || lower.contains("fix") || lower.contains("refactor")
-        || lower.contains("عدل") || lower.contains("صلح") || lower.contains("غير") || lower.contains("تعديل") || lower.contains("تصليح")
-    {
-        TaskKind::Modify
-    } else if lower.contains("test") || lower.contains("smoke test") || lower.contains("unit test")
-        || trimmed.starts_with("run ") || trimmed.starts_with("execute ")
-        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر")
-    {
-        TaskKind::Test
     } else {
         TaskKind::Create
     }
 }
+
+    /// Renders an interactive plan review card in the terminal for user inspection and steering
+    fn render_plan_preview(&self, goal: &str, subgoals: &[SubGoal]) {
+        use colored::*;
+        println!("\n  {}", "┌────────────────────────────────────────────────────────────────────────┐".bright_cyan());
+        println!("  │ {:<70} │", " [PLAN REVIEW] System 2 Sovereign Architecture Decomposition".bright_yellow().bold());
+        println!("  {}", "├────────────────────────────────────────────────────────────────────────┤".bright_cyan());
+        let truncated_goal = if goal.len() > 58 {
+            format!("{}...", &goal[..55])
+        } else {
+            goal.to_string()
+        };
+        println!("  │ Objective: {:<58} │", truncated_goal.bright_white());
+        println!("  {}", "├────────────────────────────────────────────────────────────────────────┤".bright_cyan());
+        println!("  │ Proposed Sub-tasks ({} total):{:<43} │", subgoals.len(), "");
+        for sg in subgoals {
+            let kind_tag = match sg.kind {
+                TaskKind::Create => "[CREATE]".bright_green(),
+                TaskKind::Modify => "[MODIFY]".bright_yellow(),
+                TaskKind::Test => "[TEST]".bright_blue(),
+                TaskKind::Delete => "[DELETE]".bright_red(),
+                TaskKind::Search => "[SEARCH]".bright_magenta(),
+            };
+            let desc_trunc = if sg.description.len() > 44 {
+                format!("{}...", &sg.description[..41])
+            } else {
+                sg.description.clone()
+            };
+            println!("  │   #{:<2} {} {:<46} │", sg.id, kind_tag, desc_trunc);
+            let writes_str: Vec<_> = sg.write_set.iter().map(|p| p.display().to_string()).collect();
+            let reads_str: Vec<_> = sg.read_set.iter().map(|p| p.display().to_string()).collect();
+            println!("  │        Target: {:<16} Writes: [{:<12}] Reads: [{:<12}] │",
+                     sg.target_entity.bright_cyan(),
+                     writes_str.join(", "),
+                     reads_str.join(", "));
+        }
+        println!("  {}", "└────────────────────────────────────────────────────────────────────────┘".bright_cyan());
+        println!("  [?] Approve execution plan?");
+        println!("      - Type '{}' (or '{}') to approve and seal plan into memory.", "yes".bright_green().bold(), "y".bright_green());
+        println!("      - Type '{}' to refine/steer the architecture before execution.\n", "no <critique>".bright_yellow().bold());
+    }
 
     /// System 2: Generates a unifying blackboard contract for independent DAG workers
     fn generate_global_contract(&self, goal: &str, subgoals: &[SubGoal]) -> Result<String, String> {
@@ -3731,45 +4057,73 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let mut ctx = self.orchestrator_model.create_context(4096, 512, 4)?;
 
         let system_msg = if is_build {
-            format!(
-                "You are the System 2 Sovereign Architect.\n\
-                Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
-                Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java).\n\n\
-                PARSIMONY & MODULAR DISPATCH RULES:\n\
-                - You decide how many workers to deploy (from 2 up to {} max budget).\n\
-                - MODULAR DECOMPOSITION MANDATE: Decompose non-trivial software applications into distinct, cohesive sub-tasks across modular files (e.g. data models -> core logic/storage -> interactive CLI interface).\n\
-                - NEVER collapse an entire interactive application or multi-component project into a single monolithic worker task. Break it into at least 2 distinct implementation tasks.\n\
-                - For Java: Target filenames MUST use PascalCase (e.g. GameLoop.java, Snake.java, Food.java) matching their primary public class.\n\
-                - SPREADSHEETS & TABULAR: For spreadsheets, Excel, or tabular data, direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel and spreadsheet software open natively.\n\
-                - VFS BOUNDARIES: Explicitly declare the file(s) the worker will create/mutate (WRITE_SET) and any existing file(s) it needs to inspect (READ_SET).\n\
-                - MANDATORY CLEANROOM ACCEPTANCE TEST: When the objective creates an executable program or CLI application, you MUST ALWAYS append a final review test worker (kind: TEST) which lists the staged deliverable in READ_SET and DEPENDS_ON to verify user acceptance criteria in the isolated cleanroom.\n\n\
-                DELIVERABLES SPECIFICATION:\n\
-                - Explicitly determine the exact deliverable files and total count required to satisfy the user objective.\n\
-                - You may declare planned deliverable files on the first line:\n\
-                PLANNED_FILES: <comma-separated list of filenames, e.g. index.html, styles.css>\n\n\
-                Output each sub-goal on a new line strictly formatted as:\n\
-                SUBGOAL: <explicit implementation directive> | ENTITY: <target filename> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or target filename> | DEPENDS_ON: <comma-separated dependencies or none>\n\n\
-                Examples:\n\
-                Modular software application deliverable:\n\
-                SUBGOAL: Implement core data models, business logic, and file persistence | ENTITY: core_models.py | READ_SET: none | WRITE_SET: core_models.py | DEPENDS_ON: none\n\
-                SUBGOAL: Implement interactive CLI interface, menu loop, and user commands | ENTITY: app_cli.py | READ_SET: core_models.py | WRITE_SET: app_cli.py | DEPENDS_ON: core_models.py\n\
-                SUBGOAL: Execute cleanroom verification and validate interactive user workflows | ENTITY: app_cli.py | READ_SET: app_cli.py, core_models.py | WRITE_SET: none | DEPENDS_ON: app_cli.py\n\
-                Single-file deliverable:\n\
-                SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py | READ_SET: none | WRITE_SET: measure_speed.py | DEPENDS_ON: none\n\
-                Multi-file deliverable:\n\
-                SUBGOAL: Implement backend API endpoints and data storage | ENTITY: server.py | READ_SET: none | WRITE_SET: server.py | DEPENDS_ON: none\n\
-                SUBGOAL: Implement client frontend interface and network calls | ENTITY: client.py | READ_SET: server.py | WRITE_SET: client.py | DEPENDS_ON: server.py\n\
-                Spreadsheet / tabular deliverable:\n\
-                SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv | READ_SET: none | WRITE_SET: data.csv | DEPENDS_ON: none\n\
-                Full-stack web application with backend server and UI:\n\
-                SUBGOAL: Implement backend API server and HTTP endpoints | ENTITY: app.py | READ_SET: none | WRITE_SET: app.py | DEPENDS_ON: none\n\
-                SUBGOAL: Implement interactive frontend HTML with dark mode CSS and JavaScript | ENTITY: index.html | READ_SET: app.py | WRITE_SET: index.html | DEPENDS_ON: app.py\n\
-                Multi-file web deliverable:\n\
-                SUBGOAL: Write the HTML structure and markup | ENTITY: index.html | READ_SET: none | WRITE_SET: index.html | DEPENDS_ON: none\n\
-                SUBGOAL: Write the external CSS styling | ENTITY: styles.css | READ_SET: index.html | WRITE_SET: styles.css | DEPENDS_ON: index.html\n\n\
-                - REVIEW & TEST WORKER: When the objective creates an executable program, you may deploy a final review test worker (kind: TEST) which MUST list all code files it tests in READ_SET and DEPENDS_ON.",
-                self.config.max_subgoals
-            )
+            if self.config.is_modify_mode {
+                let existing_vfs_files = self.vfs.list_files();
+                let files_list = if existing_vfs_files.is_empty() {
+                    "None".to_string()
+                } else {
+                    existing_vfs_files.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>().join(", ")
+                };
+                format!(
+                    "You are the System 2 Sovereign Architect.\n\
+                    MODE: INCREMENTAL FEATURE EXTENSION & CODEBASE MODIFICATION.\n\
+                    Existing Project Deliverables in Workspace: [{}]\n\
+                    Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\n\
+                    MANDATORY ARCHITECTURAL RULES FOR MODIFICATION:\n\
+                    1. ZERO-WIPE INVARIANT: DO NOT wipe, delete, or rewrite existing project deliverables from scratch.\n\
+                    2. For existing files being updated or extended with new features, declare KIND: MODIFY.\n\
+                    3. Workers receive the existing source code and MUST preserve 100% of existing working functions, routes, and logic while incrementally adding requested features.\n\
+                    4. Declare KIND: CREATE only if a brand new supplementary file (e.g. style sheet, new module) is strictly needed.\n\
+                    5. MANDATORY ACCEPTANCE TEST: Append a final review test worker (KIND: TEST) verifying the new features in the cleanroom.\n\n\
+                    Output each sub-goal on a new line strictly formatted as:\n\
+                    SUBGOAL: <explicit modification directive> | ENTITY: <target filename> | KIND: <MODIFY|CREATE|TEST> | READ_SET: <comma-separated files> | WRITE_SET: <comma-separated files> | DEPENDS_ON: <dependencies or none>\n\n\
+                    Examples:\n\
+                    SUBGOAL: Extend frontend with dark/light mode toggle and task reordering | ENTITY: index.html | KIND: MODIFY | READ_SET: index.html | WRITE_SET: index.html | DEPENDS_ON: none\n\
+                    SUBGOAL: Update backend API routes to support task reordering | ENTITY: app.py | KIND: MODIFY | READ_SET: app.py | WRITE_SET: app.py | DEPENDS_ON: none\n\
+                    SUBGOAL: Execute cleanroom verification and validate modified features | ENTITY: index.html | KIND: TEST | READ_SET: index.html, app.py | WRITE_SET: none | DEPENDS_ON: index.html",
+                    files_list
+                )
+            } else {
+                format!(
+                    "You are the System 2 Sovereign Architect.\n\
+                    Environment: In-memory Virtual Filesystem (VFS) sandbox.\n\
+                    Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java).\n\n\
+                    PARSIMONY & MODULAR DISPATCH RULES:\n\
+                    - You decide how many workers to deploy (from 2 up to {} max budget).\n\
+                    - MODULAR DECOMPOSITION MANDATE: Decompose non-trivial software applications into distinct, cohesive sub-tasks across modular files (e.g. data models -> core logic/storage -> interactive CLI interface).\n\
+                    - NEVER collapse an entire interactive application or multi-component project into a single monolithic worker task. Break it into at least 2 distinct implementation tasks.\n\
+                    - For Java: Target filenames MUST use PascalCase (e.g. GameLoop.java, Snake.java, Food.java) matching their primary public class.\n\
+                    - SPREADSHEETS & TABULAR: For spreadsheets, Excel, or tabular data, direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel and spreadsheet software open natively.\n\
+                    - VFS BOUNDARIES: Explicitly declare the file(s) the worker will create/mutate (WRITE_SET) and any existing file(s) it needs to inspect (READ_SET).\n\
+                    - MANDATORY CLEANROOM ACCEPTANCE TEST: When the objective creates an executable program or CLI application, you MUST ALWAYS append a final review test worker (kind: TEST) which lists the staged deliverable in READ_SET and DEPENDS_ON to verify user acceptance criteria in the isolated cleanroom.\n\n\
+                    DELIVERABLES SPECIFICATION:\n\
+                    - Explicitly determine the exact deliverable files and total count required to satisfy the user objective.\n\
+                    - You may declare planned deliverable files on the first line:\n\
+                    PLANNED_FILES: <comma-separated list of filenames, e.g. index.html, styles.css>\n\n\
+                    Output each sub-goal on a new line strictly formatted as:\n\
+                    SUBGOAL: <explicit implementation directive> | ENTITY: <target filename> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or target filename> | DEPENDS_ON: <comma-separated dependencies or none>\n\n\
+                    Examples:\n\
+                    Modular software application deliverable:\n\
+                    SUBGOAL: Implement core data models, business logic, and file persistence | ENTITY: core_models.py | READ_SET: none | WRITE_SET: core_models.py | DEPENDS_ON: none\n\
+                    SUBGOAL: Implement interactive CLI interface, menu loop, and user commands | ENTITY: app_cli.py | READ_SET: core_models.py | WRITE_SET: app_cli.py | DEPENDS_ON: core_models.py\n\
+                    SUBGOAL: Execute cleanroom verification and validate interactive user workflows | ENTITY: app_cli.py | READ_SET: app_cli.py, core_models.py | WRITE_SET: none | DEPENDS_ON: app_cli.py\n\
+                    Single-file deliverable:\n\
+                    SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py | READ_SET: none | WRITE_SET: measure_speed.py | DEPENDS_ON: none\n\
+                    Multi-file deliverable:\n\
+                    SUBGOAL: Implement backend API endpoints and data storage | ENTITY: server.py | READ_SET: none | WRITE_SET: server.py | DEPENDS_ON: none\n\
+                    SUBGOAL: Implement client frontend interface and network calls | ENTITY: client.py | READ_SET: server.py | WRITE_SET: client.py | DEPENDS_ON: server.py\n\
+                    Spreadsheet / tabular deliverable:\n\
+                    SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv | READ_SET: none | WRITE_SET: data.csv | DEPENDS_ON: none\n\
+                    Full-stack web application with backend server and UI:\n\
+                    SUBGOAL: Implement backend API server and HTTP endpoints | ENTITY: app.py | READ_SET: none | WRITE_SET: app.py | DEPENDS_ON: none\n\
+                    SUBGOAL: Implement interactive frontend HTML with dark mode CSS and JavaScript | ENTITY: index.html | READ_SET: app.py | WRITE_SET: index.html | DEPENDS_ON: app.py\n\
+                    Multi-file web deliverable:\n\
+                    SUBGOAL: Write the HTML structure and markup | ENTITY: index.html | READ_SET: none | WRITE_SET: index.html | DEPENDS_ON: none\n\
+                    SUBGOAL: Write the external CSS styling | ENTITY: styles.css | READ_SET: index.html | WRITE_SET: styles.css | DEPENDS_ON: index.html\n\n\
+                    - REVIEW & TEST WORKER: When the objective creates an executable program, you may deploy a final review test worker (kind: TEST) which MUST list all code files it tests in READ_SET and DEPENDS_ON.",
+                    self.config.max_subgoals
+                )
+            }
         } else {
             format!(
                 "You are the System 2 Sovereign Architect.\n\
@@ -3845,10 +4199,23 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             let mut raw_depends_on = String::new();
             let mut raw_read_set = Vec::new();
             let mut raw_write_set = Vec::new();
+            let mut explicit_kind: Option<TaskKind> = None;
 
             for part in &pipe_parts[1..] {
                 let p_upper = part.to_uppercase();
-                if p_upper.starts_with("ENTITY:") {
+                if p_upper.starts_with("KIND:") || p_upper.starts_with("TASK_KIND:") || p_upper.starts_with("TYPE:") {
+                    let tag_len = if p_upper.starts_with("KIND:") { 5 } else if p_upper.starts_with("TASK_KIND:") { 10 } else { 5 };
+                    let val = part[tag_len..].trim().to_uppercase();
+                    if val.contains("MODIFY") || val.contains("UPDATE") || val.contains("REFACTOR") || val.contains("PATCH") {
+                        explicit_kind = Some(TaskKind::Modify);
+                    } else if val.contains("CREATE") || val.contains("BUILD") || val.contains("WRITE") {
+                        explicit_kind = Some(TaskKind::Create);
+                    } else if val.contains("TEST") || val.contains("VERIFY") {
+                        explicit_kind = Some(TaskKind::Test);
+                    } else if val.contains("DELETE") || val.contains("REMOVE") {
+                        explicit_kind = Some(TaskKind::Delete);
+                    }
+                } else if p_upper.starts_with("ENTITY:") {
                     raw_entity = part[7..].trim().to_string();
                 } else if p_upper.starts_with("DEPENDS_ON:") {
                     raw_depends_on = part[11..].trim().to_string();
@@ -3943,7 +4310,15 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 Vec::new()
             };
 
-            let task_kind = Self::infer_task_kind(&desc);
+            let entity_path = PathBuf::from(&entity);
+            let target_exists = self.vfs.exists(&entity_path) || self.resolve_existing_file(&entity_path).is_some();
+            let task_kind = if let Some(k) = explicit_kind {
+                k
+            } else if (self.config.is_modify_mode || target_exists) && !desc.to_lowercase().contains("test") && !desc.to_lowercase().contains("verify") && !desc.to_lowercase().contains("cleanroom") {
+                TaskKind::Modify
+            } else {
+                Self::infer_task_kind(&desc)
+            };
             let dedup_key = format!("{}:{}", task_kind.name(), entity.to_lowercase());
             if seen_entities.contains(&dedup_key) {
                 continue; // Skip duplicate task kind for the same entity
@@ -3981,14 +4356,27 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         if subgoals.is_empty() {
             if is_build {
                 let explicit_files = Self::extract_explicit_deliverables(goal);
-                if !explicit_files.is_empty() {
-                    for (idx, file) in explicit_files.iter().enumerate() {
+                let files_to_plan = if !explicit_files.is_empty() {
+                    explicit_files
+                } else if self.config.is_modify_mode {
+                    let vfs_files: Vec<String> = self.vfs.list_files().iter().map(|p| p.to_string_lossy().to_string()).collect();
+                    if !vfs_files.is_empty() {
+                        vfs_files
+                    } else {
+                        vec![Self::infer_target_entity(goal)]
+                    }
+                } else {
+                    vec![]
+                };
+
+                if !files_to_plan.is_empty() {
+                    for (idx, file) in files_to_plan.iter().enumerate() {
                         let target_path = PathBuf::from(file);
                         let mut read_set = Vec::new();
                         let mut depends_on = Vec::new();
                         if idx > 0 {
-                            depends_on.push(explicit_files[idx - 1].clone());
-                            read_set.push(PathBuf::from(&explicit_files[idx - 1]));
+                            depends_on.push(files_to_plan[idx - 1].clone());
+                            read_set.push(PathBuf::from(&files_to_plan[idx - 1]));
                         }
                         read_set.push(target_path.clone());
 
@@ -3996,11 +4384,23 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             planned_files.push(file.clone());
                         }
 
+                        let target_exists = self.vfs.exists(&target_path) || self.resolve_existing_file(&target_path).is_some();
+                        let kind = if self.config.is_modify_mode || target_exists {
+                            TaskKind::Modify
+                        } else {
+                            TaskKind::Create
+                        };
+                        let desc = if kind == TaskKind::Modify {
+                            format!("Extend and incrementally update deliverable '{}' with requested features: {}", file, goal)
+                        } else {
+                            format!("Create and write complete standalone implementation for deliverable '{}'", file)
+                        };
+
                         subgoals.push(SubGoal {
                             id: idx + 1,
-                            description: format!("Create and write complete standalone implementation for deliverable '{}'", file),
+                            description: desc,
                             target_entity: file.clone(),
-                            kind: TaskKind::Create,
+                            kind,
                             guidance: None,
                             depends_on,
                             read_set,
@@ -4013,11 +4413,21 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     if !planned_files.contains(&inferred) {
                         planned_files.push(inferred.clone());
                     }
-                    let task_kind = Self::infer_task_kind(goal);
                     let target_path = PathBuf::from(&inferred);
+                    let target_exists = self.vfs.exists(&target_path) || self.resolve_existing_file(&target_path).is_some();
+                    let task_kind = if self.config.is_modify_mode || target_exists {
+                        TaskKind::Modify
+                    } else {
+                        Self::infer_task_kind(goal)
+                    };
+                    let desc = if task_kind == TaskKind::Modify {
+                        format!("Extend and incrementally update deliverable '{}' with requested features: {}", inferred, goal)
+                    } else {
+                        format!("Create and write complete standalone implementation for: {}", goal)
+                    };
                     subgoals.push(SubGoal {
                         id: 1,
-                        description: format!("Create and write complete standalone implementation for: {}", goal),
+                        description: desc,
                         target_entity: inferred.clone(),
                         kind: task_kind,
                         guidance: None,
@@ -4152,6 +4562,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             let mut last_error_desc: Option<String> = None;
         let max_attempts = 3;
         let mut current_directive = subgoal.guidance.clone().unwrap_or_else(|| subgoal.description.clone());
+        let mut declined_dependencies: Vec<String> = Vec::new();
         let mut pending_nudge: Option<String> = None;
         let mut checkpoint: usize = 0;
 
@@ -4164,8 +4575,11 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         // Baseline Snapshot for Modification Tasks
         if subgoal.kind == TaskKind::Modify {
             if !self.vfs.exists(&target_path) {
-                if let Ok(bytes) = std::fs::read(&target_path) {
-                    self.vfs.preload_file(&target_path, &bytes);
+                if let Some(real_path) = self.resolve_existing_file(&target_path) {
+                    if let Ok(bytes) = std::fs::read(&real_path) {
+                        println!("  [VFS PRELOAD] Loaded existing target file for modification from: {}", real_path.display().to_string().bright_cyan());
+                        self.vfs.preload_file(&target_path, &bytes);
+                    }
                 }
             }
             self.vfs.snapshot_file(&target_path);
@@ -4177,8 +4591,18 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let mut is_surgical = false;
         let mut surgery_slice: Option<crate::sandbox::diagnostics::AstSlice> = None;
 
+        // Worker-Scoped Write Ledger: Strict mathematical partition of VFS writes (W_i).
+        // A worker can ONLY snapshot and roll back files within its own write scope.
+        let mut worker_write_scope = subgoal.write_set.clone();
+        if !subgoal.target_entity.is_empty() {
+            let target_pb = PathBuf::from(&subgoal.target_entity);
+            if !worker_write_scope.contains(&target_pb) {
+                worker_write_scope.push(target_pb);
+            }
+        }
+
         while attempt <= max_attempts {
-            let vfs_snapshot = self.vfs.take_snapshot();
+            let vfs_scoped_snapshot = self.vfs.take_scoped_snapshot(&worker_write_scope);
             // CHECKPOINT 1: Start of worker step attempt
             if let Some(ref abort) = abort_flag {
                 if abort.load(Ordering::Relaxed) {
@@ -4253,16 +4677,43 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     };
 
                     let user_msg = if is_build {
-                        format!(
-                            "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
-                            [ENGINE DIRECTIVE INJECTION - STRICT CONSTRAINTS]:\n\
-                            - Output EXCLUSIVELY the complete, working code inside a single markdown code block.\n\
-                            - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
-                            - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.{}\n\
-                            - Generate the code for '{}' now:",
-                            user_goal, subgoal.description, subgoal.target_entity, current_directive,
-                            java_mandate, subgoal.target_entity
-                        )
+                        if subgoal.kind == TaskKind::Modify {
+                            let target_buf = PathBuf::from(&subgoal.target_entity);
+                            let code_snippet = self.vfs.read_file(&target_buf)
+                                .map(|b| String::from_utf8_lossy(&b).to_string())
+                                .unwrap_or_else(|| {
+                                    if let Some(real_p) = self.resolve_existing_file(&target_buf) {
+                                        std::fs::read_to_string(&real_p).unwrap_or_default()
+                                    } else {
+                                        String::new()
+                                    }
+                                });
+                            format!(
+                                "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
+                                [EXISTING WORKING CODE IN VFS FOR '{}']:\n```\n{}\n```\n\n\
+                                [MANDATORY PRESERVATION INVARIANT]:\n\
+                                - Keep and preserve all existing working functions, routes, and logic in '{}'.\n\
+                                - Incrementally extend or update the implementation to add the requested new features without deleting previous capabilities.\n\
+                                - Output EXCLUSIVELY the complete updated code inside a single markdown code block.\n\
+                                - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
+                                - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.{}\n\
+                                Output the complete updated '{}' now:",
+                                user_goal, subgoal.description, subgoal.target_entity, current_directive,
+                                subgoal.target_entity, code_snippet,
+                                subgoal.target_entity, java_mandate, subgoal.target_entity
+                            )
+                        } else {
+                            format!(
+                                "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
+                                [ENGINE DIRECTIVE INJECTION - STRICT CONSTRAINTS]:\n\
+                                - Output EXCLUSIVELY the complete, working code inside a single markdown code block.\n\
+                                - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
+                                - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.{}\n\
+                                - Generate the code for '{}' now:",
+                                user_goal, subgoal.description, subgoal.target_entity, current_directive,
+                                java_mandate, subgoal.target_entity
+                            )
+                        }
                     } else {
                         format!(
                             "Goal: {}\nThinker Directive: {}\nTask: {}\n\n\
@@ -4341,7 +4792,13 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             let target_buf = PathBuf::from(&subgoal.target_entity);
                             let code_snippet = self.vfs.read_file(&target_buf)
                                 .map(|b| String::from_utf8_lossy(&b).to_string())
-                                .unwrap_or_default();
+                                .unwrap_or_else(|| {
+                                    if let Some(real_p) = self.resolve_existing_file(&target_buf) {
+                                        std::fs::read_to_string(&real_p).unwrap_or_default()
+                                    } else {
+                                        String::new()
+                                    }
+                                });
                             format!(
                                 "[CONTINUOUS SWARM DIRECTIVE - INCREMENTAL EXTENSION]:\n\
                                 Task #{}: {}\n\
@@ -4369,6 +4826,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                             fname, contract
                                         ));
                                         continue;
+                                    }
+                                }
+
+                                if !self.vfs.exists(read_path) {
+                                    if let Some(real_path) = self.resolve_existing_file(read_path) {
+                                        if let Ok(bytes) = std::fs::read(&real_path) {
+                                            self.vfs.preload_file(read_path, &bytes);
+                                        }
                                     }
                                 }
 
@@ -4463,8 +4928,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     let content_opt = self.vfs.read_file(&target_buf)
                         .map(|b| String::from_utf8_lossy(&b).to_string())
                         .or_else(|| {
-                            let full_path = format!("{}/{}", self.config.output_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".to_string()), target_file);
-                            std::fs::read_to_string(&full_path).ok()
+                            self.resolve_existing_file(&target_buf)
+                                .and_then(|p| std::fs::read_to_string(p).ok())
                         });
                     if let Some(content) = content_opt {
                         if let Ok(slice) = crate::sandbox::diagnostics::TopologicalDiagnostic::extract_from_source(&target_file, &content, target_line) {
@@ -4532,6 +4997,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             }, self.worker_model.n_vocab()).map_err(|e| e.to_string())?;
             let mut recent_tokens: std::collections::VecDeque<i32> = std::collections::VecDeque::with_capacity(32);
 
+            let spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let gen_start_time = Instant::now();
+            let mut gen_tokens_count = 0usize;
+
             for _ in 0..max_total_tokens {
                 // CHECKPOINT 2: Inside token generation loop
                 if let Some(ref abort) = abort_flag {
@@ -4562,6 +5031,30 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 generated_tokens.push(tok);
                 generated_text.push_str(&piece);
                 worker_ctx.eval_tokens(&[tok], 0)?;
+
+                gen_tokens_count += 1;
+                let elapsed = gen_start_time.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.05 { gen_tokens_count as f64 / elapsed } else { 0.0 };
+                let frame = spinner_frames[gen_tokens_count % spinner_frames.len()];
+                let used_cells = worker_ctx.kv_cache_used_cells();
+                let n_ctx = worker_ctx.n_ctx();
+                let gauge_width: usize = 8;
+                let ratio = (used_cells as f64 / n_ctx.max(1) as f64).clamp(0.0, 1.0);
+                let filled = (ratio * gauge_width as f64).round() as usize;
+                let bar: String = "█".repeat(filled) + &"░".repeat(gauge_width.saturating_sub(filled));
+
+                print!(
+                    "\r   {} Worker #{}: Token #{} ({:.1} t/s) │ KV: [{}] {}/{} │ {:.0}s   ",
+                    frame.to_string().bright_cyan().bold(),
+                    subgoal.id,
+                    gen_tokens_count.to_string().bright_yellow().bold(),
+                    speed,
+                    bar.bright_magenta(),
+                    used_cells,
+                    n_ctx,
+                    elapsed
+                );
+                let _ = io::stdout().flush();
 
                 // Dynamic Thinker State Analysis
                 let has_open_think = generated_text.contains("<think>") || generated_text.contains("<thought>");
@@ -4610,6 +5103,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                 }
             }
+
+            print!("\r{}\r", " ".repeat(85));
+            let _ = io::stdout().flush();
 
             let parsed_action = Self::parse_action(&generated_text);
             let action = if subgoal.kind == TaskKind::Test {
@@ -4748,8 +5244,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             let full_content_opt = self.vfs.read_file(&path)
                                 .map(|b| String::from_utf8_lossy(&b).to_string())
                                 .or_else(|| {
-                                    let full_path = format!("{}/{}", self.config.output_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".to_string()), actual_filename);
-                                    std::fs::read_to_string(&full_path).ok()
+                                    self.resolve_existing_file(&path)
+                                        .and_then(|p| std::fs::read_to_string(p).ok())
                                 });
 
                             if let Some(full_content) = full_content_opt {
@@ -5000,6 +5496,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
             // Universal Language-Agnostic Cleanroom Validation Gate
             let mut syntax_error: Option<String> = None;
+            let mut cleanroom_missing_dep: Option<String> = None;
             if (is_build || subgoal.kind == TaskKind::Create || subgoal.kind == TaskKind::Modify)
                 && vfs_target_exists && vfs_target_size > 0 && !placeholder_found
             {
@@ -5012,7 +5509,11 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     );
                     if !report.is_valid {
                         syntax_error = report.error_message.clone();
-                        if let Some(line) = report.error_line {
+                        cleanroom_missing_dep = Self::extract_missing_dependency(&report.raw_output)
+                            .or_else(|| report.error_message.as_ref().and_then(|m| Self::extract_missing_dependency(m)));
+                        if let Some(ref dep) = cleanroom_missing_dep {
+                            println!("  [DEPENDENCY INTERCEPTOR] Detected missing external package: '{}' in '{}'", dep.bright_yellow().bold(), subgoal.target_entity);
+                        } else if let Some(line) = report.error_line {
                             println!("  [UNIVERSAL CLEANROOM] Detected error at line {} in '{}': {:?}", line, subgoal.target_entity, report.error_message);
                         }
                     }
@@ -5250,8 +5751,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 break;
             }
 
-            // FAILURE OCCURRED: Trigger Worker Rollback to Checkpoint
-            self.vfs.restore_snapshot(vfs_snapshot);
+            // FAILURE OCCURRED: Trigger Worker Scoped Rollback to Checkpoint
+            // Strict mathematical isolation: Restores ONLY this worker's write scope (W_i).
+            // Concurrently written files by other workers remain 100% intact in VFS.
+            self.vfs.restore_scoped_snapshot(vfs_scoped_snapshot);
             let tokens_before = tokens_at_attempt_end;
             let _ = worker_ctx.rollback_to(checkpoint);
             let tokens_after = worker_ctx.current_cursor();
@@ -5260,8 +5763,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             tokens_saved += excised;
 
             // Deterministic Diagnostic Classification
-            let diagnostic = if let Some(ref _syn_err) = syntax_error {
-                DiagnosticCode::TestFailed
+            let diagnostic = if let Some(ref dep) = cleanroom_missing_dep {
+                DiagnosticCode::MissingDependency(dep.clone())
+            } else if let Some(ref syn_err) = syntax_error {
+                if let Some(dep) = Self::extract_missing_dependency(syn_err) {
+                    DiagnosticCode::MissingDependency(dep)
+                } else {
+                    DiagnosticCode::TestFailed
+                }
             } else if let Some(ref acc_err) = acceptance_error_desc {
                 DiagnosticCode::AcceptanceCriteriaFailed(acc_err.clone())
             } else {
@@ -5374,16 +5883,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                 }
                 ThinkerDecision::ConsultDependency { dependency, question } => {
-                    let user_choice = Self::prompt_user_for_dependency(&dependency, &question);
+                    let user_choice = Self::prompt_user_for_dependency(&dependency, &question, self.config.auto_approve_deps);
                     match user_choice {
                         DependencyChoice::InstallAndRetry => {
-                            println!("  [TERMINAL] Installing dependency '{}'...", dependency);
-                            let install_cmd = if dependency == "tkinter" {
-                                "sudo dnf install -y python3-tkinter || sudo apt-get install -y python3-tk || pip install tk".to_string()
-                            } else {
-                                format!("pip install {} || pip3 install {}", dependency, dependency)
-                            };
-                            match self.terminal.run_sync(&install_cmd, 60) {
+                            let pm = HostPackageManager::detect();
+                            let install_cmd = pm.build_install_command(&dependency);
+                            println!("  [TERMINAL] Detected host package manager: {:?}. Installing dependency '{}'...", pm, dependency);
+                            println!("  [TERMINAL] Command: {}", install_cmd.bright_cyan());
+                            match self.terminal.run_sync(&install_cmd, 120) {
                                 Ok(out) => {
                                     let summary = out.lines().last().unwrap_or("Installation completed");
                                     println!("  [TERMINAL] Installation completed: {}", summary);
@@ -5394,10 +5901,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                     attempt += 1;
                                 }
                                 Err(e) => {
-                                    println!("  [TERMINAL] Installation failed: {}. Falling back to standard library / CLI alternative.", e);
+                                    println!("  [TERMINAL] Installation failed: {}. Falling back to alternative / standard library.", e);
+                                    if !declined_dependencies.contains(&dependency) {
+                                        declined_dependencies.push(dependency.clone());
+                                    }
+                                    let deps_list = declined_dependencies.join(", ");
                                     current_directive = format!(
-                                        "Do not use external library '{}'. Implement the solution using standard library or CLI alternative without '{}'.",
-                                        dependency, dependency
+                                        "Do not use external libraries: [{}]. Implement the solution strictly without [{}] using alternative libraries or standard built-ins.",
+                                        deps_list, deps_list
                                     );
                                     pending_nudge = None;
                                     attempt += 1;
@@ -5405,10 +5916,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             }
                         }
                         DependencyChoice::UseAlternative => {
-                            println!("  [DECISION] Switching to standard library / CLI alternative without '{}'.", dependency);
+                            println!("  [DECISION] User opted to proceed without installing '{}'. Switching to alternative.", dependency);
+                            if !declined_dependencies.contains(&dependency) {
+                                declined_dependencies.push(dependency.clone());
+                            }
+                            let deps_list = declined_dependencies.join(", ");
                             current_directive = format!(
-                                "Do not use external library '{}'. Implement the solution using standard library or CLI alternative without '{}'.",
-                                dependency, dependency
+                                "Do not use external libraries: [{}]. Implement the solution strictly without [{}] using alternative libraries or standard built-ins.",
+                                deps_list, deps_list
                             );
                             pending_nudge = None;
                             attempt += 1;
@@ -6285,6 +6800,99 @@ mod tests {
         assert_eq!(SwarmCoordinator::infer_task_kind("Implement a lightweight HTTP JSON health check server using Flask"), TaskKind::Create);
         assert_eq!(SwarmCoordinator::infer_task_kind("Test the unit test suite and verify output"), TaskKind::Test);
         assert_eq!(SwarmCoordinator::infer_task_kind("اختبر الكود وافحص النتيجة"), TaskKind::Test);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Execute cleanroom verification of API endpoints and UI interactions"), TaskKind::Test);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Run Test Sheet protocol verification & review of 'index.html'"), TaskKind::Test);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Fix delete button in index.html"), TaskKind::Modify);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Migrate app.py backend to Flask and support DELETE endpoint"), TaskKind::Modify);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Refactor tasks API to use Flask"), TaskKind::Modify);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Delete redundant files from workspace"), TaskKind::Delete);
+    }
+
+    #[test]
+    fn test_extract_missing_dependency_filters_internal_keywords() {
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'flask'"), Some("flask".to_string()));
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'vfs'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'cleanroom'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'sandbox'"), None);
+    }
+
+    #[test]
+    fn test_resolve_existing_file_priority() {
+        let temp_in = tempfile::tempdir().unwrap();
+        let temp_out = tempfile::tempdir().unwrap();
+        
+        let file_in = temp_in.path().join("source.py");
+        std::fs::write(&file_in, "print('in')").unwrap();
+
+        let file_out = temp_out.path().join("output.py");
+        std::fs::write(&file_out, "print('out')").unwrap();
+
+        let config = SwarmConfig {
+            orchestrator_model_path: PathBuf::from("mock.gguf"),
+            worker_model_path: PathBuf::from("mock.gguf"),
+            max_subgoals: 3,
+            max_steps_per_worker: 3,
+            input_dir: Some(temp_in.path().to_path_buf()),
+            output_dir: Some(temp_out.path().to_path_buf()),
+            verbose: false,
+            auto_approve_deps: None,
+            is_modify_mode: false,
+            review_plan: false,
+        };
+
+        let resolve_fn = |p: &Path| -> Option<PathBuf> {
+            if let Some(ref in_dir) = config.input_dir {
+                let candidate = in_dir.join(p);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+            if let Some(ref out_dir) = config.output_dir {
+                let candidate = out_dir.join(p);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+            if p.exists() {
+                return Some(p.to_path_buf());
+            }
+            None
+        };
+
+        assert_eq!(resolve_fn(Path::new("source.py")), Some(file_in));
+        assert_eq!(resolve_fn(Path::new("output.py")), Some(file_out));
+        assert_eq!(resolve_fn(Path::new("non_existent.py")), None);
+    }
+
+    #[test]
+    fn test_modify_mode_explicit_kind_and_fallback() {
+        let temp_in = tempfile::tempdir().unwrap();
+        let target_file = temp_in.path().join("app.py");
+        std::fs::write(&target_file, "print('old code')").unwrap();
+
+        let config = SwarmConfig {
+            orchestrator_model_path: PathBuf::from("mock.gguf"),
+            worker_model_path: PathBuf::from("mock.gguf"),
+            max_subgoals: 3,
+            max_steps_per_worker: 3,
+            input_dir: Some(temp_in.path().to_path_buf()),
+            output_dir: Some(temp_in.path().to_path_buf()),
+            verbose: false,
+            auto_approve_deps: None,
+            is_modify_mode: true,
+            review_plan: false,
+        };
+
+        let vfs = MemoryVfs::new();
+        let relative = PathBuf::from("app.py");
+        assert!(!vfs.exists(&relative));
+
+        // In modify mode, existing file on disk resolves properly
+        let candidate = config.input_dir.as_ref().unwrap().join(&relative);
+        assert!(candidate.exists());
+        let content = std::fs::read(&candidate).unwrap();
+        vfs.preload_file(&relative, &content);
+        assert!(vfs.exists(&relative));
     }
 
     #[test]

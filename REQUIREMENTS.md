@@ -12,14 +12,47 @@ Omni Engine is completely decoupled from model weights and external library buil
 - **CMake & Ninja**: (for building upstream `llama.cpp`)
 - **Bubblewrap (`bwrap`)**: Linux user namespace container isolation for zero-write sandbox cleanrooms (`sudo apt install bubblewrap` / `sudo dnf install bubblewrap`)
 
-### llama.cpp Shared Libraries
-Omni Engine links dynamically against `llama.cpp`. You can either:
-1. Place the compiled shared libraries (`libllama.so`, `libggml.so`, `libggml-base.so`, `libggml-cpu.so`) in `./bin/` or `~/.omni/bin/`.
-2. Install them system-wide into `/usr/local/lib` or `/usr/lib`.
-3. Set the `LLAMA_CPP_DIR` environment variable to your custom `llama.cpp` build directory:
-   ```bash
-   export LLAMA_CPP_DIR=/path/to/llama.cpp/build/bin
-   ```
+### ⚠️ Important Notice: llama.cpp and Models are NOT Bundled
+Omni Engine is completely decoupled from model weights and external library builds. **It does not bundle `llama.cpp` binaries or model weights** in this repository. It links dynamically against official upstream `llama.cpp` shared libraries, ensuring:
+- Full freedom to update upstream `llama.cpp` versions without waiting for engine patches.
+- Native compiler optimization for your exact CPU/GPU architecture (AVX, AVX2, AVX-512, CUDA, Metal, ROCm, Vulkan).
+- Clean, lightweight source repository without platform-specific binary or model bloat.
+
+### Verified Upstream llama.cpp Build
+The current production release (`v2.1.0`) is verified against:
+- **Upstream Version:** `v0.6.0-dev`
+- **Build Number:** `11429`
+- **Git Commit:** `d81235049`
+- **Dynamic Libraries Required:** `libllama.so.0.6.0`, `libggml.so.0.26.0`, `libggml-base.so.0.26.0`, `libggml-cpu.so`
+
+### llama.cpp Shared Libraries Setup
+
+Omni Engine dynamically links against `llama.cpp` (`libllama.so`, `libggml.so`, `libggml-base.so`, `libggml-cpu.so`).
+
+#### Option A: Quick Build from Source (Recommended, ~2 minutes)
+```bash
+# 1. Clone official upstream llama.cpp
+git clone https://github.com/ggerganov/llama.cpp.git
+cd llama.cpp
+
+# 2. Build shared libraries (CPU or with GPU acceleration flags)
+cmake -B build -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(nproc)
+
+# 3. Export LLAMA_CPP_DIR or copy shared libraries
+export LLAMA_CPP_DIR=$(pwd)/build/bin
+export LD_LIBRARY_PATH="${LLAMA_CPP_DIR}:${LD_LIBRARY_PATH}"
+```
+
+#### Option B: Local Project Directory
+Place your compiled shared libraries directly into `./bin/` or `~/.omni/bin/`:
+- `libllama.so`
+- `libggml.so`
+- `libggml-base.so`
+- `libggml-cpu.so`
+
+#### Option C: System-Wide Installation
+Install the shared libraries into `/usr/local/lib` or `/usr/lib`, where Omni Engine's linker searches automatically.
 
 ---
 

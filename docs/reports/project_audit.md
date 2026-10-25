@@ -31,20 +31,20 @@ graph TD
 
 | Module | File | Lines | What It Does |
 |--------|------|-------|-------------|
-| **Web Server** | [web_server.rs](file:///home/hema/Downloads/omni_engine_package/src/web_server.rs) | 207 | Axum HTTP server, dashboard UI, static files |
-| **OpenAI API** | [openai_api.rs](file:///home/hema/Downloads/omni_engine_package/src/openai_api.rs) | 141 | `/v1/chat/completions` proxy to llama-server |
-| **TUI Agent** | [tui_agent.rs](file:///home/hema/Downloads/omni_engine_package/src/tui_agent.rs) | 578 | Terminal-based chat interface |
-| **CLI** | [cli.rs](file:///home/hema/Downloads/omni_engine_package/src/cli.rs) | 422 | Command-line argument handling |
-| **LlamaManager** | [llama_manager.rs](file:///home/hema/Downloads/omni_engine_package/src/llama_manager.rs) | 255 | Finds/spawns/stops llama-server binary |
-| **Terminal Bridge** | [terminal_bridge.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/terminal_bridge.rs) | 342 | Real subprocess execution, ring buffer, safety gates |
-| **Lua Sandbox** | [lua_runner.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/lua_runner.rs) | 311 | Embedded Lua 5.4, stripped globals, VFS/terminal bridges |
-| **PrePassTriage** | [pre_pass_triage.rs](file:///home/hema/Downloads/omni_engine_package/src/planner/pre_pass_triage.rs) | 290 | Keyword-based intent classifier (EN + AR), zero ML |
-| **Supervisor** | [supervisor.rs](file:///home/hema/Downloads/omni_engine_package/src/planner/supervisor.rs) | 318 | Branch hypothesis tracker, prune, apoptosis |
-| **Executive Hands** | [executive_hands.rs](file:///home/hema/Downloads/omni_engine_package/src/planner/executive_hands.rs) | 488 | Action parser for LLM text output |
-| **VFS** | [vfs.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/vfs.rs) | 226 | In-memory HashMap filesystem with commit gate |
-| **Browser Lens** | [browser_lens.rs](file:///home/hema/Downloads/omni_engine_package/src/sandbox/browser_lens.rs) | 210 | ASCII browser frame renderer |
-| **Causal DAG** | [dag.rs](file:///home/hema/Downloads/omni_engine_package/src/causal_memory/dag.rs) | 145 | Step-node DAG with entity dependency resolution |
-| **Deep Engine** | [deep_engine.rs](file:///home/hema/Downloads/omni_engine_package/src/planner/deep_engine.rs) | 150 | Thin wrapper over Supervisor for multi-stage goals |
+| **Web Server** | [web_server.rs](../../src/web_server.rs) | 207 | Axum HTTP server, dashboard UI, static files |
+| **OpenAI API** | [openai_api.rs](../../src/openai_api.rs) | 141 | `/v1/chat/completions` proxy to llama-server |
+| **TUI Agent** | [tui_agent.rs](../../src/tui_agent.rs) | 578 | Terminal-based chat interface |
+| **CLI** | [cli.rs](../../src/cli.rs) | 422 | Command-line argument handling |
+| **LlamaManager** | [llama_manager.rs](../../src/llama_manager.rs) | 255 | Finds/spawns/stops llama-server binary |
+| **Terminal Bridge** | [terminal_bridge.rs](../../src/sandbox/terminal_bridge.rs) | 342 | Real subprocess execution, ring buffer, safety gates |
+| **Lua Sandbox** | [lua_runner.rs](../../src/sandbox/lua_runner.rs) | 311 | Embedded Lua 5.4, stripped globals, VFS/terminal bridges |
+| **PrePassTriage** | [pre_pass_triage.rs](../../src/planner/pre_pass_triage.rs) | 290 | Keyword-based intent classifier (EN + AR), zero ML |
+| **Supervisor** | [supervisor.rs](../../src/planner/supervisor.rs) | 318 | Branch hypothesis tracker, prune, apoptosis |
+| **Executive Hands** | [executive_hands.rs](../../src/planner/executive_hands.rs) | 488 | Action parser for LLM text output |
+| **VFS** | [vfs.rs](../../src/sandbox/vfs.rs) | 226 | In-memory HashMap filesystem with commit gate |
+| **Browser Lens** | [browser_lens.rs](../../src/sandbox/browser_lens.rs) | 210 | ASCII browser frame renderer |
+| **Causal DAG** | [dag.rs](../../src/causal_memory/dag.rs) | 145 | Step-node DAG with entity dependency resolution |
+| **Deep Engine** | [deep_engine.rs](../../src/planner/deep_engine.rs) | 150 | Thin wrapper over Supervisor for multi-stage goals |
 | **Other** | auth, downloader, logger, system_info, WASM | ~285 | Auth tokens, model download, logging, sysinfo, WASM |
 
 ---

@@ -26,7 +26,7 @@ But the AI brain is behind an HTTP wall. You send text in, get text out.
 1. Remove `#![allow(dead_code)]` -- see what's actually dead
 2. Replace `.lock().unwrap()` with `.lock().unwrap_or_else(|e| e.into_inner())`
    or add `parking_lot` crate (drop-in, never poisons)
-3. Remove hardcoded `/home/hema/` paths
+3. Remove hardcoded `/home/user/` paths
 4. Fix version strings
 5. Default bind to `127.0.0.1`
 6. Add signal handler for graceful shutdown

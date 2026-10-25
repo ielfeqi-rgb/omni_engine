@@ -9,7 +9,11 @@
 set -e
 
 echo "[Omni] Compiling Sovereign TUI (opt-in feature)..."
-cargo build --release 2>/dev/null || cargo build
+cargo build --release
 
 echo "[Omni] Launching TUI..."
-LD_LIBRARY_PATH="$(pwd)/bin" ./target/debug/omni_engine --tui
+if [ -f "./target/release/omni_engine" ]; then
+    LD_LIBRARY_PATH="$(pwd)/bin:$LD_LIBRARY_PATH" ./target/release/omni_engine tui
+else
+    LD_LIBRARY_PATH="$(pwd)/bin:$LD_LIBRARY_PATH" ./target/debug/omni_engine tui
+fi

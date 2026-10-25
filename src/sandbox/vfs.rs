@@ -578,15 +578,35 @@ impl MemoryVfs {
         diffs
     }
 
-    /// Take an in-memory snapshot of all active files in VFS
-    pub fn take_snapshot(&self) -> HashMap<PathBuf, Vec<u8>> {
-        self.files.read().clone()
+    /// Take a scoped in-memory snapshot of specific files (e.g. worker's write scope) in VFS.
+    /// Captures prior contents for existing files, and marks non-existent files as None.
+    pub fn take_scoped_snapshot(&self, paths: &[PathBuf]) -> HashMap<PathBuf, Option<Vec<u8>>> {
+        let active = self.files.read();
+        let mut snapshot = HashMap::new();
+        for p in paths {
+            let norm = Self::normalize_path(p);
+            let state = active.get(&norm).cloned();
+            snapshot.insert(norm, state);
+        }
+        snapshot
     }
 
-    /// Restore all active files in VFS to a previously captured snapshot
-    pub fn restore_snapshot(&self, snapshot: HashMap<PathBuf, Vec<u8>>) {
+    /// Restore ONLY the scoped files in VFS to their previous snapshot state.
+    /// Existing files with Some(bytes) are restored to their previous content.
+    /// Files that were None (newly created during the attempt) are safely removed.
+    /// All other files in VFS (belonging to other concurrent workers) remain 100% untouched.
+    pub fn restore_scoped_snapshot(&self, snapshot: HashMap<PathBuf, Option<Vec<u8>>>) {
         let mut active = self.files.write();
-        *active = snapshot;
+        for (norm, prior_state) in snapshot {
+            match prior_state {
+                Some(bytes) => {
+                    active.insert(norm, bytes);
+                }
+                None => {
+                    active.remove(&norm);
+                }
+            }
+        }
     }
 
     /// Commit staged diffs to actual host disk ONLY upon explicit user confirmation.
@@ -641,23 +661,24 @@ impl MemoryVfs {
     }
 
     /// Commit ONLY explicitly verified deliverables to host disk.
+    /// Returns the list of target paths actually written to host disk.
     /// If user_authorized is false or verified_paths is empty, does not write unverified files.
     pub fn commit_verified_files(
         &self,
         target_dir: Option<&Path>,
         verified_paths: &[PathBuf],
         user_authorized: bool,
-    ) -> Result<usize, String> {
+    ) -> Result<Vec<PathBuf>, String> {
         if !user_authorized {
             return Err("Authorization Denied: Cannot commit sandbox VFS to host disk without user approval".to_string());
         }
 
         if verified_paths.is_empty() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         let diffs = self.generate_staged_diffs();
-        let mut committed = 0;
+        let mut committed_paths = Vec::new();
 
         for diff in &diffs {
             let is_verified = verified_paths.iter().any(|vp| {
@@ -689,14 +710,14 @@ impl MemoryVfs {
                     if let Some(content) = self.read_file(&diff.path) {
                         std::fs::write(&target_path, content)
                             .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
-                        committed += 1;
+                        committed_paths.push(target_path);
                     }
                 }
                 FileChangeType::Deleted => {
                     if target_path.exists() {
                         std::fs::remove_file(&target_path)
                             .map_err(|e| format!("Failed to remove host file {:?}: {}", target_path, e))?;
-                        committed += 1;
+                        committed_paths.push(target_path);
                     }
                 }
             }
@@ -712,7 +733,7 @@ impl MemoryVfs {
             }
         }
 
-        Ok(committed)
+        Ok(committed_paths)
     }
 }
 
@@ -1020,5 +1041,30 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
+    }
+
+    #[test]
+    fn test_scoped_snapshot_isolation() {
+        let vfs = MemoryVfs::new();
+        // Worker 2 creates and validates index.html
+        vfs.write_file("index.html", b"<html><body>Task Manager</body></html>");
+
+        // Worker 1 starts attempt on app.py
+        let worker1_scope = vec![PathBuf::from("app.py")];
+        let snapshot = vfs.take_scoped_snapshot(&worker1_scope);
+
+        // Worker 1 writes invalid app.py during attempt
+        vfs.write_file("app.py", b"import invalid_module\n");
+        assert!(vfs.exists("app.py"));
+        assert!(vfs.exists("index.html"));
+
+        // Worker 1 fails and triggers scoped rollback
+        vfs.restore_scoped_snapshot(snapshot);
+
+        // Verified: app.py is rolled back (removed because it was None before),
+        // while index.html written by Worker 2 remains 100% intact and untouched!
+        assert!(!vfs.exists("app.py"));
+        assert!(vfs.exists("index.html"));
+        assert_eq!(vfs.read_string("index.html").unwrap(), "<html><body>Task Manager</body></html>");
     }
 }
