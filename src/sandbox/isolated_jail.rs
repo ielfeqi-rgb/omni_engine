@@ -287,10 +287,10 @@ impl IsolatedJail {
             }
         }
 
-        // Ephemeral device & proc mounts
+        // Ephemeral device & proc mounts with memory caps (64MB cap on tmpfs)
         bwrap.args(["--proc", "/proc"]);
         bwrap.args(["--dev", "/dev"]);
-        bwrap.args(["--tmpfs", "/tmp"]);
+        bwrap.args(["--size", "67108864", "--tmpfs", "/tmp"]);
 
         // Isolated workspace directory
         let ws_str = workspace.to_str().ok_or_else(|| "Invalid UTF-8 in workspace path".to_string())?;

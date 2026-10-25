@@ -214,6 +214,23 @@ Building or integrating autonomous agents with Omni Engine? See [AGENTS.md](AGEN
 
 ---
 
+## 🛡️ Threat Model & Sandbox Boundaries
+
+Omni Engine uses Linux Bubblewrap (`bwrap`) to provide **unprivileged process and namespace isolation** during cleanroom verification.
+
+### Security Guarantees:
+1. **Filesystem Protection:** The host root filesystem is mounted strictly read-only (`--ro-bind /usr /usr`, etc.). Staged deliverables are isolated in an ephemeral RAM-backed `/workspace` directory.
+2. **Network Isolation:** Network namespaces are unshared (`--unshare-all`). Generated worker code cannot initiate outbound network connections or exfiltrate host data.
+3. **Fail-Closed Policy:** By default, if Bubblewrap or unprivileged user namespaces are unavailable, execution of untrusted worker code is blocked. It will never run unisolated on the host unless explicitly authorized via `--allow-unsandboxed` or `OMNI_ALLOW_UNSANDBOXED=1`.
+4. **Session & TTY Isolation:** Executed processes run with `--new-session` (`setsid()`), detaching the sandbox from the controlling TTY to prevent `TIOCSTI` keystroke injection attacks.
+5. **Symlink Traversal Defense:** VFS host commit operations strictly reject following or overwriting existing host symlinks, and repository preloading ignores symlinks to prevent credential leaks.
+
+### Explicit Non-Goals:
+- **Shared Kernel Boundary:** Bubblewrap relies on Linux kernel namespaces (`user`, `net`, `ipc`, `pid`, `mount`) and shares the host kernel. It protects local developer workstations from filesystem corruption and data exfiltration, but is **NOT** a hardware-virtualized hypervisor.
+- **Multi-Tenant Cloud Deployments:** If running arbitrary untrusted code in multi-tenant public SaaS environments, operator deployment inside a dedicated microVM hypervisor (e.g., AWS Firecracker, gVisor, or QEMU) is strongly recommended.
+
+---
+
 ## 📄 License & Constitution
 Omni Engine is licensed under the [MIT License](LICENSE).  
 Engineered under the **Sovereign Engine Constitution**: `#![deny(unused_must_use)]` strictly enforced across all modules for decade-long reliability.

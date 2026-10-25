@@ -627,12 +627,27 @@ impl MemoryVfs {
             let target_path = if diff.path.is_absolute() {
                 Self::resolve_path(&diff.path)
             } else if let Some(base) = target_dir {
-                match crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &diff.path) {
+                let joined = match crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &diff.path) {
                     Ok(p) => p,
                     Err(e) => {
                         return Err(format!("Commit aborted due to illegal relative path in diff {:?}: {}", diff.path, e));
                     }
+                };
+                // Verify no intermediate parent directory component is a symlink
+                let mut current = base.to_path_buf();
+                if let Ok(rel) = joined.strip_prefix(base) {
+                    for component in rel.parent().unwrap_or(Path::new("")).components() {
+                        if let std::path::Component::Normal(c) = component {
+                            current.push(c);
+                            if let Ok(meta) = std::fs::symlink_metadata(&current) {
+                                if meta.file_type().is_symlink() {
+                                    return Err(format!("Security Violation: Intermediate directory component {:?} is a symlink on host disk. Path traversal aborted.", current));
+                                }
+                            }
+                        }
+                    }
                 }
+                joined
             } else {
                 Self::resolve_path(&diff.path)
             };
@@ -641,11 +656,10 @@ impl MemoryVfs {
                     if let Some(parent) = target_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    // Prevent symlink traversal attack (e.g. malicious symlink pointing to ~/.ssh or /etc)
+                    // Prevent symlink traversal attack (e.g. existing symlink pointing to ~/.ssh or /etc)
                     if let Ok(meta) = std::fs::symlink_metadata(&target_path) {
                         if meta.file_type().is_symlink() {
-                            std::fs::remove_file(&target_path)
-                                .map_err(|e| format!("Security Violation: Refusing to follow existing host symlink {:?}: {}", target_path, e))?;
+                            return Err(format!("Security Violation: Target path {:?} already exists as a symlink on host disk. Overwriting or following host symlinks is forbidden to preserve system integrity.", target_path));
                         }
                     }
                     if let Some(content) = self.read_file(&diff.path) {
@@ -841,6 +855,32 @@ mod tests {
         let written_file = target_dir.join("calc.py");
         assert!(written_file.exists());
         assert_eq!(std::fs::read_to_string(&written_file).unwrap(), "print(42)\n");
+    }
+
+    #[test]
+    fn test_commit_to_dir_rejects_symlink_overwrites() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("out_workspace");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        // Create an existing symlink inside target_dir pointing to a dummy secret target
+        let dummy_target = temp_dir.path().join("secret.txt");
+        std::fs::write(&dummy_target, b"secret_value").unwrap();
+
+        let symlink_path = target_dir.join("link.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&dummy_target, &symlink_path).unwrap();
+
+        let vfs = MemoryVfs::new();
+        vfs.write_file(Path::new("link.txt"), b"evil_overwrite");
+
+        // Attempting to commit should FAIL with a Security Violation error!
+        let result = vfs.commit_to_dir(Some(&target_dir), true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Security Violation"));
+
+        // Verify the original dummy target was NOT modified
+        assert_eq!(std::fs::read(&dummy_target).unwrap(), b"secret_value");
     }
 
     #[test]

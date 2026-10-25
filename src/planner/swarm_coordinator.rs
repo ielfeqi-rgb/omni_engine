@@ -1953,17 +1953,23 @@ impl SwarmCoordinator {
                 if dir.is_dir() {
                     if let Ok(entries) = std::fs::read_dir(dir) {
                         for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file() {
-                                let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                if fname.starts_with('.') || fname.ends_with(".log") || fname == "README.md" {
+                            if let Ok(ft) = entry.file_type() {
+                                if ft.is_symlink() {
+                                    // Security: Skip symlinks to prevent credential/arbitrary file leakage into VFS
                                     continue;
                                 }
-                                let relative = PathBuf::from(&fname);
-                                if !self.vfs.exists(&relative) {
-                                    if let Ok(bytes) = std::fs::read(&path) {
-                                        self.vfs.preload_file(&relative, &bytes);
-                                        loaded += 1;
+                                if ft.is_file() {
+                                    let path = entry.path();
+                                    let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                    if fname.starts_with('.') || fname.ends_with(".log") || fname == "README.md" {
+                                        continue;
+                                    }
+                                    let relative = PathBuf::from(&fname);
+                                    if !self.vfs.exists(&relative) {
+                                        if let Ok(bytes) = std::fs::read(&path) {
+                                            self.vfs.preload_file(&relative, &bytes);
+                                            loaded += 1;
+                                        }
                                     }
                                 }
                             }
