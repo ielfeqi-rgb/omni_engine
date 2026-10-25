@@ -13,6 +13,7 @@ Omni Engine is an offline, zero-cloud multi-agent coding engine written in Rust 
 - [docs/OMNI_EMPIRICAL_PROOF_DOSSIER.md](docs/OMNI_EMPIRICAL_PROOF_DOSSIER.md): Hardware telemetry benchmarks, latency measurements, and 2-turn live proof.
 
 ## Core CLI Usage
+- `omni_engine download <preset|url>`: Download GGUF models directly with live progress bar (presets: `--qwen`, `--qwen-7b`, `--phi-4`).
 - `omni_engine run "<goal>" --output-dir <dir> --review`: Synthesize new multi-file project from scratch.
 - `omni_engine modify "<goal>" --dir <dir> --output-dir <dir> --review`: Incrementally extend existing codebase with Zero-Wipe Invariant.
 - `omni_engine tui`: Launch full-screen graphical Terminal Dashboard (Ratatui).

@@ -15,10 +15,13 @@ use crate::llama_manager::LlamaManager;
 use crate::native_llama::NativeLlamaModel;
 use crate::openai_api::{ChatCompletionRequest, ChatMessage};
 use crate::system_info::get_system_specs;
+use futures_util::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tokio::io::AsyncWriteExt;
 
 pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
     if args.len() <= 1 {
@@ -43,6 +46,10 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
         }
         "models" => {
             print_models(&base_dir);
+            Ok(true)
+        }
+        "download" | "pull" => {
+            handle_download(&args[2..], &base_dir).await;
             Ok(true)
         }
         "start" => {
@@ -160,6 +167,9 @@ CORE COMMANDS:
 
     models                      List all installed GGUF models in models/ directory with
                                 architecture types, quantization levels, and file sizes.
+
+    download <url|preset>       Download GGUF model directly into models/ with live progress bar.
+                                (Alias: 'pull'). Presets: '--qwen', '--qwen-4b', '--phi-4'.
 
     start <model> [OPTIONS]     Start background llama-server with specified GGUF model.
     stop                        Stop the currently running background llama-server.
@@ -284,7 +294,7 @@ pub fn print_models(base_dir: &PathBuf) {
 
     if models.is_empty() {
         println!("  No GGUF models found in: {}", base_dir.join("models").display());
-        println!("  [*] Tip: Place .gguf models into the 'models/' directory.");
+        println!("  [*] Tip: Download models with 'omni_engine download --qwen' or place .gguf in models/");
     } else {
         println!("  {:<4} {:<45} {:<12} {}", "#", "Model Filename", "File Size", "Role");
         println!("  {}", "-".repeat(75));
@@ -294,6 +304,205 @@ pub fn print_models(base_dir: &PathBuf) {
         }
     }
     println!("================================================================================");
+}
+
+pub async fn handle_download(args: &[String], base_dir: &PathBuf) {
+    if args.is_empty() || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+        println!("================================================================================");
+        println!("                    OMNI ENGINE GGUF MODEL DOWNLOADER");
+        println!("================================================================================");
+        println!("Usage:");
+        println!("  omni_engine download <preset|URL> [destination_filename.gguf]");
+        println!();
+        println!("Presets:");
+        println!("  --qwen      | qwen       Qwen2.5-Coder-1.5B-Instruct Q4_K_M (1.04 GB) [Recommended Baseline]");
+        println!("  --qwen-7b   | qwen-7b    Qwen2.5-Coder-7B-Instruct Q4_K_M (4.68 GB) [High Performance]");
+        println!("  --phi-4     | phi-4      Phi-4-mini-Instruct Q4_K_M (2.49 GB) [Lightweight Reasoning]");
+        println!();
+        println!("Custom Remote URL (HuggingFace / Direct HTTPS):");
+        println!("  omni_engine download https://huggingface.co/.../model.gguf [custom_name.gguf]");
+        println!("================================================================================");
+        return;
+    }
+
+    let first_arg = args[0].as_str();
+    let first_arg_lower = first_arg.to_lowercase();
+    let (url, default_filename, desc): (&str, &str, &str) = match first_arg_lower.as_str() {
+        "--qwen" | "qwen" | "--qwen-1.5b" | "qwen-1.5b" => (
+            "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+            "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+            "Qwen2.5-Coder-1.5B-Instruct Q4_K_M (Recommended 8GB Baseline)",
+        ),
+        "--qwen-7b" | "qwen-7b" => (
+            "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+            "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+            "Qwen2.5-Coder-7B-Instruct Q4_K_M (High Performance Coding)",
+        ),
+        "--phi-4" | "phi-4" | "--phi-4-mini" | "phi-4-mini" => (
+            "https://huggingface.co/microsoft/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
+            "Phi-4-mini-instruct-Q4_K_M.gguf",
+            "Phi-4-mini-Instruct Q4_K_M (Lightweight Reasoning)",
+        ),
+        _ if first_arg.starts_with("http://") || first_arg.starts_with("https://") => {
+            (first_arg, "", "Custom Remote GGUF Model")
+        }
+        unknown => {
+            eprintln!("[-] Unknown model preset or invalid URL: '{}'", unknown);
+            eprintln!("Run 'omni_engine download --help' for available presets and syntax.");
+            return;
+        }
+    };
+
+    let filename = if args.len() > 1 && !args[1].trim().is_empty() {
+        let mut name = args[1].trim().to_string();
+        if !name.ends_with(".gguf") {
+            name.push_str(".gguf");
+        }
+        name
+    } else if !default_filename.is_empty() {
+        default_filename.to_string()
+    } else {
+        let inferred = url
+            .split('/')
+            .last()
+            .unwrap_or("model.gguf")
+            .split('?')
+            .next()
+            .unwrap_or("model.gguf");
+        let mut name = inferred.to_string();
+        if !name.ends_with(".gguf") {
+            name.push_str(".gguf");
+        }
+        name
+    };
+
+    let models_dir = base_dir.join("models");
+    let _ = fs::create_dir_all(&models_dir);
+
+    let target_path = models_dir.join(&filename);
+    let temp_path = models_dir.join(format!("{}.download", filename));
+
+    if target_path.exists() {
+        let size_str = match fs::metadata(&target_path) {
+            Ok(meta) => format!("{:.2} MB", meta.len() as f64 / (1024.0 * 1024.0)),
+            Err(_) => "Existing".to_string(),
+        };
+        println!("[!] Model file already exists: {} ({})", target_path.display(), size_str);
+        println!("    If you wish to re-download, delete the existing file or choose another filename.");
+        return;
+    }
+
+    println!("================================================================================");
+    println!("  OMNI ENGINE SOVEREIGN MODEL DOWNLOADER");
+    println!("  Model       : {}", filename);
+    println!("  Profile     : {}", desc);
+    println!("  Source URL  : {}", url);
+    println!("  Destination : {}", target_path.display());
+    println!("================================================================================");
+
+    let client = match reqwest::Client::builder()
+        .user_agent("OmniEngine/2.1.0 (Linux x86_64)")
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[-] Failed to initialize HTTP client: {}", e);
+            return;
+        }
+    };
+
+    println!("[*] Connecting to remote host...");
+    let response = match client.get(url).send().await {
+        Ok(res) => {
+            if !res.status().is_success() {
+                eprintln!("[-] HTTP error {}: {}", res.status(), res.status().canonical_reason().unwrap_or(""));
+                return;
+            }
+            res
+        }
+        Err(e) => {
+            eprintln!("[-] Connection failed: {}", e);
+            return;
+        }
+    };
+
+    let total_size = response.content_length().unwrap_or(0);
+    let pb = if total_size > 0 {
+        let p = ProgressBar::new(total_size);
+        p.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {binary_bytes_per_sec} (ETA {eta})")
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
+                .progress_chars("█▓░")
+        );
+        p
+    } else {
+        let p = ProgressBar::new_spinner();
+        p.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} [{elapsed_precise}] {bytes} downloaded ({binary_bytes_per_sec})")
+                .unwrap_or_else(|_| ProgressStyle::default_spinner())
+        );
+        p
+    };
+
+    let mut file = match tokio::fs::File::create(&temp_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[-] Failed to create temporary file {}: {}", temp_path.display(), e);
+            return;
+        }
+    };
+
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut stream_failed = false;
+
+    while let Some(chunk_res) = stream.next().await {
+        match chunk_res {
+            Ok(chunk) => {
+                if let Err(e) = file.write_all(&chunk).await {
+                    eprintln!("\n[-] Write error writing to disk: {}", e);
+                    stream_failed = true;
+                    break;
+                }
+                downloaded += chunk.len() as u64;
+                pb.set_position(downloaded);
+            }
+            Err(e) => {
+                eprintln!("\n[-] Network stream error: {}", e);
+                stream_failed = true;
+                break;
+            }
+        }
+    }
+
+    if let Err(e) = file.flush().await {
+        eprintln!("[-] Flush error: {}", e);
+        stream_failed = true;
+    }
+    drop(file);
+
+    if stream_failed {
+        let _ = fs::remove_file(&temp_path);
+        pb.finish_and_clear();
+        eprintln!("[-] Download aborted due to error. Temporary files cleaned up.");
+        return;
+    }
+
+    pb.finish_with_message("Download complete!");
+
+    if let Err(e) = fs::rename(&temp_path, &target_path) {
+        eprintln!("[-] Failed to finalize downloaded file: {}", e);
+        return;
+    }
+
+    let final_mb = downloaded as f64 / (1024.0 * 1024.0);
+    println!("\n[+] Model successfully downloaded and verified!");
+    println!("    Saved to   : {}", target_path.display());
+    println!("    Total Size : {:.2} MB", final_mb);
+    println!("    To launch  : omni_engine start {}", filename);
 }
 
 pub fn handle_start(args: &[String], base_dir: &PathBuf) {
@@ -1280,6 +1489,7 @@ fn print_console_help() {
     println!("\n  {}", "ARCHITECTURE & CONFIGURATION:".bright_white().bold());
     println!("  {:<32} {}", "tui / dashboard".bright_white().bold(), "Open the full-screen graphical Terminal Dashboard (Ratatui)");
     println!("  {:<32} {}", "models".bright_white().bold(), "Interactively switch between Unified RAM Model and Dual-Model Split");
+    println!("  {:<32} {}", "download <preset|URL>".bright_white().bold(), "Download GGUF model directly into models/ with progress bar");
     println!("  {:<32} {}", "config".bright_white().bold(), "Tune planning depth (subgoals), worker retry budget, and workspace dir");
 
     println!("\n  {}", "INTERACTIVE DIALOGUE & HARDWARE DIAGNOSTICS:".bright_white().bold());
@@ -1702,7 +1912,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             let mut parts = trimmed_line.splitn(2, ' ');
             let first = parts.next().unwrap_or("").to_lowercase();
             match first.as_str() {
-                "modify" | "refactor" | "patch" | "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" | "tui" | "dashboard" => {
+                "modify" | "refactor" | "patch" | "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "download" | "pull" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" | "tui" | "dashboard" => {
                     (first, parts.next().unwrap_or("").trim())
                 }
                 _ => {
@@ -1732,6 +1942,16 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             }
             "models" | "model" | "m" => {
                 handle_interactive_models(&mut session, base_dir);
+            }
+            "download" | "pull" => {
+                let dl_args: Vec<String> = rest_args.split_whitespace().map(|s| s.to_string()).collect();
+                handle_download(&dl_args, base_dir).await;
+                let fresh_models = discover_models(&base_dir.join("models"), base_dir);
+                if session.orchestrator_path.is_none() && !fresh_models.is_empty() {
+                    session.orchestrator_path = Some(fresh_models[0].1.clone());
+                    session.worker_path = Some(fresh_models[0].1.clone());
+                    println!("[*] Set active session model: {}", fresh_models[0].0);
+                }
             }
             "config" | "cfg" | "c" => {
                 handle_interactive_config(&mut session, base_dir);

@@ -138,10 +138,11 @@ cargo build --release
 ```
 
 ### 2. Download Recommended Coding Model (~1.1 GB)
+Omni Engine features a native high-speed model downloader with live animated progress bars:
 ```bash
-mkdir -p models
-curl -L -o models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+./target/release/omni_engine download --qwen
+# Or download custom GGUF models directly from HuggingFace / HTTP:
+# ./target/release/omni_engine download https://huggingface.co/.../model.gguf
 ```
 
 ### 3. Launch the Sovereign TUI Dashboard
@@ -169,7 +170,9 @@ omni_engine run "Build an AES-256 CLI tool in Rust" -y --output-dir ./aes_tool
 # Safely refactor or extend an existing codebase without deleting old logic:
 omni_engine modify "Add priority levels and JSON export" --dir ./task_tracker --output-dir ./task_tracker --review
 
-# --- User Interfaces ---
+# --- Model Management & User Interfaces ---
+omni_engine download --qwen   # Stream & verify GGUF models directly with progress bar
+omni_engine models           # List discovered GGUF models and memory requirements
 omni_engine tui              # Full-screen graphical Terminal Dashboard (Ratatui)
 omni_engine console          # Interactive console REPL shell (omni❯)
 omni_engine chat             # Direct in-process conversational C-FFI dialogue
@@ -177,7 +180,6 @@ omni_engine serve            # Launch Web UI and OpenAI HTTP proxy server
 
 # --- System Diagnostics & Hardware Telemetry ---
 omni_engine status           # View CPU threads, RAM RSS buffer, and zero-swap activity
-omni_engine models           # List discovered GGUF models and memory requirements
 omni_engine kv-test          # Run physical in-process KV-cache surgical manipulation test
 omni_engine causal-test      # Run live Causal DAG self-healing hardware benchmark
 ```
