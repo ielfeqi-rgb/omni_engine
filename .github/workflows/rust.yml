@@ -32,4 +32,9 @@ jobs:
         cargo build --release --verbose
 
     - name: Execute Full Unit & Invariant Test Suite
-      run: cargo test --lib --verbose
+      run: |
+        ln -sf libllama.so bin/libllama.so.0 2>/dev/null || true
+        ln -sf libggml.so bin/libggml.so.0 2>/dev/null || true
+        ln -sf libggml-base.so bin/libggml-base.so.0 2>/dev/null || true
+        ln -sf libggml-cpu.so bin/libggml-cpu.so.0 2>/dev/null || true
+        LD_LIBRARY_PATH="${{ github.workspace }}/bin:$LD_LIBRARY_PATH" cargo test --lib --verbose
