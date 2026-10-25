@@ -106,7 +106,12 @@ impl IsolatedJail {
 
         println!("{}", "  ┌── [ISOLATED SANDBOX EXECUTION] ────────────────────────────────────".bright_cyan());
         println!("  │ Command   : {}", cmd.bright_yellow().bold());
-        println!("  │ Sandbox   : {}", if bwrap_present { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs)" } else { "Host tempdir fallback" });
+        println!("  │ Sandbox   : {}", if bwrap_present { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs)" } else { "Host tempdir fallback [UNISOLATED]" });
+        if !bwrap_present {
+            eprintln!("{}", "  │ [!] SECURITY WARNING: Linux Bubblewrap ('bwrap') was not found in PATH.".bright_red().bold());
+            eprintln!("{}", "  │     Execution is running unisolated in host tempdir. Install bubblewrap for full kernel sandbox:".bright_yellow());
+            eprintln!("{}", "  │     -> sudo apt install bubblewrap (or dnf install bubblewrap)".dimmed());
+        }
         println!("  │ Staged    : {} file(s) materialized in RAM VFS", vfs_files.len());
         for (rel, content) in vfs_files {
             println!("  │   * {} ({} bytes)", rel.display().to_string().bright_white(), content.len());

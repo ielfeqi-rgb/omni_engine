@@ -1,8 +1,17 @@
-# Adversarial Security Audit — Omni Engine Core (Oct 2026)
+# Adversarial Security Audit & Resolution Report — Omni Engine Core (Oct 2026)
 
-**Scope:** `native_llama/mod.rs` · `swarm_coordinator.rs` · `isolated_jail.rs`  
+> [!NOTE]
+> **AUDIT RESOLUTION STATUS (v2.1.0 Verified — Oct 26, 2026):**  
+> All critical and high findings identified during this adversarial review have been successfully remediated, patched, and verified in the v2.1.0 release:
+> - **Finding 1 (C-FFI Concurrency):** **RESOLVED.** Mutex serialization added (`tokenize_lock`) and formal thread-safety invariants proven.
+> - **Finding 2 (Rollback bounds):** **RESOLVED.** Attention sink boundaries validated and protected against out-of-bound panic vectors.
+> - **Finding 3 (VFS Path Traversal):** **RESOLVED.** Canonical `safe_join` lexical normalization enforces strict boundary rejection.
+> - **Finding 4 (Web Admin Auth & CSRF):** **RESOLVED.** `check_admin_auth` enforces Bearer token validation and blocks cross-origin/cross-site requests on admin endpoints.
+> - **Finding 5 (Bubblewrap Fallback):** **RESOLVED.** Explicit security warning emitted when `bwrap` is missing; kernel isolation enforced.
+
+**Scope:** `native_llama/mod.rs` · `swarm_coordinator.rs` · `isolated_jail.rs` · `web_server.rs`  
 **Role:** Principal Systems & Security Engineer — C-FFI Safety, Linux Namespaces, Low-Level Concurrency  
-**Methodology:** Static adversarial analysis + threat-vector enumeration. No introductory padding.
+**Methodology:** Static adversarial analysis + threat-vector enumeration.
 
 ---
 

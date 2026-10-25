@@ -19,7 +19,7 @@ use crate::openai_api::{self, ChatCompletionRequest};
 use crate::system_info::{self, SystemSpecs};
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -38,9 +38,14 @@ pub struct AppState {
 
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+            header::ORIGIN,
+        ])
+        .allow_origin(Any);
 
     Router::new()
         .route("/", get(serve_index))
@@ -86,12 +91,14 @@ struct DownloadReq {
 }
 
 async fn handle_start_download(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<DownloadReq>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     state.log_buffer.push(format!("Starting model download from: {}", payload.url));
     let task_id = state.downloader.start_download(payload.url, payload.filename);
-    Json(json!({ "task_id": task_id, "status": "started" }))
+    Ok(Json(json!({ "task_id": task_id, "status": "started" })))
 }
 
 async fn handle_get_downloads(State(state): State<AppState>) -> impl IntoResponse {
@@ -108,9 +115,11 @@ struct StartServerReq {
 }
 
 async fn handle_start_server(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<StartServerReq>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     let threads = payload.threads.unwrap_or(4);
     let ctx = payload.ctx_size.unwrap_or(4096);
     let port = payload.port.unwrap_or(8081);
@@ -120,24 +129,32 @@ async fn handle_start_server(
     match state.llama_manager.start(payload.model, port, threads, ctx) {
         Ok(pid) => {
             state.log_buffer.push(format!("llama-server started successfully with PID {}", pid));
-            (StatusCode::OK, Json(json!({ "pid": pid, "status": "running" })))
+            Ok((StatusCode::OK, Json(json!({ "pid": pid, "status": "running" }))))
         }
         Err(e) => {
             state.log_buffer.push(format!("Error starting llama-server: {}", e));
-            (StatusCode::BAD_REQUEST, Json(json!({ "error": e })))
+            Ok((StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))
         }
     }
 }
 
-async fn handle_stop_server(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_stop_server(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     state.log_buffer.push("Stopping llama-server...".to_string());
     match state.llama_manager.stop() {
-        Ok(_) => Json(json!({ "status": "stopped" })),
-        Err(e) => Json(json!({ "error": e })),
+        Ok(_) => Ok(Json(json!({ "status": "stopped" }))),
+        Err(e) => Ok(Json(json!({ "error": e }))),
     }
 }
 
-async fn handle_shutdown_server(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_shutdown_server(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     state.log_buffer.push("Shutting down entire Omni Engine process... Goodbye!".to_string());
     let _ = state.llama_manager.stop();
 
@@ -146,12 +163,16 @@ async fn handle_shutdown_server(State(state): State<AppState>) -> impl IntoRespo
         std::process::exit(0);
     });
 
-    Json(json!({ "status": "shutting_down", "message": "Omni Engine is shutting down safely." }))
+    Ok(Json(json!({ "status": "shutting_down", "message": "Omni Engine is shutting down safely." })))
 }
 
-async fn handle_list_keys(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_list_keys(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     let keys = state.key_manager.list_keys();
-    Json(keys)
+    Ok(Json(keys))
 }
 
 #[derive(Deserialize)]
@@ -160,21 +181,75 @@ struct CreateKeyReq {
 }
 
 async fn handle_create_key(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<CreateKeyReq>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     let new_key = state.key_manager.create_key(payload.name.clone());
     state.log_buffer.push(format!("Generated new API Key: '{}'", payload.name));
-    Json(new_key)
+    Ok(Json(new_key))
 }
 
 async fn handle_revoke_key(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    check_admin_auth(&headers, &state.key_manager)?;
     let ok = state.key_manager.revoke_key(&id);
     state.log_buffer.push(format!("Revoked API Key ID: {}", id));
-    Json(json!({ "revoked": ok }))
+    Ok(Json(json!({ "revoked": ok })))
+}
+
+fn check_admin_auth(headers: &HeaderMap, key_manager: &KeyManager) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    // 1. If valid Bearer API key is present, ALWAYS authorized
+    if let Some(auth_header) = headers.get("Authorization") {
+        if let Ok(raw_token) = auth_header.to_str() {
+            let token_str = raw_token.strip_prefix("Bearer ").unwrap_or(raw_token);
+            if key_manager.validate_key(token_str) {
+                return Ok(());
+            }
+        }
+    }
+
+    // 2. Reject Cross-Origin requests without Bearer API key (CSRF protection)
+    if let Some(origin) = headers.get("Origin") {
+        if let Ok(origin_str) = origin.to_str() {
+            if !origin_str.starts_with("http://127.0.0.1") && !origin_str.starts_with("http://localhost") {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": {
+                            "message": "Cross-Origin Admin access forbidden without valid Bearer API key.",
+                            "type": "forbidden",
+                            "code": 403
+                        }
+                    })),
+                ));
+            }
+        }
+    }
+
+    // 3. Reject Cross-Site requests
+    if let Some(sec_site) = headers.get("sec-fetch-site") {
+        if let Ok(site_str) = sec_site.to_str() {
+            if site_str == "cross-site" {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": {
+                            "message": "Cross-Site request to Admin API blocked. Provide valid Bearer API key.",
+                            "type": "forbidden",
+                            "code": 403
+                        }
+                    })),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn check_auth(headers: &HeaderMap, key_manager: &KeyManager) -> Result<(), (StatusCode, Json<serde_json::Value>)> {

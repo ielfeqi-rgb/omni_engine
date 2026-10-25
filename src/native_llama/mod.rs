@@ -133,6 +133,16 @@ pub struct NativeLlamaModel {
     tokenize_lock: std::sync::Mutex<()>,
 }
 
+// ============================================================================
+// CONCURRENCY & THREAD-SAFETY INVARIANTS:
+// 1. `llama_model` pointer in upstream `llama.cpp` is strictly read-only after load.
+//    Weights, metadata, and vocabulary are immutable and safe to share across threads.
+// 2. Mutable operations against the model (e.g. tokenization via `omni_llama_tokenize`)
+//    are strictly serialized via `tokenize_lock` to eliminate FFI race conditions.
+// 3. Execution contexts (`NativeLlamaContext`) are independent and allocated per worker thread.
+// 4. Memory deallocation is strictly managed in `Drop` and triggered only when the
+//    last `Arc<NativeLlamaModel>` reference is released.
+// ============================================================================
 unsafe impl Send for NativeLlamaModel {}
 unsafe impl Sync for NativeLlamaModel {}
 

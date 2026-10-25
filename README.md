@@ -86,6 +86,9 @@ Omni Engine eliminates the latency, serialization, and socket overhead of Python
 ### 2. The Zero-Wipe Invariant (`omni_engine modify`)
 When prompted to modify or refactor existing software, standard LLMs suffer from the **Blank Slate Fallacy**—they delete existing functions and re-invent the file from scratch. Omni Engine preloads the existing repository into RAM VFS and enforces the physical **Zero-Wipe Invariant**: the Tree-Sitter AST symbol table is locked, and only surgical line diffs (`+lines / -0 regressions`) are accepted.
 
+> [!NOTE]
+> **Engineering Rigor:** The Zero-Wipe Invariant structurally protects existing AST declarations, function signatures, and prevents destructive file overwrites. To guarantee behavioural runtime correctness and eliminate semantic regressions, the engine pairs AST checks with automated cleanroom compiler and test execution before committing changes to disk.
+
 ### 3. Causal DAG & $O(1)$ KV-Cache Slicing
 When a worker encounters a syntax error or a hallucinated import, conventional tools wipe context and restart from token 0. Omni Engine maps execution steps in a Causal DAG and executes atomic KV-cache slicing (`kv_cache_seq_rm`), excising unapproved tokens in **~6.1 milliseconds** without re-prompting or losing valid prior context.
 
