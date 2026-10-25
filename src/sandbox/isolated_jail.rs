@@ -35,8 +35,29 @@ pub struct IsolatedJail;
 impl IsolatedJail {
     /// Check if `bwrap` is installed and functioning on the host.
     pub fn is_bwrap_available() -> bool {
-        Command::new("bwrap")
+        let exists = Command::new("bwrap")
             .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !exists {
+            return false;
+        }
+
+        // Functional check: verify unprivileged user/net namespaces are allowed by kernel
+        let true_bin = if Path::new("/usr/bin/true").exists() {
+            "/usr/bin/true"
+        } else if Path::new("/bin/true").exists() {
+            "/bin/true"
+        } else {
+            "true"
+        };
+
+        Command::new("bwrap")
+            .args(["--ro-bind", "/", "/", "--unshare-all", true_bin])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -118,10 +139,24 @@ impl IsolatedJail {
         }
 
         let start_time = Instant::now();
-        let (exit_code, stdout, stderr) = if bwrap_present {
-            Self::run_with_bwrap(cmd, temp_path, timeout, stdin_input)?
+        let (exit_code, stdout, stderr, actually_bwrap) = if bwrap_present {
+            match Self::run_with_bwrap(cmd, temp_path, timeout, stdin_input) {
+                Ok((code, out, err)) => {
+                    if err.contains("Operation not permitted") || err.contains("Failed RTM_NEWADDR") {
+                        let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
+                        (f_code, f_out, f_err, false)
+                    } else {
+                        (code, out, err, true)
+                    }
+                }
+                Err(_) => {
+                    let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
+                    (f_code, f_out, f_err, false)
+                }
+            }
         } else {
-            Self::run_fallback(cmd, temp_path, timeout, stdin_input)?
+            let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
+            (f_code, f_out, f_err, false)
         };
         let duration = start_time.elapsed();
 
@@ -158,7 +193,7 @@ impl IsolatedJail {
             stdout,
             stderr,
             missing_dependency: missing_dep,
-            sandboxed_by_bwrap: bwrap_present,
+            sandboxed_by_bwrap: actually_bwrap,
         })
     }
 
