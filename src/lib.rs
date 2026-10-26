@@ -25,3 +25,35 @@ pub mod system_info;
 pub mod tui_agent;
 pub mod web_server;
 pub mod tui;
+
+/// Reliably resolves the project base directory containing models/, config/, and bin/
+/// regardless of whether the executable is invoked from the project root, bin/, target/release/, or target/debug/.
+pub fn resolve_base_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    // 1. If cwd has Cargo.toml and models/ -> we are directly at the project root!
+    if let Ok(cwd) = std::env::current_dir() {
+        if cwd.join("Cargo.toml").exists() && cwd.join("models").exists() {
+            return cwd;
+        }
+        // If user is inside target/release, target/debug, or bin -> traverse ancestors for project root
+        let mut curr = cwd.clone();
+        while let Some(parent) = curr.parent() {
+            if parent.join("Cargo.toml").exists() && parent.join("models").exists() {
+                return parent.to_path_buf();
+            }
+            curr = parent.to_path_buf();
+        }
+    }
+    // 2. Check current_exe location ancestors for Cargo.toml + models/
+    if let Ok(exe) = std::env::current_exe() {
+        let mut curr = exe.clone();
+        while let Some(parent) = curr.parent() {
+            if parent.join("Cargo.toml").exists() && parent.join("models").exists() {
+                return parent.to_path_buf();
+            }
+            curr = parent.to_path_buf();
+        }
+    }
+    // 3. Fallback
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}

@@ -169,8 +169,7 @@ impl Default for TuiApp {
         let bidi = konsole || vte || wt || term.contains("mlterm");
 
         
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
-        let base_dir = if exe_dir.join("models").exists() { exe_dir } else { std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")) };
+        let base_dir = crate::resolve_base_dir();
         let downloader = crate::downloader::ModelDownloader::new(base_dir.join("models"));
         
         Self {
@@ -249,11 +248,7 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
     std::thread::spawn(move || {
         crate::native_llama::NativeLlamaModel::disable_logs();
         
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let base_dir = if exe_dir.join("models").exists() { exe_dir } else { std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")) };
+        let base_dir = crate::resolve_base_dir();
 
         let mut current_model: Option<std::sync::Arc<crate::native_llama::NativeLlamaModel>> = None;
         let mut current_ctx: Option<crate::native_llama::NativeLlamaContext> = None;
@@ -645,8 +640,7 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                                 app.messages.push(format!("❯ [You]: {}", msg));
                                 
                                 if msg.trim() == "/models" {
-                                    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
-                                    let base_dir = if exe_dir.join("models").exists() { exe_dir } else { std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")) };
+                                    let base_dir = crate::resolve_base_dir();
                                     let mut found = Vec::new();
                                     if let Ok(entries) = std::fs::read_dir(base_dir.join("models")) {
                                         for entry in entries.flatten() {

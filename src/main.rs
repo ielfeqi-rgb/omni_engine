@@ -16,23 +16,14 @@ use omni_engine::llama_manager::LlamaManager;
 use omni_engine::logger::LogBuffer;
 use omni_engine::tui;
 use omni_engine::web_server::{create_router, AppState};
-use std::path::PathBuf;
+
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let base_dir = if exe_dir.join("models").exists() || exe_dir.join("config").exists() {
-        exe_dir
-    } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    };
+    let base_dir = omni_engine::resolve_base_dir();
 
     // TUI Opt-in Layer (Full-Screen Graphical Terminal Dashboard)
     if args.contains(&"--tui".to_string())
