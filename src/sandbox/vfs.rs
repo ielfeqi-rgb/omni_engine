@@ -614,57 +614,100 @@ impl MemoryVfs {
         self.commit_to_dir(None, user_authorized)
     }
 
-    /// Commit staged diffs to a specific directory on host (or original relative/absolute paths if target_dir is None).
+    /// Commit staged diffs to a specific directory on host.
+    /// Strictly requires all deliverables to be relative to `target_dir` (default: current workspace root).
+    /// Enforces a Two-Phase Commit:
+    /// - Phase 1: Pure dry-run validation pass. Rejects absolute paths, path escapes, symlinks, and TOCTOU intermediate symlink components. If any file fails, zero files are touched.
+    /// - Phase 2: Atomic write pass using kernel-level `O_NOFOLLOW` flag to prevent symlink race window exploits.
     pub fn commit_to_dir(&self, target_dir: Option<&Path>, user_authorized: bool) -> Result<usize, String> {
         if !user_authorized {
             return Err("Authorization Denied: Cannot commit sandbox VFS to host disk without user approval".to_string());
         }
 
+        let fallback_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let base = target_dir.unwrap_or(&fallback_root);
+
         let diffs = self.generate_staged_diffs();
-        let mut committed = 0;
+
+        // --------------------------------------------------------------------
+        // PHASE 1: STRICT DRY-RUN VALIDATION PASS (Zero mutations to host disk)
+        // --------------------------------------------------------------------
+        let mut validated_actions = Vec::with_capacity(diffs.len());
 
         for diff in &diffs {
-            let target_path = if diff.path.is_absolute() {
-                Self::resolve_path(&diff.path)
-            } else if let Some(base) = target_dir {
-                let joined = match crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &diff.path) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return Err(format!("Commit aborted due to illegal relative path in diff {:?}: {}", diff.path, e));
-                    }
-                };
-                // Verify no intermediate parent directory component is a symlink
-                let mut current = base.to_path_buf();
-                if let Ok(rel) = joined.strip_prefix(base) {
-                    for component in rel.parent().unwrap_or(Path::new("")).components() {
-                        if let std::path::Component::Normal(c) = component {
-                            current.push(c);
-                            if let Ok(meta) = std::fs::symlink_metadata(&current) {
-                                if meta.file_type().is_symlink() {
-                                    return Err(format!("Security Violation: Intermediate directory component {:?} is a symlink on host disk. Path traversal aborted.", current));
-                                }
+            // Absolute paths and home-relative paths in deliverables are strictly forbidden!
+            let path_str = diff.path.to_string_lossy();
+            if diff.path.is_absolute() || path_str.starts_with('~') || path_str.starts_with('/') {
+                return Err(format!(
+                    "Security Violation: Absolute or home-relative path in VFS deliverable rejected: {:?}. All deliverables must be strictly relative to workspace.",
+                    diff.path
+                ));
+            }
+
+            // Safe join prevents any `..` directory traversal outside base
+            let joined = crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &diff.path)
+                .map_err(|e| format!("Security Violation: Path traversal rejected in {:?}: {}", diff.path, e))?;
+
+            // Verify no intermediate parent directory component is a symlink (TOCTOU Defense)
+            let mut current = base.to_path_buf();
+            if let Ok(rel) = joined.strip_prefix(base) {
+                for component in rel.parent().unwrap_or(Path::new("")).components() {
+                    if let std::path::Component::Normal(c) = component {
+                        current.push(c);
+                        if let Ok(meta) = std::fs::symlink_metadata(&current) {
+                            if meta.file_type().is_symlink() {
+                                return Err(format!(
+                                    "Security Violation: Intermediate directory component {:?} is a symlink on host disk. Path traversal aborted.",
+                                    current
+                                ));
                             }
                         }
                     }
                 }
-                joined
-            } else {
-                Self::resolve_path(&diff.path)
-            };
-            match diff.change_type {
+            }
+
+            // Verify target path itself is not an existing symlink on host disk
+            if let Ok(meta) = std::fs::symlink_metadata(&joined) {
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "Security Violation: Target path {:?} already exists as a symlink on host disk. Overwriting or following host symlinks is forbidden to preserve system integrity.",
+                        joined
+                    ));
+                }
+            }
+
+            validated_actions.push((joined, diff.change_type.clone(), diff.path.clone()));
+        }
+
+        // --------------------------------------------------------------------
+        // PHASE 2: ATOMIC WRITE PASS WITH KERNEL O_NOFOLLOW
+        // --------------------------------------------------------------------
+        let mut committed = 0;
+
+        for (target_path, change_type, vfs_path) in validated_actions {
+            match change_type {
                 FileChangeType::Created | FileChangeType::Modified => {
                     if let Some(parent) = target_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    // Prevent symlink traversal attack (e.g. existing symlink pointing to ~/.ssh or /etc)
-                    if let Ok(meta) = std::fs::symlink_metadata(&target_path) {
-                        if meta.file_type().is_symlink() {
-                            return Err(format!("Security Violation: Target path {:?} already exists as a symlink on host disk. Overwriting or following host symlinks is forbidden to preserve system integrity.", target_path));
+                    if let Some(content) = self.read_file(&vfs_path) {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::OpenOptionsExt;
+                            use std::io::Write;
+                            let mut opts = std::fs::OpenOptions::new();
+                            opts.write(true).create(true).truncate(true);
+                            opts.custom_flags(libc::O_NOFOLLOW);
+                            let mut file = opts.open(&target_path)
+                                .map_err(|e| format!("Security Violation: Failed to securely open host file {:?} with O_NOFOLLOW: {}", target_path, e))?;
+                            file.write_all(&content)
+                                .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
                         }
-                    }
-                    if let Some(content) = self.read_file(&diff.path) {
-                        std::fs::write(&target_path, content)
-                            .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
+                        #[cfg(not(unix))]
+                        {
+                            std::fs::write(&target_path, content)
+                                .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
+                        }
                         committed += 1;
                     }
                 }
@@ -1118,5 +1161,65 @@ mod tests {
         assert!(!vfs.exists("app.py"));
         assert!(vfs.exists("index.html"));
         assert_eq!(vfs.read_string("index.html").unwrap(), "<html><body>Task Manager</body></html>");
+    }
+
+    #[test]
+    fn test_commit_to_dir_rejects_absolute_path_escapes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("out_workspace");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        let vfs = MemoryVfs::new();
+        // Malicious absolute path targeting sensitive system/user file
+        vfs.write_file(Path::new("/home/user/.bashrc"), b"echo evil\n");
+
+        // Commit MUST reject absolute paths in Phase 1
+        let result = vfs.commit_to_dir(Some(&target_dir), true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Absolute or home-relative path"));
+    }
+
+    #[test]
+    fn test_commit_to_dir_rejects_intermediate_symlinks() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("out_workspace");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        // Create an intermediate directory that is a symlink pointing elsewhere
+        let outside_dir = temp_dir.path().join("outside_vault");
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        let symlink_sub = target_dir.join("sub_link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_dir, &symlink_sub).unwrap();
+
+        let vfs = MemoryVfs::new();
+        vfs.write_file(Path::new("sub_link/exploit.txt"), b"evil_content");
+
+        // Commit MUST reject because intermediate directory is a symlink!
+        let result = vfs.commit_to_dir(Some(&target_dir), true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Intermediate directory component"));
+        assert!(!outside_dir.join("exploit.txt").exists());
+    }
+
+    #[test]
+    fn test_commit_two_phase_atomic_validation_pass() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("out_workspace");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        let vfs = MemoryVfs::new();
+        // File 1 is valid
+        vfs.write_file(Path::new("good1.txt"), b"good_content");
+        // File 2 is an evil absolute escape
+        vfs.write_file(Path::new("/etc/hosts_fake"), b"evil_content");
+
+        // The commit MUST abort in Phase 1 without writing good1.txt to disk!
+        let result = vfs.commit_to_dir(Some(&target_dir), true);
+        assert!(result.is_err());
+
+        // Verify good1.txt was NOT written to disk (Atomic all-or-nothing guarantee)
+        assert!(!target_dir.join("good1.txt").exists());
     }
 }

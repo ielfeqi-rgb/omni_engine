@@ -310,6 +310,17 @@ impl IsolatedJail {
         {
             use std::os::unix::process::CommandExt;
             bwrap.process_group(0);
+            unsafe {
+                bwrap.pre_exec(|| {
+                    // Max single file output size: 128MB (stops disk fill loops)
+                    let fsize_limit = libc::rlimit {
+                        rlim_cur: 128 * 1024 * 1024,
+                        rlim_max: 128 * 1024 * 1024,
+                    };
+                    let _ = libc::setrlimit(libc::RLIMIT_FSIZE, &fsize_limit);
+                    Ok(())
+                });
+            }
         }
 
         // Run command via sh
@@ -359,6 +370,17 @@ impl IsolatedJail {
         {
             use std::os::unix::process::CommandExt;
             process.process_group(0);
+            unsafe {
+                process.pre_exec(|| {
+                    // Max single file size: 128MB
+                    let fsize_limit = libc::rlimit {
+                        rlim_cur: 128 * 1024 * 1024,
+                        rlim_max: 128 * 1024 * 1024,
+                    };
+                    let _ = libc::setrlimit(libc::RLIMIT_FSIZE, &fsize_limit);
+                    Ok(())
+                });
+            }
         }
 
         if stdin_input.is_some() {
