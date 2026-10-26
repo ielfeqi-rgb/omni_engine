@@ -1050,6 +1050,44 @@ pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
     println!("================================================================================\n");
 }
 
+/// Extracts or infers a clean, isolated project subfolder name from a user prompt/goal.
+pub fn infer_project_name(goal: &str) -> String {
+    let lower = goal.to_lowercase();
+    // 1. Look for patterns like "named <name>", "project named <name>", "project: <name>", "called <name>"
+    let keywords = ["named ", "project named ", "project: ", "called ", "repo named "];
+    for kw in &keywords {
+        if let Some(pos) = lower.find(kw) {
+            let rest = &goal[pos + kw.len()..];
+            let name: String = rest.chars()
+                .skip_while(|c| c.is_whitespace() || *c == '`' || *c == '"' || *c == '\'')
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if !name.is_empty() && name.len() >= 2 {
+                return name;
+            }
+        }
+    }
+    // 2. Look for keywords or significant nouns joined by underscore
+    let stop_words = [
+        "create", "build", "make", "a", "an", "the", "in", "with", "complete",
+        "new", "simple", "full", "system", "app", "project", "using", "and",
+        "for", "to", "python", "rust", "javascript", "html", "css", "cli"
+    ];
+    let words: Vec<&str> = goal.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .collect();
+    let meaningful: Vec<&str> = words.iter()
+        .filter(|w| !stop_words.contains(&w.to_lowercase().as_str()))
+        .take(2)
+        .copied()
+        .collect();
+    if !meaningful.is_empty() {
+        return meaningful.join("_").to_lowercase();
+    }
+    // 3. Fallback
+    "project".to_string()
+}
+
 pub fn handle_swarm(args: &[String], base_dir: &PathBuf) {
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
         println!(r#"
@@ -1115,6 +1153,7 @@ EXAMPLES:
     let mut auto_approve_deps: Option<bool> = None;
     let mut is_modify_mode = false;
     let mut review_plan = false;
+    let mut explicit_project_name: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -1167,6 +1206,10 @@ EXAMPLES:
                 output_dir = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
+            "--name" | "--project" if i + 1 < args.len() => {
+                explicit_project_name = Some(args[i + 1].clone());
+                i += 2;
+            }
             "--bwrap" => {
                 i += 1;
             }
@@ -1190,9 +1233,13 @@ EXAMPLES:
         return;
     }
 
-    if output_dir == Some(PathBuf::from("./workspace")) {
+    let is_default_workspace = output_dir == Some(PathBuf::from("./workspace"));
+    if is_default_workspace {
         if let Some(ref in_dir) = input_dir {
             output_dir = Some(in_dir.clone());
+        } else if !is_modify_mode {
+            let proj_name = explicit_project_name.unwrap_or_else(|| infer_project_name(&user_goal));
+            output_dir = Some(PathBuf::from("./workspace").join(proj_name));
         }
     }
 
@@ -1714,13 +1761,19 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str, is_modify
         }
     };
 
+    let target_output_dir = if !is_modify {
+        session.output_dir.join(infer_project_name(goal))
+    } else {
+        session.output_dir.clone()
+    };
+
     let config = crate::planner::SwarmConfig {
         orchestrator_model_path: orch,
         worker_model_path: worker,
         max_subgoals: session.max_subgoals,
         max_steps_per_worker: session.max_steps_per_worker,
-        input_dir: Some(session.output_dir.clone()),
-        output_dir: Some(session.output_dir.clone()),
+        input_dir: if is_modify { Some(session.output_dir.clone()) } else { None },
+        output_dir: Some(target_output_dir),
         verbose: true,
         auto_approve_deps: None,
         is_modify_mode: is_modify,

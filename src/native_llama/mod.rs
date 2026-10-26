@@ -775,6 +775,20 @@ impl NativeLlamaContext {
         max_tokens: usize,
         config: &SamplingConfig,
     ) -> Result<String, String> {
+        self.generate_with_stop_predicate(prompt, max_tokens, config, |_gen, _piece| false)
+    }
+
+    /// Autoregressively generate text from a prompt with an early stop predicate.
+    pub fn generate_with_stop_predicate<F>(
+        &mut self,
+        prompt: &str,
+        max_tokens: usize,
+        config: &SamplingConfig,
+        mut should_stop: F,
+    ) -> Result<String, String>
+    where
+        F: FnMut(&str, &str) -> bool,
+    {
         let is_term = io::stdout().is_terminal();
         let prompt_tokens = self.model.tokenize(prompt, true)?;
 
@@ -806,6 +820,24 @@ impl NativeLlamaContext {
 
             generated.push_str(&piece);
             self.eval_tokens(&[next_tok], 0)?;
+
+            // Multi-piece or whole-text stop token suffix check
+            let mut hit_stop_suffix = false;
+            for st in &self.model.config.stop_tokens {
+                if generated.ends_with(st) {
+                    generated.truncate(generated.len() - st.len());
+                    hit_stop_suffix = true;
+                    break;
+                }
+            }
+            if hit_stop_suffix {
+                break;
+            }
+
+            // Caller-provided stop predicate (e.g. early exit when required subgoals are emitted)
+            if should_stop(&generated, &piece) {
+                break;
+            }
 
             if is_term {
                 let elapsed = start_time.elapsed().as_secs_f64();

@@ -1938,8 +1938,14 @@ impl SwarmCoordinator {
             }
         }
         // 3. Check relative to current working directory (strictly non-symlink, normal relative)
-        if !clean.is_absolute() && clean.exists() && !clean.is_symlink() {
-            return Some(clean.to_path_buf());
+        // SECURITY & CLASSIFICATION INTEGRITY:
+        // In fresh generation mode (run), CWD contains the engine repository's README.md, Cargo.toml,
+        // etc. which must NEVER be classified as existing project deliverables.
+        // CWD is only inspected if in modify mode AND no explicit input_dir was configured.
+        if self.config.is_modify_mode && self.config.input_dir.is_none() {
+            if !clean.is_absolute() && clean.exists() && !clean.is_symlink() {
+                return Some(clean.to_path_buf());
+            }
         }
         None
     }
@@ -2357,6 +2363,13 @@ impl SwarmCoordinator {
 
                 if lower == "yes" || lower == "y" || lower == "ok" || lower == "نعم" || lower == "تمام" || lower == "اه" || lower == "ايوه" {
                     println!("\n  {} Plan sealed into Causal Memory. Suffix debate rolled back.", "[PLAN SEALED]".bright_green().bold());
+                    if let Some(ref out_dir) = self.config.output_dir {
+                        if let Err(e) = std::fs::create_dir_all(out_dir) {
+                            warn!("Failed to initialize project output directory {}: {}", out_dir.display(), e);
+                        } else {
+                            println!("  {} Dedicated project folder initialized: {}", "[PROJECT WORKSPACE]".bright_cyan().bold(), out_dir.display().to_string().bright_magenta());
+                        }
+                    }
                     println!("  {} Executing approved golden architecture...\n", ">>".bright_yellow());
                     break;
                 } else if lower.starts_with("no") || lower.starts_with("n ") || lower.starts_with("لا") {
@@ -2397,6 +2410,9 @@ impl SwarmCoordinator {
         }
 
         // PHASE 1.5: Generate Global Contract (Blackboard)
+        if let Some(ref out_dir) = self.config.output_dir {
+            let _ = std::fs::create_dir_all(out_dir);
+        }
         println!("  [THINKER BLACKBOARD] Synthesizing Global Contract for DAG Agents...");
         let global_contract = self.generate_global_contract(&current_goal, &subgoals).unwrap_or_else(|_| "No strict contract.".to_string());
         println!("  [CONTRACT]: {}\n", global_contract.bright_magenta());
@@ -3968,6 +3984,15 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             goal.to_string()
         };
         println!("  │ Objective: {:<58} │", truncated_goal.bright_white());
+        if let Some(ref out_dir) = self.config.output_dir {
+            let out_str = out_dir.display().to_string();
+            let trunc_out = if out_str.len() > 56 {
+                format!("...{}", &out_str[out_str.len() - 53..])
+            } else {
+                out_str
+            };
+            println!("  │ Workspace: {:<58} │", trunc_out.bright_magenta());
+        }
         println!("  {}", "├────────────────────────────────────────────────────────────────────────┤".bright_cyan());
         println!("  │ Proposed Sub-tasks ({} total):{:<43} │", subgoals.len(), "");
         for sg in subgoals {
@@ -4127,7 +4152,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     Multi-file web deliverable:\n\
                     SUBGOAL: Write the HTML structure and markup | ENTITY: index.html | READ_SET: none | WRITE_SET: index.html | DEPENDS_ON: none\n\
                     SUBGOAL: Write the external CSS styling | ENTITY: styles.css | READ_SET: index.html | WRITE_SET: styles.css | DEPENDS_ON: index.html\n\n\
-                    - REVIEW & TEST WORKER: When the objective creates an executable program, you may deploy a final review test worker (kind: TEST) which MUST list all code files it tests in READ_SET and DEPENDS_ON.",
+                    - REVIEW & TEST WORKER: When the objective creates an executable program, you may deploy a final review test worker (kind: TEST) which MUST list all code files it tests in READ_SET and DEPENDS_ON.\n\
+                    - TERMINATION INVARIANT: Output ONLY the planned deliverable lines or SUBGOAL lines. Stop immediately after the final SUBGOAL line. Do NOT write explanations, markdown preamble, conversational text, or postscripts.",
                     self.config.max_subgoals
                 )
             }
@@ -4141,7 +4167,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 SUBGOAL: <precise search objective> | ENTITY: <primary keyword> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or none> | DEPENDS_ON: <dependencies or none>\n\n\
                 Examples:\n\
                 SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none\n\
-                SUBGOAL: Search for recent astrophysics discoveries | ENTITY: astrophysics | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none",
+                SUBGOAL: Search for recent astrophysics discoveries | ENTITY: astrophysics | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none\n\n\
+                - TERMINATION INVARIANT: Output ONLY SUBGOAL lines and stop immediately. Do not write explanations.",
                 self.config.max_subgoals
             )
         };
@@ -4149,7 +4176,20 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let user_msg = format!("Goal: {}", goal);
         let prompt = Self::format_prompt(&self.orchestrator_model, &system_msg, &user_msg);
 
-        let output = ctx.generate(&prompt, 1024)?;
+        let max_plan_tokens = (self.config.max_subgoals * 70 + 96).min(350);
+        let target_subgoals = self.config.max_subgoals;
+        let output = ctx.generate_with_stop_predicate(
+            &prompt,
+            max_plan_tokens,
+            &crate::native_llama::SamplingConfig::greedy(),
+            |gen, _piece| {
+                let count = gen.lines().filter(|l| l.trim().starts_with("SUBGOAL:")).count();
+                if count >= target_subgoals && gen.ends_with('\n') {
+                    return true;
+                }
+                false
+            },
+        )?;
         println!("  [THINKER PLAN RAW OUTPUT]\n{}\n  [END THINKER PLAN RAW OUTPUT]", output.trim());
         let mut subgoals = Vec::new();
         let mut seen_entities = std::collections::HashSet::new();

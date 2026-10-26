@@ -40,3 +40,4 @@ output.txt
 *.log
 chat.db
 
+*.tar.gz
