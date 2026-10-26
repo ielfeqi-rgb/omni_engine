@@ -2350,8 +2350,7 @@ impl SwarmCoordinator {
                     Err(_) => 0,
                 };
                 if bytes_read == 0 {
-                    println!("  [!] End of input detected. Proceeding with current plan.");
-                    break;
+                    return Err("Plan Review Governance: Execution halted. Explicit approval ('yes') is strictly required when --review is enabled. Input stream closed without confirmation.".to_string());
                 }
                 let trimmed = input.trim();
                 let lower = trimmed.to_lowercase();
