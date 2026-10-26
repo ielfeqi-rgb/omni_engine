@@ -2353,15 +2353,27 @@ impl SwarmCoordinator {
                 let mut input = String::new();
                 let bytes_read = match io::stdin().read_line(&mut input) {
                     Ok(n) => n,
-                    Err(_) => 0,
+                    Err(e) => {
+                        warn!("Plan review stdin read error: {}", e);
+                        0
+                    }
                 };
                 if bytes_read == 0 {
+                    if io::stdin().is_terminal() {
+                        println!("\n  [!] Empty input received on terminal. Please type 'yes' to proceed, or 'no <critique>' to refine.");
+                        continue;
+                    }
                     return Err("Plan Review Governance: Execution halted. Explicit approval ('yes') is strictly required when --review is enabled. Input stream closed without confirmation.".to_string());
                 }
-                let trimmed = input.trim();
+                let clean_input = input
+                    .replace("\x1b[2004~", "")
+                    .replace("\x1b[2004l", "")
+                    .replace("\x1b[?2004h", "")
+                    .replace("\x1b[?2004l", "");
+                let trimmed = clean_input.trim();
                 let lower = trimmed.to_lowercase();
 
-                if lower == "yes" || lower == "y" || lower == "ok" || lower == "نعم" || lower == "تمام" || lower == "اه" || lower == "ايوه" {
+                if lower == "yes" || lower == "y" || lower == "ok" || lower == "نعم" || lower == "تمام" || lower == "اه" || lower == "ايوه" || lower == "يس" {
                     println!("\n  {} Plan sealed into Causal Memory. Suffix debate rolled back.", "[PLAN SEALED]".bright_green().bold());
                     if let Some(ref out_dir) = self.config.output_dir {
                         if let Err(e) = std::fs::create_dir_all(out_dir) {
@@ -4122,8 +4134,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java).\n\n\
                     PARSIMONY & MODULAR DISPATCH RULES:\n\
                     - You decide how many workers to deploy (from 2 up to {} max budget).\n\
-                    - MODULAR DECOMPOSITION MANDATE: Decompose non-trivial software applications into distinct, cohesive sub-tasks across modular files (e.g. data models -> core logic/storage -> interactive CLI interface).\n\
-                    - NEVER collapse an entire interactive application or multi-component project into a single monolithic worker task. Break it into at least 2 distinct implementation tasks.\n\
+                    - EXPLICIT FILENAME INVARIANT: When the user objective explicitly requests specific filenames (e.g. calculator.py, test_calculator.py, README.md), you MUST use those exact filenames as target ENTITY. NEVER invent generic filenames like core_models.py or app_cli.py when explicit files are requested.\n\
+                    - MODULAR DECOMPOSITION: Decompose multi-component projects into distinct, cohesive sub-tasks across modular files.\n\
                     - For Java: Target filenames MUST use PascalCase (e.g. GameLoop.java, Snake.java, Food.java) matching their primary public class.\n\
                     - SPREADSHEETS & TABULAR: For spreadsheets, Excel, or tabular data, direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel and spreadsheet software open natively.\n\
                     - VFS BOUNDARIES: Explicitly declare the file(s) the worker will create/mutate (WRITE_SET) and any existing file(s) it needs to inspect (READ_SET).\n\
@@ -4131,14 +4143,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     DELIVERABLES SPECIFICATION:\n\
                     - Explicitly determine the exact deliverable files and total count required to satisfy the user objective.\n\
                     - You may declare planned deliverable files on the first line:\n\
-                    PLANNED_FILES: <comma-separated list of filenames, e.g. index.html, styles.css>\n\n\
+                    PLANNED_FILES: <comma-separated list of filenames, e.g. calculator.py, test_calculator.py>\n\n\
                     Output each sub-goal on a new line strictly formatted as:\n\
                     SUBGOAL: <explicit implementation directive> | ENTITY: <target filename> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or target filename> | DEPENDS_ON: <comma-separated dependencies or none>\n\n\
                     Examples:\n\
-                    Modular software application deliverable:\n\
-                    SUBGOAL: Implement core data models, business logic, and file persistence | ENTITY: core_models.py | READ_SET: none | WRITE_SET: core_models.py | DEPENDS_ON: none\n\
-                    SUBGOAL: Implement interactive CLI interface, menu loop, and user commands | ENTITY: app_cli.py | READ_SET: core_models.py | WRITE_SET: app_cli.py | DEPENDS_ON: core_models.py\n\
-                    SUBGOAL: Execute cleanroom verification and validate interactive user workflows | ENTITY: app_cli.py | READ_SET: app_cli.py, core_models.py | WRITE_SET: none | DEPENDS_ON: app_cli.py\n\
+                    User specifies explicit implementation and test files:\n\
+                    SUBGOAL: Implement core application logic, operations, and input validation | ENTITY: calculator.py | READ_SET: none | WRITE_SET: calculator.py | DEPENDS_ON: none\n\
+                    SUBGOAL: Implement unit tests with coverage for operations and edge cases | ENTITY: test_calculator.py | READ_SET: calculator.py | WRITE_SET: test_calculator.py | DEPENDS_ON: calculator.py\n\
+                    SUBGOAL: Write usage documentation and project guide | ENTITY: README.md | READ_SET: none | WRITE_SET: README.md | DEPENDS_ON: none\n\
                     Single-file deliverable:\n\
                     SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py | READ_SET: none | WRITE_SET: measure_speed.py | DEPENDS_ON: none\n\
                     Multi-file deliverable:\n\
@@ -4173,7 +4185,16 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             )
         };
 
-        let user_msg = format!("Goal: {}", goal);
+        let explicit_files = Self::extract_explicit_deliverables(goal);
+        let user_msg = if !explicit_files.is_empty() {
+            format!(
+                "Goal: {}\nIMPORTANT: User explicitly requested deliverables: [{}]. Your plan MUST create exactly these target files as ENTITY.",
+                goal,
+                explicit_files.join(", ")
+            )
+        } else {
+            format!("Goal: {}", goal)
+        };
         let prompt = Self::format_prompt(&self.orchestrator_model, &system_msg, &user_msg);
 
         let max_plan_tokens = (self.config.max_subgoals * 70 + 96).min(350);
