@@ -163,13 +163,20 @@ impl MemoryVfs {
     }
 
     /// Lexically normalizes a path for consistent in-memory storage and boundary enforcement:
+    /// - Strips sandboxed `/workspace` mount prefixes so in-container writes match preloaded host paths.
     /// - Expands `~` to user $HOME.
     /// - Drops current-directory components (`.`).
     /// - Resolves parent-directory components (`..`) lexically against preceding segments.
     /// - Prevents root breakout when parent components attempt to ascend past the root.
     /// - Normalizes empty paths to `PathBuf::from(".")`.
     pub fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
-        let resolved = Self::resolve_path(path);
+        let p = path.as_ref();
+        let unmounted = if let Ok(stripped) = p.strip_prefix("/workspace") {
+            stripped
+        } else {
+            p
+        };
+        let resolved = Self::resolve_path(unmounted);
         let mut components = Vec::new();
 
         for comp in resolved.components() {
@@ -619,7 +626,16 @@ impl MemoryVfs {
     /// Enforces a Two-Phase Commit:
     /// - Phase 1: Pure dry-run validation pass. Rejects absolute paths, path escapes, symlinks, and TOCTOU intermediate symlink components. If any file fails, zero files are touched.
     /// - Phase 2: Atomic write pass using kernel-level `O_NOFOLLOW` flag to prevent symlink race window exploits.
-    pub fn commit_to_dir(&self, target_dir: Option<&Path>, user_authorized: bool) -> Result<usize, String> {
+    /// Unified atomic commit engine implementing Two-Phase Commit:
+    /// - Phase 1: Pure dry-run validation pass. Rejects absolute paths, path escapes, intermediate symlinks,
+    ///   existing target symlinks, and collisions. Zero host mutations.
+    /// - Phase 2: Atomic write pass using tempfile in target parent dir, fsync, mode preservation, and atomic rename.
+    fn commit_diffs_atomic(
+        &self,
+        target_dir: Option<&Path>,
+        user_authorized: bool,
+        filter: Option<&[PathBuf]>,
+    ) -> Result<Vec<PathBuf>, String> {
         if !user_authorized {
             return Err("Authorization Denied: Cannot commit sandbox VFS to host disk without user approval".to_string());
         }
@@ -627,18 +643,37 @@ impl MemoryVfs {
         let fallback_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let base = target_dir.unwrap_or(&fallback_root);
 
-        let diffs = self.generate_staged_diffs();
+        let all_diffs = self.generate_staged_diffs();
+        let diffs: Vec<StagedDiff> = if let Some(verified) = filter {
+            if verified.is_empty() {
+                return Ok(Vec::new());
+            }
+            all_diffs
+                .into_iter()
+                .filter(|diff| {
+                    verified.iter().any(|vp| {
+                        let norm_vp = Self::normalize_path(vp);
+                        let norm_diff = Self::normalize_path(&diff.path);
+                        norm_vp == norm_diff
+                            || diff.path.ends_with(vp)
+                            || vp.ends_with(&diff.path)
+                            || diff.path.file_name() == vp.file_name()
+                    })
+                })
+                .collect()
+        } else {
+            all_diffs
+        };
 
         // --------------------------------------------------------------------
-        // PHASE 1: STRICT DRY-RUN VALIDATION PASS (Zero mutations to host disk)
+        // PHASE 1: DRY-RUN VALIDATION PASS (Zero mutations to host disk)
         // --------------------------------------------------------------------
         let mut validated_actions = Vec::with_capacity(diffs.len());
+        let mut target_collision_map: std::collections::HashMap<PathBuf, FileChangeType> = std::collections::HashMap::new();
 
         for diff in &diffs {
-            // Normalize sandboxed /workspace prefix if emitted by workers inside bubblewrap
+            // Strip sandboxed `/workspace/` prefix if emitted by workers inside bubblewrap
             let clean_rel: PathBuf = if let Ok(stripped) = diff.path.strip_prefix("/workspace") {
-                stripped.to_path_buf()
-            } else if let Ok(stripped) = diff.path.strip_prefix("workspace") {
                 stripped.to_path_buf()
             } else if let Ok(stripped) = diff.path.strip_prefix("./") {
                 stripped.to_path_buf()
@@ -662,6 +697,15 @@ impl MemoryVfs {
             // Safe join prevents any `..` directory traversal outside base
             let joined = crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &clean_rel)
                 .map_err(|e| format!("Security Violation: Path traversal rejected in {:?}: {}", diff.path, e))?;
+
+            // Collision check: prevent multiple conflicting actions targeting same host file
+            if let Some(prev) = target_collision_map.get(&joined) {
+                return Err(format!(
+                    "Security Violation: Target path collision detected on {:?}. Conflicting actions ({:?} vs {:?}) targeting same host file.",
+                    joined, prev, diff.change_type
+                ));
+            }
+            target_collision_map.insert(joined.clone(), diff.change_type.clone());
 
             // Verify no intermediate parent directory component is a symlink (TOCTOU Defense)
             let mut current = base.to_path_buf();
@@ -694,67 +738,47 @@ impl MemoryVfs {
             validated_actions.push((joined, diff.change_type.clone(), diff.path.clone()));
         }
 
-        // --------------------------------------------------------------------
-        // PHASE 2: ATOMIC WRITE PASS (Tempfile in same dir + Fsync + Rename)
-        // --------------------------------------------------------------------
-        let mut committed = 0;
+        // Sort actions deterministically
+        validated_actions.sort_by(|a, b| a.0.cmp(&b.0));
 
-        for (target_path, change_type, vfs_path) in validated_actions {
+        // --------------------------------------------------------------------
+        // PHASE 2: ATOMIC WRITE PASS (NamedTempFile + Fsync + Atomic Persist)
+        // --------------------------------------------------------------------
+        let mut committed_paths = Vec::new();
+
+        for (target_path, change_type, vfs_path) in &validated_actions {
             match change_type {
                 FileChangeType::Created | FileChangeType::Modified => {
                     let parent = target_path.parent().unwrap_or(base);
-                    let _ = std::fs::create_dir_all(parent);
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("IO Error: Failed to create parent directory {:?}: {}", parent, e))?;
 
-                    if let Some(content) = self.read_file(&vfs_path) {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::OpenOptionsExt;
-                            use std::io::Write;
-                            let fname = target_path.file_name().unwrap_or_default().to_string_lossy();
-                            let tmp_path = parent.join(format!(".tmp_omni_{}_{}", committed, fname));
+                    let content = self.read_file(vfs_path)
+                        .ok_or_else(|| format!("Corrupt VFS state: Payload missing for {:?}", vfs_path))?;
 
-                            // 1. Open temp file exclusively with O_NOFOLLOW
-                            let mut opts = std::fs::OpenOptions::new();
-                            opts.write(true).create_new(true);
-                            opts.custom_flags(libc::O_NOFOLLOW);
+                    use std::io::Write;
+                    let mut named_temp = tempfile::NamedTempFile::new_in(parent)
+                        .map_err(|e| format!("Security Violation: Failed to create atomic tempfile in {:?}: {}", parent, e))?;
 
-                            let mut file = opts.open(&tmp_path)
-                                .map_err(|e| format!("Security Violation: Failed to create atomic tempfile {:?}: {}", tmp_path, e))?;
+                    named_temp.write_all(&content)
+                        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+                    named_temp.as_file().sync_all()
+                        .map_err(|e| format!("Failed to fsync temporary file: {}", e))?;
 
-                            // 2. Write payload and fsync to guarantee disk durability
-                            file.write_all(&content)
-                                .map_err(|e| {
-                                    let _ = std::fs::remove_file(&tmp_path);
-                                    format!("Failed to write to host file {:?}: {}", tmp_path, e)
-                                })?;
-                            file.sync_all()
-                                .map_err(|e| {
-                                    let _ = std::fs::remove_file(&tmp_path);
-                                    format!("Failed to sync host file {:?}: {}", tmp_path, e)
-                                })?;
-                            drop(file);
-
-                            // 3. Atomic rename replaces target atomically without following symlinks
-                            std::fs::rename(&tmp_path, &target_path)
-                                .map_err(|e| {
-                                    let _ = std::fs::remove_file(&tmp_path);
-                                    format!("Failed to atomically commit file {:?}: {}", target_path, e)
-                                })?;
+                    // Preserve original file permissions (e.g. +x mode) if target already exists
+                    if let Ok(meta) = std::fs::symlink_metadata(target_path) {
+                        if !meta.file_type().is_symlink() {
+                            let _ = named_temp.as_file().set_permissions(meta.permissions());
                         }
-                        #[cfg(not(unix))]
-                        {
-                            std::fs::write(&target_path, content)
-                                .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
-                        }
-                        committed += 1;
                     }
+
+                    named_temp.persist(target_path)
+                        .map_err(|e| format!("Failed to atomically persist file to {:?}: {}", target_path, e.error))?;
+                    committed_paths.push(target_path.clone());
                 }
                 FileChangeType::Deleted => {
-                    if target_path.exists() {
-                        std::fs::remove_file(&target_path)
-                            .map_err(|e| format!("Failed to remove host file {:?}: {}", target_path, e))?;
-                        committed += 1;
-                    }
+                    // Zero-Wipe Invariant: Never silently delete pre-existing host files during refactoring
+                    eprintln!("  [ZERO-WIPE SAFETY] Skipping deletion of host file: {:?}", target_path);
                 }
             }
         }
@@ -762,85 +786,29 @@ impl MemoryVfs {
         // Update original snapshots to reflect committed state
         let mut original = self.original_snapshots.write();
         let active = self.files.read();
-        *original = active.clone();
+        for (_, _, vfs_path) in &validated_actions {
+            if let Some(content) = active.get(vfs_path) {
+                original.insert(vfs_path.clone(), content.clone());
+            }
+        }
 
-        Ok(committed)
+        Ok(committed_paths)
+    }
+
+    /// Commit all staged deliverables to host disk atomically.
+    pub fn commit_to_dir(&self, target_dir: Option<&Path>, user_authorized: bool) -> Result<usize, String> {
+        self.commit_diffs_atomic(target_dir, user_authorized, None).map(|paths| paths.len())
     }
 
     /// Commit ONLY explicitly verified deliverables to host disk.
     /// Returns the list of target paths actually written to host disk.
-    /// If user_authorized is false or verified_paths is empty, does not write unverified files.
     pub fn commit_verified_files(
         &self,
         target_dir: Option<&Path>,
         verified_paths: &[PathBuf],
         user_authorized: bool,
     ) -> Result<Vec<PathBuf>, String> {
-        if !user_authorized {
-            return Err("Authorization Denied: Cannot commit sandbox VFS to host disk without user approval".to_string());
-        }
-
-        if verified_paths.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let diffs = self.generate_staged_diffs();
-        let mut committed_paths = Vec::new();
-
-        for diff in &diffs {
-            let is_verified = verified_paths.iter().any(|vp| {
-                let norm_vp = Self::normalize_path(vp);
-                let norm_diff = Self::normalize_path(&diff.path);
-                norm_vp == norm_diff
-                    || diff.path.ends_with(vp)
-                    || vp.ends_with(&diff.path)
-                    || diff.path.file_name() == vp.file_name()
-            });
-
-            if !is_verified {
-                continue;
-            }
-
-            let target_path = if diff.path.is_absolute() {
-                Self::resolve_path(&diff.path)
-            } else if let Some(base) = target_dir {
-                base.join(diff.path.file_name().unwrap_or(diff.path.as_os_str()))
-            } else {
-                Self::resolve_path(&diff.path)
-            };
-
-            match diff.change_type {
-                FileChangeType::Created | FileChangeType::Modified => {
-                    if let Some(parent) = target_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Some(content) = self.read_file(&diff.path) {
-                        std::fs::write(&target_path, content)
-                            .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
-                        committed_paths.push(target_path);
-                    }
-                }
-                FileChangeType::Deleted => {
-                    if target_path.exists() {
-                        std::fs::remove_file(&target_path)
-                            .map_err(|e| format!("Failed to remove host file {:?}: {}", target_path, e))?;
-                        committed_paths.push(target_path);
-                    }
-                }
-            }
-        }
-
-        // Update original snapshots to reflect committed state for verified files
-        let mut original = self.original_snapshots.write();
-        let active = self.files.read();
-        for vp in verified_paths {
-            let norm_vp = Self::normalize_path(vp);
-            if let Some(content) = active.get(&norm_vp) {
-                original.insert(norm_vp, content.clone());
-            }
-        }
-
-        Ok(committed_paths)
+        self.commit_diffs_atomic(target_dir, user_authorized, Some(verified_paths))
     }
 }
 
@@ -1279,5 +1247,66 @@ mod tests {
         let committed_file = target_dir.join("models.py");
         assert!(committed_file.exists());
         assert_eq!(std::fs::read_to_string(&committed_file).unwrap(), "class User:\n    pass\n");
+    }
+
+    #[test]
+    fn test_commit_modify_mode_end_to_end_preload_and_update() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("repo_modify");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        let file1 = target_dir.join("models.py");
+        let file2 = target_dir.join("utils.py");
+        std::fs::write(&file1, b"def orig_model(): pass\n").unwrap();
+        std::fs::write(&file2, b"def orig_utils(): pass\n").unwrap();
+
+        let vfs = MemoryVfs::new();
+        // Preload both project files as relative paths
+        vfs.preload_file(Path::new("models.py"), b"def orig_model(): pass\n");
+        vfs.preload_file(Path::new("utils.py"), b"def orig_utils(): pass\n");
+
+        // Worker emits modification under bubblewrap container mount path /workspace/models.py
+        vfs.write_file(Path::new("/workspace/models.py"), b"def modified_model(): return 42\n");
+
+        // Staged diffs MUST contain exactly 1 Modified entry (and NO spurious Created/Deleted collision pairs)
+        let diffs = vfs.generate_staged_diffs();
+        assert_eq!(diffs.len(), 1, "Diffs should contain only the modified file: {:?}", diffs);
+        assert_eq!(diffs[0].path, PathBuf::from("models.py"));
+        assert_eq!(diffs[0].change_type, FileChangeType::Modified);
+
+        // Commit to target_dir
+        let result = vfs.commit_to_dir(Some(&target_dir), true);
+        assert!(result.is_ok(), "Commit failed: {:?}", result.err());
+        assert_eq!(result.unwrap(), 1);
+
+        // Verify modified file updated on host disk
+        assert!(file1.exists());
+        assert_eq!(std::fs::read_to_string(&file1).unwrap(), "def modified_model(): return 42\n");
+
+        // Verify untouched file still exists on host disk intact (Zero-Wipe Invariant)
+        assert!(file2.exists());
+        assert_eq!(std::fs::read_to_string(&file2).unwrap(), "def orig_utils(): pass\n");
+    }
+
+    #[test]
+    fn test_commit_verified_files_atomic_and_safe() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("repo_verified");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        let vfs = MemoryVfs::new();
+        vfs.write_file(Path::new("/workspace/valid.py"), b"# valid code\n");
+        vfs.write_file(Path::new("/workspace/unverified.py"), b"# unverified\n");
+
+        // Only commit valid.py
+        let verified = vec![PathBuf::from("valid.py")];
+        let result = vfs.commit_verified_files(Some(&target_dir), &verified, true);
+        assert!(result.is_ok());
+        let saved = result.unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0], target_dir.join("valid.py"));
+
+        assert!(target_dir.join("valid.py").exists());
+        assert!(!target_dir.join("unverified.py").exists());
     }
 }

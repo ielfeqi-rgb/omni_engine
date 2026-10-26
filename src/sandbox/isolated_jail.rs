@@ -100,7 +100,9 @@ impl IsolatedJail {
                         return Err(format!("Path traversal rejected (escapes base): {:?}", rel));
                     }
                 }
-                _ => {}
+                std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                    return Err(format!("Absolute or prefix path component forbidden in safe_join: {:?}", rel));
+                }
             }
         }
         let target = base.join(&clean);

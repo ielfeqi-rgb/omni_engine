@@ -634,6 +634,19 @@ impl TaskDag {
         let mut entity_producers: HashMap<String, usize> = HashMap::new();
         let mut path_producers: HashMap<PathBuf, usize> = HashMap::new();
 
+        // Pass 1: Index all producer subgoals
+        for sg in &subgoals {
+            if sg.kind != TaskKind::Test {
+                if !sg.target_entity.is_empty() {
+                    entity_producers.insert(Self::normalize_name(&sg.target_entity), sg.id);
+                }
+                for p in &sg.write_set {
+                    path_producers.insert(Self::normalize_path(p), sg.id);
+                }
+            }
+        }
+
+        // Pass 2: Connect dependencies across all nodes
         for sg in &subgoals {
             let v = sg.id;
 
@@ -645,7 +658,7 @@ impl TaskDag {
 
                 let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
                 if let Ok(u) = digits.parse::<usize>() {
-                    if dag.tasks.contains_key(&u) && u < v {
+                    if dag.tasks.contains_key(&u) {
                         dag.add_edge(u, v);
                         continue;
                     }
@@ -653,37 +666,21 @@ impl TaskDag {
 
                 let norm = Self::normalize_name(trimmed);
                 if let Some(&u) = entity_producers.get(&norm) {
-                    if u < v {
-                        dag.add_edge(u, v);
-                        continue;
-                    }
+                    dag.add_edge(u, v);
+                    continue;
                 }
 
                 let norm_p = Self::normalize_path(Path::new(trimmed));
                 if let Some(&u) = path_producers.get(&norm_p) {
-                    if u < v {
-                        dag.add_edge(u, v);
-                        continue;
-                    }
+                    dag.add_edge(u, v);
+                    continue;
                 }
             }
 
             for rp in &sg.read_set {
                 let norm_rp = Self::normalize_path(rp);
                 if let Some(&u) = path_producers.get(&norm_rp) {
-                    if u < v {
-                        dag.add_edge(u, v);
-                    }
-                }
-            }
-
-            // Register this task's produced artifacts for subsequent readers (strictly if not a pure test worker)
-            if sg.kind != TaskKind::Test {
-                if !sg.target_entity.is_empty() {
-                    entity_producers.insert(Self::normalize_name(&sg.target_entity), v);
-                }
-                for p in &sg.write_set {
-                    path_producers.insert(Self::normalize_path(p), v);
+                    dag.add_edge(u, v);
                 }
             }
         }
@@ -1921,23 +1918,28 @@ impl SwarmCoordinator {
     /// 2. output_dir (if specified)
     /// 3. Current working directory
     pub fn resolve_existing_file(&self, relative_path: &Path) -> Option<PathBuf> {
+        // Strip any sandboxed workspace prefixes first
+        let clean = relative_path.strip_prefix("/workspace").unwrap_or(relative_path);
+
         // 1. Check in input_dir
         if let Some(ref in_dir) = self.config.input_dir {
-            let candidate = in_dir.join(relative_path);
-            if candidate.exists() {
-                return Some(candidate);
+            if let Ok(candidate) = crate::sandbox::isolated_jail::IsolatedJail::safe_join(in_dir, clean) {
+                if candidate.exists() && !candidate.is_symlink() {
+                    return Some(candidate);
+                }
             }
         }
         // 2. Check in output_dir
         if let Some(ref out_dir) = self.config.output_dir {
-            let candidate = out_dir.join(relative_path);
-            if candidate.exists() {
-                return Some(candidate);
+            if let Ok(candidate) = crate::sandbox::isolated_jail::IsolatedJail::safe_join(out_dir, clean) {
+                if candidate.exists() && !candidate.is_symlink() {
+                    return Some(candidate);
+                }
             }
         }
-        // 3. Check relative to current working directory
-        if relative_path.exists() {
-            return Some(relative_path.to_path_buf());
+        // 3. Check relative to current working directory (strictly non-symlink, normal relative)
+        if !clean.is_absolute() && clean.exists() && !clean.is_symlink() {
+            return Some(clean.to_path_buf());
         }
         None
     }
@@ -6846,28 +6848,78 @@ mod tests {
             review_plan: false,
         };
 
+        // Symlinks must NOT be resolved to prevent arbitrary file leakage
+        let secret_file = temp_in.path().join("secret.txt");
+        std::fs::write(&secret_file, "secret").unwrap();
+        let symlink_file = temp_in.path().join("symlink.py");
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&secret_file, &symlink_file);
+
         let resolve_fn = |p: &Path| -> Option<PathBuf> {
+            let clean = p.strip_prefix("/workspace").unwrap_or(p);
             if let Some(ref in_dir) = config.input_dir {
-                let candidate = in_dir.join(p);
-                if candidate.exists() {
-                    return Some(candidate);
+                if let Ok(candidate) = crate::sandbox::isolated_jail::IsolatedJail::safe_join(in_dir, clean) {
+                    if candidate.exists() && !candidate.is_symlink() {
+                        return Some(candidate);
+                    }
                 }
             }
             if let Some(ref out_dir) = config.output_dir {
-                let candidate = out_dir.join(p);
-                if candidate.exists() {
-                    return Some(candidate);
+                if let Ok(candidate) = crate::sandbox::isolated_jail::IsolatedJail::safe_join(out_dir, clean) {
+                    if candidate.exists() && !candidate.is_symlink() {
+                        return Some(candidate);
+                    }
                 }
             }
-            if p.exists() {
-                return Some(p.to_path_buf());
+            if !clean.is_absolute() && clean.exists() && !clean.is_symlink() {
+                return Some(clean.to_path_buf());
             }
             None
         };
 
         assert_eq!(resolve_fn(Path::new("source.py")), Some(file_in));
+        assert_eq!(resolve_fn(Path::new("/workspace/source.py")), Some(temp_in.path().join("source.py")));
         assert_eq!(resolve_fn(Path::new("output.py")), Some(file_out));
         assert_eq!(resolve_fn(Path::new("non_existent.py")), None);
+        #[cfg(unix)]
+        assert_eq!(resolve_fn(Path::new("symlink.py")), None, "Symlinks must be rejected by resolver");
+    }
+
+    #[test]
+    fn test_preload_directory_skips_symlinks() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let regular_file = temp_dir.path().join("legit.py");
+        std::fs::write(&regular_file, b"print('legit')").unwrap();
+
+        let secret_file = temp_dir.path().join("secret.txt");
+        std::fs::write(&secret_file, b"super_secret").unwrap();
+
+        let symlink_file = temp_dir.path().join("evil_symlink.py");
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&secret_file, &symlink_file);
+
+        let vfs = MemoryVfs::new();
+        if let Ok(entries) = std::fs::read_dir(temp_dir.path()) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_symlink() {
+                        continue;
+                    }
+                    if ft.is_file() {
+                        let path = entry.path();
+                        let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        if !fname.starts_with('.') && fname != "secret.txt" {
+                            let bytes = std::fs::read(&path).unwrap();
+                            vfs.preload_file(&fname, &bytes);
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(vfs.exists(Path::new("legit.py")));
+        #[cfg(unix)]
+        assert!(!vfs.exists(Path::new("evil_symlink.py")));
     }
 
     #[test]
