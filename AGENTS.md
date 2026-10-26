@@ -1,7 +1,21 @@
 # AGENTS.md — Omni Engine Autonomous Integration Specification
-**Version:** 2.1.0  
+**Version:** 2.1.1  
 **Target Audience:** Autonomous Coding Agents, LLM Orchestrators, Tool-Calling Systems (Claude, GPT-4, Cursor, Cline, Aider)  
 **Encoding:** UTF-8 • Markdown Specification
+
+---
+
+> [!CAUTION]
+> ### 🛑 CRITICAL DIRECTIVE FOR EXTERNAL LLMS (ChatGPT, Claude, Cursor, Copilot)
+> 1. **DO NOT output conversational English prompts** (e.g., *"Read the project's AGENTS.md file and follow its instructions..."*) for the user to paste into the terminal. The terminal is a Linux Bash shell, **NOT an LLM chat prompt**. Pasting English sentences will crash with `bash: Read: command not found`.
+> 2. **DO NOT write or generate code files yourself.**
+> 3. **`omni_engine` is the local compiler & software engineer.** Your ONLY role as an external AI assistant is to construct and provide the single executable Bash command calling `./bin/omni_engine`.
+>
+> **The ONLY valid output to give the user is a shell execution command, e.g.:**
+> ```bash
+> ./bin/omni_engine run "<CONCISE_REQUIREMENTS_SUMMARY>" --output-dir ./<TARGET_DIR> -y
+> ```
+> *(Condense all functional requirements, unit test expectations, and file constraints into the `<goal>` argument string).*
 
 ---
 
@@ -122,8 +136,28 @@ For agents with Bash / Process execution tools:
 {
   "tool": "run_command",
   "parameters": {
-    "CommandLine": "omni_engine modify \"Add rate limiting middleware\" --dir ./backend --output-dir ./backend -y",
+    "CommandLine": "./bin/omni_engine modify \"Add rate limiting middleware\" --dir ./backend --output-dir ./backend -y",
     "toolSummary": "Incremental rate limiting extension with zero-wipe preservation"
   }
 }
+```
+
+---
+
+## 8. Anti-Pattern: The LLM Prompt-Pasting Trap (Negative Example)
+
+When an end-user asks an external assistant:  
+*"Help me create a Python calculator using Omni Engine and follow AGENTS.md"*
+
+### ❌ WRONG (What a hallucinating assistant does):
+The assistant generates conversational prompt instructions telling the user to paste this into bash:
+```text
+Read the project's AGENTS.md file and follow its instructions exactly. Create a new Python project named mini_calculator... Requirements: 1. Create calculator.py...
+```
+*(Result: Immediate failure. Linux Bash interprets `Read` as an unrecognized executable and aborts).*
+
+### ✅ RIGHT (What a correct assistant does):
+The assistant condenses all specifications into the executable CLI command:
+```bash
+./bin/omni_engine run "Create a complete Python mini_calculator project with calculator.py (implementing addition, subtraction, multiplication, and safe division by zero handling), test_calculator.py using unittest, and README.md. Verify by running python -m unittest." --output-dir ./mini_calculator -y
 ```
