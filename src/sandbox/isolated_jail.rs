@@ -47,7 +47,7 @@ impl IsolatedJail {
             return false;
         }
 
-        // Functional check: verify unprivileged user/net namespaces are allowed by kernel
+        // Functional check: verify unprivileged user/net namespaces, /proc, /dev, and tmpfs are allowed
         let true_bin = if Path::new("/usr/bin/true").exists() {
             "/usr/bin/true"
         } else if Path::new("/bin/true").exists() {
@@ -57,7 +57,16 @@ impl IsolatedJail {
         };
 
         Command::new("bwrap")
-            .args(["--ro-bind", "/", "/", "--unshare-all", true_bin])
+            .args([
+                "--ro-bind", "/", "/",
+                "--proc", "/proc",
+                "--dev", "/dev",
+                "--size", "67108864", "--tmpfs", "/tmp",
+                "--unshare-all",
+                "--die-with-parent",
+                "--new-session",
+                true_bin,
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()

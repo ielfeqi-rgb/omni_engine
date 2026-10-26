@@ -635,17 +635,32 @@ impl MemoryVfs {
         let mut validated_actions = Vec::with_capacity(diffs.len());
 
         for diff in &diffs {
-            // Absolute paths and home-relative paths in deliverables are strictly forbidden!
-            let path_str = diff.path.to_string_lossy();
-            if diff.path.is_absolute() || path_str.starts_with('~') || path_str.starts_with('/') {
+            // Normalize sandboxed /workspace prefix if emitted by workers inside bubblewrap
+            let clean_rel: PathBuf = if let Ok(stripped) = diff.path.strip_prefix("/workspace") {
+                stripped.to_path_buf()
+            } else if let Ok(stripped) = diff.path.strip_prefix("workspace") {
+                stripped.to_path_buf()
+            } else if let Ok(stripped) = diff.path.strip_prefix("./") {
+                stripped.to_path_buf()
+            } else {
+                diff.path.clone()
+            };
+
+            // First component must be a Normal relative component (strictly rejects RootDir, Prefix, and ParentDir)
+            let path_str = clean_rel.to_string_lossy();
+            let first_comp = clean_rel.components().next();
+            if !matches!(first_comp, Some(std::path::Component::Normal(_)))
+                || path_str.starts_with('~')
+                || path_str.starts_with('/')
+            {
                 return Err(format!(
-                    "Security Violation: Absolute or home-relative path in VFS deliverable rejected: {:?}. All deliverables must be strictly relative to workspace.",
+                    "Security Violation: Deliverable path {:?} does not resolve to a safe relative workspace path. Absolute, root, and home breakout rejected.",
                     diff.path
                 ));
             }
 
             // Safe join prevents any `..` directory traversal outside base
-            let joined = crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &diff.path)
+            let joined = crate::sandbox::isolated_jail::IsolatedJail::safe_join(base, &clean_rel)
                 .map_err(|e| format!("Security Violation: Path traversal rejected in {:?}: {}", diff.path, e))?;
 
             // Verify no intermediate parent directory component is a symlink (TOCTOU Defense)
@@ -680,28 +695,51 @@ impl MemoryVfs {
         }
 
         // --------------------------------------------------------------------
-        // PHASE 2: ATOMIC WRITE PASS WITH KERNEL O_NOFOLLOW
+        // PHASE 2: ATOMIC WRITE PASS (Tempfile in same dir + Fsync + Rename)
         // --------------------------------------------------------------------
         let mut committed = 0;
 
         for (target_path, change_type, vfs_path) in validated_actions {
             match change_type {
                 FileChangeType::Created | FileChangeType::Modified => {
-                    if let Some(parent) = target_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
+                    let parent = target_path.parent().unwrap_or(base);
+                    let _ = std::fs::create_dir_all(parent);
+
                     if let Some(content) = self.read_file(&vfs_path) {
                         #[cfg(unix)]
                         {
                             use std::os::unix::fs::OpenOptionsExt;
                             use std::io::Write;
+                            let fname = target_path.file_name().unwrap_or_default().to_string_lossy();
+                            let tmp_path = parent.join(format!(".tmp_omni_{}_{}", committed, fname));
+
+                            // 1. Open temp file exclusively with O_NOFOLLOW
                             let mut opts = std::fs::OpenOptions::new();
-                            opts.write(true).create(true).truncate(true);
+                            opts.write(true).create_new(true);
                             opts.custom_flags(libc::O_NOFOLLOW);
-                            let mut file = opts.open(&target_path)
-                                .map_err(|e| format!("Security Violation: Failed to securely open host file {:?} with O_NOFOLLOW: {}", target_path, e))?;
+
+                            let mut file = opts.open(&tmp_path)
+                                .map_err(|e| format!("Security Violation: Failed to create atomic tempfile {:?}: {}", tmp_path, e))?;
+
+                            // 2. Write payload and fsync to guarantee disk durability
                             file.write_all(&content)
-                                .map_err(|e| format!("Failed to write to host file {:?}: {}", target_path, e))?;
+                                .map_err(|e| {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    format!("Failed to write to host file {:?}: {}", tmp_path, e)
+                                })?;
+                            file.sync_all()
+                                .map_err(|e| {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    format!("Failed to sync host file {:?}: {}", tmp_path, e)
+                                })?;
+                            drop(file);
+
+                            // 3. Atomic rename replaces target atomically without following symlinks
+                            std::fs::rename(&tmp_path, &target_path)
+                                .map_err(|e| {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    format!("Failed to atomically commit file {:?}: {}", target_path, e)
+                                })?;
                         }
                         #[cfg(not(unix))]
                         {
@@ -1176,7 +1214,7 @@ mod tests {
         // Commit MUST reject absolute paths in Phase 1
         let result = vfs.commit_to_dir(Some(&target_dir), true);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Absolute or home-relative path"));
+        assert!(result.unwrap_err().contains("Absolute, root, and home breakout rejected"));
     }
 
     #[test]
@@ -1221,5 +1259,25 @@ mod tests {
 
         // Verify good1.txt was NOT written to disk (Atomic all-or-nothing guarantee)
         assert!(!target_dir.join("good1.txt").exists());
+    }
+
+    #[test]
+    fn test_commit_sandboxed_workspace_prefix_normalizes_cleanly() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_dir = temp_dir.path().join("out_workspace");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        let vfs = MemoryVfs::new();
+        // Emitted by worker inside bubblewrap mount:
+        vfs.write_file(Path::new("/workspace/models.py"), b"class User:\n    pass\n");
+
+        // The commit MUST strip /workspace and commit cleanly to target_dir/models.py!
+        let result = vfs.commit_to_dir(Some(&target_dir), true);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+
+        let committed_file = target_dir.join("models.py");
+        assert!(committed_file.exists());
+        assert_eq!(std::fs::read_to_string(&committed_file).unwrap(), "class User:\n    pass\n");
     }
 }
