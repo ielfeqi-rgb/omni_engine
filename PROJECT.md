@@ -9,18 +9,19 @@
   - Native KV-cache token sizing ($4 \times L \times H_{kv} \times (D/H_q)$) calculating $K_{max}$.
   - Hard rejection of tasks requesting $> K_{max}$ tokens for Zero-OOM guarantee.
   - Dynamic tracking of remaining KV capacity $K_{\text{rem}}$, pausing backfilling during Context Booms.
-- **VFS Boundary Enforcement** (`src/sandbox/vfs.rs`, `src/sandbox/lua_runner.rs`, `src/planner/swarm_coordinator.rs`):
+- **VFS Boundary Enforcement & Cleanroom Jail** (`src/sandbox/vfs.rs`, `src/sandbox/isolated_jail.rs`, `src/sandbox/cleanroom.rs`, `src/planner/swarm_coordinator.rs`):
   - `SubGoal` with strict `read_set` and `write_set`.
   - `MemoryVfs` checked APIs (`write_file_checked`, `read_file_checked`, `patch_file_checked`, `delete_file_checked`).
-  - Lua sandbox runtime error interception on unauthorized VFS modifications (`VFS_BOUNDARY_VIOLATION`).
+  - Linux Bubblewrap (`bwrap`) fail-closed cleanroom jail with `--unshare-all`, private PID/net/user namespaces, tmpfs cap, and `RLIMIT_FSIZE`.
   - Out-of-bounds error mapped to `DiagnosticCode::OutOfBoundsWrite` and aborts retry loop immediately.
 - **State Machine & Fault Cascade** (`src/planner/swarm_coordinator.rs`):
   - Explicit states: `Pending`, `Ready`, `Running`, `Completed`, `Failed`, `Cancelled`.
   - Immediate forward topological cascade transitioning all descendants of a `Failed` task to `Cancelled`.
 
 ## Code Layout
-- `src/sandbox/vfs.rs`: `MemoryVfs`, `VfsBoundaryError`, checked read/write operations, path normalization.
-- `src/sandbox/lua_runner.rs`: Lua sandbox VFS bridge with `read_set` and `write_set` enforcement.
+- `src/sandbox/vfs.rs`: `MemoryVfs`, `VfsBoundaryError`, checked read/write operations, lexical normalization, Two-Phase atomic commit pass (`commit_diffs_atomic`).
+- `src/sandbox/isolated_jail.rs`: Linux Bubblewrap isolation jail, `safe_join` path traversal defense, resource caps, and TTY detachment.
+- `src/sandbox/cleanroom.rs`: Universal language cleanroom verification and sheet parsing.
 - `src/planner/swarm_coordinator.rs`: `SubGoal`, `TaskStatus`, `RcpspScheduler`, LRP calculation, Pinned EASY backfilling, `std::thread::scope` execution engine, State Machine.
 - `src/bin/swarm_stress_test.rs`: Stress test and benchmark binary verifying 5+ task DAG makespan, out-of-bounds cascade, Context Boom backfill pause, Zero-OOM rejection.
 - `tests/test_rcpsp_scheduler.rs`: Dedicated integration test suite for scheduler, memory gate, and state machine.
