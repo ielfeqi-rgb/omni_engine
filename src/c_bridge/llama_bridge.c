@@ -21,7 +21,14 @@ static void omni_ensure_backends_loaded(void) {
     ggml_backend_load_all();
     ggml_backend_load_all_from_path("bin");
     ggml_backend_load_all_from_path("../bin");
+    ggml_backend_load_all_from_path("../../bin");
     ggml_backend_load_all_from_path("target/release");
+}
+
+void omni_llama_backend_load_from_path(const char * path) {
+    if (path && strlen(path) > 0) {
+        ggml_backend_load_all_from_path(path);
+    }
 }
 
 void omni_llama_backend_init(void) {

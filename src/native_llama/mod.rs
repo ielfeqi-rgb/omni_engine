@@ -37,7 +37,7 @@ static BACKEND_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 extern "C" {
     fn omni_llama_disable_logs();
-
+    fn omni_llama_backend_load_from_path(path: *const c_char);
     fn omni_llama_backend_init();
     fn omni_llama_load_model(path: *const c_char, n_gpu_layers: i32) -> *mut c_void;
     fn omni_llama_free_model(model: *mut c_void);
@@ -113,6 +113,15 @@ extern "C" {
 /// Initialize the llama.cpp backend once per process lifecycle.
 pub fn ensure_backend_initialized() {
     if !BACKEND_INITIALIZED.swap(true, Ordering::SeqCst) {
+        let base_dir = crate::resolve_base_dir();
+        let bin_dir = base_dir.join("bin");
+        if bin_dir.exists() {
+            if let Ok(c_path) = CString::new(bin_dir.to_string_lossy().as_bytes()) {
+                unsafe {
+                    omni_llama_backend_load_from_path(c_path.as_ptr());
+                }
+            }
+        }
         unsafe {
             omni_llama_backend_init();
         }
