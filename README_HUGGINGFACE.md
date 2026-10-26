@@ -13,7 +13,6 @@ tags:
 - offline
 - cleanroom-sandbox
 pipeline_tag: text-generation
-extra_gated_prompt: false
 ---
 
 <div align="center">
