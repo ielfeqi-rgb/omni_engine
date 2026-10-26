@@ -2456,10 +2456,15 @@ impl SwarmCoordinator {
         // PHASE 4: VFS Materialization to Host Disk (Strictly Verified Only)
         let mut verified_paths: Vec<PathBuf> = Vec::new();
         for r in state_coordinator.records.values() {
-            if r.status == TaskStatus::Completed && r.subgoal.kind != TaskKind::Test {
+            if r.status == TaskStatus::Completed {
                 let p = PathBuf::from(&r.subgoal.target_entity);
-                if !p.as_os_str().is_empty() && !verified_paths.contains(&p) {
+                if self.vfs.exists(&p) && !p.as_os_str().is_empty() && !verified_paths.contains(&p) {
                     verified_paths.push(p);
+                }
+                for w in &r.subgoal.write_set {
+                    if self.vfs.exists(w) && !w.as_os_str().is_empty() && !verified_paths.contains(w) {
+                        verified_paths.push(w.clone());
+                    }
                 }
             }
         }
@@ -3943,16 +3948,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     let lower = text.to_lowercase();
     let trimmed = lower.trim();
 
-    // Priority 1: Testing and Verification tasks take precedence
-    if lower.contains("test") || lower.contains("smoke test") || lower.contains("unit test")
-        || lower.contains("verification") || lower.contains("verify") || lower.contains("cleanroom")
-        || trimmed.starts_with("run ") || trimmed.starts_with("execute ")
-        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر")
-    {
-        return TaskKind::Test;
-    }
-
-    // Priority 2: Explicit creation verbs
+    // Priority 1: Explicit creation verbs targeting files (e.g. "Create test_calculator.py", "Implement unit tests")
     if trimmed.starts_with("implement") || trimmed.starts_with("create") || trimmed.starts_with("build")
         || trimmed.starts_with("write") || trimmed.starts_with("generate") || trimmed.starts_with("code")
         || trimmed.starts_with("add") || trimmed.starts_with("develop")
@@ -3962,13 +3958,22 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         return TaskKind::Create;
     }
 
-    // Priority 3: Modification / Refactoring / Fixing tasks
+    // Priority 2: Modification / Refactoring / Fixing tasks
     if lower.contains("patch") || lower.contains("modify") || lower.contains("edit") || lower.contains("fix")
         || lower.contains("refactor") || lower.contains("migrate") || lower.contains("update")
         || lower.contains("عدل") || lower.contains("صلح") || lower.contains("غير") || lower.contains("تعديل")
         || lower.contains("تصليح") || lower.contains("تحديث") || lower.contains("ترقية")
     {
         return TaskKind::Modify;
+    }
+
+    // Priority 3: Testing and Verification tasks
+    if lower.contains("test") || lower.contains("smoke test") || lower.contains("unit test")
+        || lower.contains("verification") || lower.contains("verify") || lower.contains("cleanroom")
+        || trimmed.starts_with("run ") || trimmed.starts_with("execute ")
+        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر")
+    {
+        return TaskKind::Test;
     }
 
     // Priority 4: Explicit deletion tasks (targeted file removal, not delete buttons or HTTP DELETE endpoints)
