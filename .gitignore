@@ -39,5 +39,15 @@ md2html_*
 output.txt
 *.log
 chat.db
+MiniVault/
+OmniLite/
+OmniAudio/
+run_minivault_*.sh
+
+# Local AI assistant instructions
+CLAUDE.md
+GEMINI.md
+.cursorrules
+.github/copilot-instructions.md
 
 *.tar.gz

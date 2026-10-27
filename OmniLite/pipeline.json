@@ -1,4 +1,0 @@
-[
-  {"id": "t1", "name": "Task 1", "command": "echo 'Testing OmniLite Stage 1'"},
-  {"id": "t2", "name": "Task 2", "command": "echo 'Testing OmniLite Stage 2'", "depends_on": ["t1"]}
-]

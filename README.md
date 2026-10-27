@@ -1,236 +1,225 @@
 <div align="center">
 
 # ⚡ OMNI ENGINE
-### **The Sovereign, In-Process Autonomous Software Engineering Runtime**
-*100% Offline • Zero Cloud Subscriptions • Direct In-Process C-FFI • Zero-GPU Commodity 8GB Laptop Baseline*
+### **Sovereign, In-Process Autonomous Software Engineering Runtime**
+*100% Offline • Zero Cloud Subscriptions • Direct In-Process C-FFI • Deterministic Cleanroom Sandboxing*
 
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64-blue.svg)](https://github.com/ielfeqi-rgb/omni_engine)
-[![Hardware](https://img.shields.io/badge/RAM-1.87GB%20RSS%20on%208GB%20Baseline-brightgreen.svg)]()
+[![Release](https://img.shields.io/badge/Release-v2.1.2%20(LLM's%20Compatibility)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.1.2)
+[![CI](https://github.com/ielfeqi-rgb/omni_engine/actions/workflows/rust.yml/badge.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
 [![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)]()
 [![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <br/>
 
-[**Quickstart**](#-quickstart-in-60-seconds) • 
-[**The Paradigm Shift**](#-the-core-paradigm-shift-task-completion-vs-typing-speed) • 
-[**The 7 Pillars**](#-the-7-sovereign-architectural-pillars) • 
-[**CLI Reference**](#-cli-reference--command-suite) • 
-[**OpenAI API & Web UI**](#-openai-compatible-api--web-ui-dashboard) • 
-[**🤖 AI Agent Guide (AGENTS.md)**](AGENTS.md)
+[**About**](#-about-omni-engine) • 
+[**What's New in v2.1.2**](#-whats-new-in-v212) • 
+[**Core Architecture**](#-core-architectural-pillars) • 
+[**Quickstart**](#-quickstart) • 
+[**CLI Reference**](#-cli-reference--usage) • 
+[**Maestro Protocol**](#-decoupled-maestro-protocol) • 
+[**OpenAI API**](#-openai-compatible-api--web-ui) • 
+[**Agent Guide**](AGENTS.md)
 
 </div>
 
 ---
 
-## 🎯 The Core Paradigm Shift: Task Completion vs. Typing Speed
+## 📖 About Omni Engine
 
-Most AI coding assistants rely on massive remote cloud clusters (Claude 3.5 Sonnet, GPT-4o, Cursor). While they stream text at high speeds (**50–70 tok/s**), they create a hidden productivity trap:
+**Omni Engine** is an open-source, sovereign, in-process autonomous software engineering runtime written in pure Rust. It transforms language models into deterministic, verified software compilers capable of generating, modifying, and testing multi-file software systems completely on-device without cloud dependencies.
 
-1. **The Cloud Chatbot Trap (Vanity Typing Speed):**  
-   The cloud chatbot types fast, but outputs incomplete snippets. The software developer spends the next **30 to 60 minutes** manually copying code between files, resolving missing packages, fixing broken imports, and hunting down regressions where the LLM erased previously working functions.
-2. **The Omni Engine Reality (End-to-End Autonomous Delivery):**  
-   Omni Engine runs locally on your laptop's CPU at a steady, deliberate pace (**2.5 to 3.8 tok/s** on 1.5B; **1.9 to 2.3 tok/s** on 4B). But it operates as an **autonomous software compiler swarm**:
-   * It analyzes dependencies and displays an interactive plan card for your approval (`--review`).
-   * It dispatches parallel workers in an isolated in-memory RAM Virtual File System (VFS).
-   * It catches missing libraries and automatically heals or falls back to the standard library.
-   * It executes the code in a deterministic Linux Bubblewrap sandbox to audit syntax and routes.
-   * **Result:** In **3 to 5 minutes**, a full-stack, tested, multi-file software system is delivered directly to your disk with **zero human glue work** and **zero regression wipes**.
+Unlike conventional AI coding assistants that rely on streaming chat tokens from remote servers, Omni Engine operates as an **autonomous software synthesis swarm**:
 
-> **The Metric that Matters:** *Speed is not how fast an LLM prints tokens on a screen. Speed is how many minutes elapse between user intent and tested, running software committed to disk.*
+1. **Deterministic Execution:** Code is planned, staged in an isolated in-memory Virtual File System (VFS), and verified inside an unprivileged Linux Bubblewrap (`bwrap`) cleanroom before any modifications touch the host disk.
+2. **In-Process C-FFI Inference:** `llama.cpp` is linked directly in RAM via low-overhead C-FFI bindings, enabling microsecond token steering, causal KV-cache slicing, and rollback without socket latency or external daemons.
+3. **Decoupled Architecture (v2.1.2):** High-capacity frontier LLMs (Claude 3.5 Sonnet, GPT-4o) or human architects act as **Maestros** by emitting mathematical DAG blueprints (`omni_plan.json`), while Omni Engine executes the plan locally on consumer CPU/GPU hardware with dynamic KV-cache scaling and automated symbol contract enforcement.
+4. **Surgical Refactoring (Zero-Wipe Invariant):** When refactoring existing repositories, the engine locks AST symbol tables and only permits surgical line diffs (`+lines / -0 regressions`), preventing models from erasing functional code.
 
 ---
 
-## 💻 The 8GB Commodity Laptop Feat & Hardware Multiplier
+## 🚀 What's New in v2.1.2 ("LLM's Compatibility Update")
 
-* **The 8GB Baseline Engineering Feat:**  
-  Omni Engine is the first autonomous multi-agent coding runtime capable of executing full-lifecycle multi-file software engineering locally on a standard, commodity laptop with **8GB RAM and pure CPU (Zero-GPU)**.
-  * **Model Weights (1.5B Q4_K_M):** ~1.14 GB RAM
-  * **In-Process Compute Buffer:** ~314 MB RAM
-  * **Causal KV-Cache Context (4,096 tokens):** ~395 MB RAM
-  * **Peak RSS Memory Footprint:** **`1.87 GB Total`**
-  * **Swap Disk Paging Activity:** **`0 MB (Zero Paging)`**
-* **Hardware as a Cheap Multiplier, Architecture as the Moat:**  
-  If you run Omni Engine on a machine with an entry-level GPU (e.g. RTX 3050) or Apple Silicon (M-series), throughput immediately jumps by **10x to 15x (35 to 50 tok/s)** via our built-in dynamic C-FFI backend without changing a single line of Rust code.
-  * *Conversely, even an H100 cluster ($300,000) cannot protect naive LLMs from catastrophic code wiping, multi-file context hallucinations, or context crashes without Omni Engine's deterministic VFS and Causal Rollback architecture.*
+Omni Engine v2.1.2 introduces the **Decoupled Maestro Architectural Protocol**, unlocking full compatibility between frontier cloud models and local execution:
+
+* **Maestro Plan Protocol (`--plan-file`)**: Direct ingestion of structured multi-file DAG blueprints (`omni_plan.json`), decoupling high-level architectural planning from local execution.
+* **Pre-Sandbox Symbol Contract Gate**: Static AST verification that guarantees mandatory classes, types, and functions are declared in RAM before running sandbox tests, eliminating downstream import cascades.
+* **Anti-Redeclaration Guard**: Worker prompt isolation that prevents downstream tasks from redeclaring upstream data structures or colliding with parent namespaces.
+* **Dynamic KV-Cache Context Scaling**: Adaptive memory allocation scaling context from 4,096 to 16,384 tokens based on dependency graph depth, ensuring complex multi-file DAGs execute with zero context crashes.
+* **Autonomous Contract Distillation**: Large dependency interfaces are distilled into concise type schemas (under 40 lines / 1.2 KB), preventing attention dilution while preserving symbol contracts.
+
+See the complete [v2.1.2 Release Notes](docs/OMNI_2.1.2_RELEASE_NOTES.md) for detailed technical specifications.
 
 ---
 
-## 🧠 The 7 Sovereign Architectural Pillars
+## 🧠 Core Architectural Pillars
 
 ```mermaid
 flowchart TD
-    User([User Objective / Codebase]) --> Review{"--review Interactive Plan Card"}
-    Review -->|Steer / Critique| Rollback["Causal KV-Rollback (~6ms)"]
-    Rollback --> Review
-    Review -->|Approved 'yes'| Sealed["Seal Plan into Causal Memory"]
+    Architect(["User Goal or Maestro Plan (--plan-file)"]) --> ContractGate["Pre-Sandbox Symbol Contract Gate"]
+    ContractGate --> DAG["RCPSP Scheduler & Topological Task DAG"]
     
-    Sealed --> Thinker["System 2 Architecture Thinker"]
-    Thinker -->|Topological Task DAG| Scheduler["RCPSP Scheduler & Memory Bound Gate"]
+    DAG --> DynamicKV["Dynamic KV-Cache Scaling Engine"]
+    DynamicKV --> Workers["Parallel In-Process Worker Swarm (C-FFI)"]
     
-    Scheduler -->|Dispatches Workers| Workers["System 1 Worker Swarm (Parallel CPU Threads)"]
-    Workers -->|Stages Candidate Code| RAMVFS[("Isolated RAM VFS Sandbox")]
-    
+    Workers --> RAMVFS[("Isolated RAM VFS Sandbox")]
     RAMVFS --> Cleanroom{"Universal Cleanroom Auditor (bwrap W=∅)"}
-    Cleanroom -->|Route & AST Validation| UIVal["UI & AST Contract Verifier"]
-    Cleanroom -->|Missing Dependencies| SelfHealing["Causal KV-Self-Healing & Library Fallback"]
-    SelfHealing --> Workers
     
-    UIVal -->|Zero-Wipe Invariant Pass| DiskCommit["Commit Surgical Diff (+Lines / -0 Regressions) to Host Disk"]
+    Cleanroom -->|Verification Pass| DiskCommit["Atomic Commit to Host Disk"]
+    Cleanroom -->|Missing Dependency| SelfHealing["Causal KV-Cache Rollback & Library Fallback"]
+    SelfHealing --> Workers
 ```
 
-### 1. Direct In-Process C-FFI Inference (`llama.cpp`)
-Omni Engine eliminates the latency, serialization, and socket overhead of Python wrappers or external server daemons. `llama.cpp` is deeply embedded into the compiled Rust binary via direct C foreign-function interfaces (`c_bridge`), providing microsecond execution and thread-safe context control.
+### 1. In-Process C-FFI Inference (`llama.cpp`)
+Omni Engine eliminates the latency and serialization overhead of HTTP daemons and Python runtimes. Upstream `llama.cpp` is directly linked into the compiled Rust binary, enabling microsecond token steering, custom sampling, and thread-safe context control.
 
-### 2. The Zero-Wipe Invariant (`omni_engine modify`)
-When prompted to modify or refactor existing software, standard LLMs suffer from the **Blank Slate Fallacy**—they delete existing functions and re-invent the file from scratch. Omni Engine preloads the existing repository into RAM VFS and enforces the physical **Zero-Wipe Invariant**: the Tree-Sitter AST symbol table is locked, and only surgical line diffs (`+lines / -0 regressions`) are accepted.
-
-> [!NOTE]
-> **Engineering Rigor:** The Zero-Wipe Invariant structurally protects existing AST declarations, function signatures, and prevents destructive file overwrites. To guarantee behavioural runtime correctness and eliminate semantic regressions, the engine pairs AST checks with automated cleanroom compiler and test execution before committing changes to disk.
+### 2. Universal Cleanroom Sandboxing (`bwrap`)
+Untrusted or candidate code never executes on the host filesystem directly. All file operations and test runs are contained within an unprivileged Linux Bubblewrap (`bwrap --unshare-all`) sandbox with read-only host mounts and an isolated RAM `/workspace`.
 
 ### 3. Causal DAG & $O(1)$ KV-Cache Slicing
-When a worker encounters a syntax error or a hallucinated import, conventional tools wipe context and restart from token 0. Omni Engine maps execution steps in a Causal DAG and executes atomic KV-cache slicing (`kv_cache_seq_rm`), excising unapproved tokens in **~6.1 milliseconds** without re-prompting or losing valid prior context.
+When a worker encounters syntax or dependency errors, the engine does not discard context and restart from zero. It executes atomic KV-cache slicing (`kv_cache_seq_rm`), excising failed generation turns in **~6 milliseconds** while preserving established upstream context.
 
-### 4. Causal KV Turn-Sealing for Reasoning Models
-Modern reasoning models (such as DeepSeek-R1 and Qwen3) generate thousands of internal thinking tokens inside `<think>` tags, rapidly exhausting context windows. Omni Engine's **Turn-Sealing** algorithm surgically strips transient reasoning tokens upon completion and seals the cache with native End-of-Turn tokens, reclaiming **+3,800 free tokens** in RAM.
+### 4. Zero-Wipe Invariant (`omni_engine modify`)
+During codebase modification or refactoring, Omni Engine preloads the host repository into RAM VFS and locks the AST symbol table. Only surgical additive or replacement diffs are accepted; total file wipes and regression erasures are rejected at the compiler level.
 
-### 5. Interactive Human-in-the-Loop Steering (`--review`)
-Omni Engine enforces sovereign governance: with `--review`, the Thinker renders an architectural plan card detailing targeted files and subgoals before any worker writes code. If the user critiques the plan (e.g., `no add priority levels and json export`), the engine executes **Causal KV-Rollback**, excises the unapproved plan draft, re-plans with user constraints, and seals the memory upon user approval (`yes`).
-
-### 6. Isolated RAM VFS & Linux Cleanroom Sandbox
-Candidate code never touches the physical host disk until verified. All file operations occur in memory (`MemoryVfs`) inside a hardened Linux Bubblewrap container (`bwrap --unshare-all`). Tests audit syntax, simulate user interactive stdin, and verify frontend-backend route alignments in a read-only environment.
-
-### 7. $O(1)$ Context Isolation Engine (50+ Files / 50K Lines)
-Omni Engine scales to large repositories without blowing context budgets. Via `distill_interface_contract`, large dependency files (2,000+ lines) are distilled into concise 25-line interface contracts containing only public type signatures and API schemas. Worker attention remains fixed between **1,500 and 2,500 tokens** regardless of repository size.
+### 5. Sovereign Resource Efficiency
+Engineered to operate with high efficiency on modern multi-core CPUs and consumer hardware:
+* Peak RAM RSS footprint: **~1.87 GB** with 1.5B Q4_K_M models.
+* Dynamic KV-cache expansion up to 16,384 tokens when handling deep multi-module dependency trees.
+* Hardware-agnostic: Seamlessly leverages GPU acceleration (CUDA, Metal, Vulkan, ROCm) via upstream dynamic libraries without Rust code modification.
 
 ---
 
-## 📊 Live Empirical Proof: The Two-Turn Challenge
+## ⚡ Quickstart
 
-In an empirical benchmark using `Qwen2.5-Coder-1.5B` (1.1 GB model) on a standard CPU workstation:
+### Method 1: Download Pre-Built Linux Binary (v2.1.2)
 
-* **Turn 1: Full-Stack Project Creation with Interactive Steering (`workspace/task_tracker/`)**
-  * User rejected initial plan: `no add priority levels and json export`.
-  * Engine executed Causal KV-Rollback, synthesized Plan v2, and sealed memory upon `yes`.
-  * Cleanroom caught missing `tabulate` library; worker automatically healed and fell back to standard libraries without crashing.
-  * Delivered modular system: `models.py` (1,927 B), `repository.py` (756 B), `cli.py` (1,161 B).
-* **Turn 2: Cross-Cutting Multi-File Modification with Zero-Wipe Invariant**
-  * Commanded engine to add priority filtering and JSON export across all files simultaneously.
-  * Workers executed in parallel at sustained **2.6 to 3.4 tok/s**.
-  * **Verified Line Diffs:**
-    * `models.py`: patched `+7 / -5 lines` (added priority enum). **7/7 existing functions preserved (100%)**.
-    * `repository.py`: patched `+12 / -0 lines` (added filtering/export). **7/7 existing functions preserved (100%)**.
-    * `cli.py`: patched `+15 / -0 lines` (added CLI commands). **6/6 existing functions preserved (100%)**.
-  * **Compiler Verification:** `python3 -m py_compile` passed with **0 syntax errors**.
-
----
-
-## 🚀 Quickstart in 60 Seconds
-
-### Prerequisites (Linux x86_64)
-- **Rust Toolchain:** `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- **Compiler & Build Tools:** `sudo apt install build-essential cmake clang bubblewrap` (or `sudo dnf install ...`)
-- **Upstream llama.cpp Libraries:** Verified against `v0.6.0-dev (build 11429)` (see [REQUIREMENTS.md](REQUIREMENTS.md))
-
-### 1. Build from Source
 ```bash
+# 1. Download release tarball
+wget https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.1.2/omni_engine_v2.1.2_linux_x86_64.tar.gz
+
+# 2. Extract binary and runtime libraries
+tar -xzvf omni_engine_v2.1.2_linux_x86_64.tar.gz
+cd omni_engine_v2.1.2_linux_x86_64
+
+# 3. Download recommended default coding model (~1.1 GB)
+./bin/omni_engine download --qwen
+
+# 4. Verify installation
+./bin/omni_engine status
+```
+
+### Method 2: Build from Source
+
+```bash
+# Clone the repository
 git clone https://github.com/ielfeqi-rgb/omni_engine.git
 cd omni_engine
+
+# Install system dependencies (Linux)
+sudo apt update && sudo apt install -y build-essential cmake clang libssl-dev bubblewrap
+
+# Build release binary
 cargo build --release
-```
 
-### 2. Download Recommended Coding Model (~1.1 GB)
-Omni Engine features a native high-speed model downloader with live animated progress bars:
-```bash
-./target/release/omni_engine download --qwen
-# Or download custom GGUF models directly from HuggingFace / HTTP:
-# ./target/release/omni_engine download https://huggingface.co/.../model.gguf
-```
-
-### 3. Launch the Sovereign TUI Dashboard
-```bash
-./run_tui.sh
-# or directly:
-./target/release/omni_engine tui
+# Run unit and invariant test suite
+LD_LIBRARY_PATH="$(pwd)/bin" cargo test --lib
 ```
 
 ---
 
-## 🛠️ CLI Reference & Command Suite
+## 🛠️ CLI Reference & Usage
 
-Omni Engine provides symmetric control across terminal commands, interactive shells, and autonomous swarms:
+Omni Engine offers a comprehensive CLI for generation, refactoring, model management, and interactive interfaces:
 
-```bash
-# --- Autonomous Project Generation ---
-# Build a complete project from scratch with human plan review:
-omni_engine run "Build a modular Task Tracker in Python with SQLite" --review --output-dir ./task_tracker
-
-# Headless generation with auto-approved dependencies (ideal for scripts & CI):
-omni_engine run "Build an AES-256 CLI tool in Rust" -y --output-dir ./aes_tool
-
-# --- Incremental Codebase Modification (Zero-Wipe) ---
-# Safely refactor or extend an existing codebase without deleting old logic:
-omni_engine modify "Add priority levels and JSON export" --dir ./task_tracker --output-dir ./task_tracker --review
-
-# --- Model Management & User Interfaces ---
-omni_engine download --qwen   # Stream & verify GGUF models directly with progress bar
-omni_engine models           # List discovered GGUF models and memory requirements
-omni_engine tui              # Full-screen graphical Terminal Dashboard (Ratatui)
-omni_engine console          # Interactive console REPL shell (omni❯)
-omni_engine chat             # Direct in-process conversational C-FFI dialogue
-omni_engine serve            # Launch Web UI and OpenAI HTTP proxy server
-
-# --- System Diagnostics & Hardware Telemetry ---
-omni_engine status           # View CPU threads, RAM RSS buffer, and zero-swap activity
-omni_engine kv-test          # Run physical in-process KV-cache surgical manipulation test
-omni_engine causal-test      # Run live Causal DAG self-healing hardware benchmark
-```
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `run <goal>` | Synthesizes a new multi-file software system from scratch | `omni_engine run "Build a REST API with SQLite" --review --output-dir ./api` |
+| `run --plan-file <file>` | Executes an architectural blueprint via Maestro Protocol | `omni_engine run --plan-file ./examples/maestro_plan.json --output-dir ./out` |
+| `modify <goal>` | Refactors an existing project with Zero-Wipe Invariant | `omni_engine modify "Add JWT authentication" --dir ./api --output-dir ./api` |
+| `download` | Downloads and verifies GGUF models directly | `omni_engine download --qwen` |
+| `models` | Lists discovered local models and memory footprints | `omni_engine models` |
+| `tui` | Launches full-screen graphical Terminal Dashboard | `omni_engine tui` |
+| `serve` | Starts OpenAI-compatible HTTP proxy & Web Dashboard | `omni_engine serve --port 8090` |
+| `console` | Launches interactive REPL console (`omni❯`) | `omni_engine console` |
+| `status` | Reports CPU threads, RAM RSS buffer, and hardware stats | `omni_engine status` |
 
 ---
 
-## 🌐 OpenAI-Compatible API & Web UI Dashboard
+## 🎼 Decoupled Maestro Protocol
 
-Omni Engine can act as a 100% sovereign, drop-in replacement for OpenAI in your existing developer toolchain (Cursor, Continue.dev, Cline, Aider, or Python scripts).
+Omni Engine allows external frontier LLMs (such as Claude 3.5 Sonnet, GPT-4o, or Gemini 1.5 Pro) or software architects to specify system blueprints in structured JSON:
+
+```json
+{
+  "project_name": "TaskFlow",
+  "concurrency_limit": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "CREATE",
+      "target_file": "models.py",
+      "depends_on": [],
+      "description": "Define Task and Priority data models",
+      "symbols": ["class Task", "class Priority"],
+      "invariants": ["Zero external dependencies"]
+    },
+    {
+      "id": 2,
+      "kind": "CREATE",
+      "target_file": "storage.py",
+      "depends_on": [1],
+      "description": "Implement JSON file storage repository",
+      "imports": ["from models import Task, Priority"],
+      "symbols": ["class StorageRepository", "def save_tasks", "def load_tasks"],
+      "invariants": ["Atomic file writes"]
+    }
+  ]
+}
+```
+
+Execution is invoked with a single command:
+```bash
+omni_engine run --plan-file ./examples/maestro_plan.json --output-dir ./taskflow
+```
+
+The engine validates dependencies, allocates thread workers, enforces symbol presence, verifies code in Bubblewrap sandboxes, and commits the cleanroom deliverables to disk.
+
+---
+
+## 🌐 OpenAI-Compatible API & Toolchain Integration
+
+Omni Engine provides a 100% sovereign, drop-in replacement for OpenAI in your existing developer tools (Cursor, Continue.dev, Cline, Aider, or custom SDK scripts):
 
 ```bash
 # Launch server on port 8090
 omni_engine serve --port 8090
 ```
 
-1. **Web UI Dashboard:** Open `http://127.0.0.1:8090` in any browser to manage models, monitor real-time hardware telemetry, and chat with the engine.
-2. **Local API Keys Management:**
-   ```bash
-   omni_engine keys new "Cursor-Key"
-   # Outputs: omni_sk_21523b71a1fe455da7fdd64fe113833d
-   ```
-3. **OpenAI Endpoint:** Point your tools to `http://127.0.0.1:8090/v1/chat/completions` using your `omni_sk_...` key. All inference and context remain 100% offline and confidential.
+* **Web UI Dashboard:** Navigate to `http://127.0.0.1:8090` to monitor telemetry, inspect models, and interact with the engine.
+* **API Key Generation:**
+  ```bash
+  omni_engine keys new "Local-Developer"
+  # Output: omni_sk_...
+  ```
+* **Endpoint URL:** `http://127.0.0.1:8090/v1/chat/completions`
 
 ---
 
-## 🤖 Dedicated AI Agent & LLM Specification
+## 🛡️ Sandbox Security Architecture
 
-Building or integrating autonomous agents with Omni Engine? See [AGENTS.md](AGENTS.md) for machine-readable JSON schemas, tool calling specifications, exit codes, and AST invariant rules.
+Omni Engine uses Linux Bubblewrap (`bwrap`) to enforce strict unprivileged namespace and filesystem isolation:
 
----
-
-## 🛡️ Threat Model & Sandbox Boundaries
-
-Omni Engine uses Linux Bubblewrap (`bwrap`) to provide **unprivileged process and namespace isolation** during cleanroom verification.
-
-### Security Guarantees:
-1. **Filesystem Protection:** The host root filesystem is mounted strictly read-only (`--ro-bind /usr /usr`, etc.). Staged deliverables are isolated in an ephemeral RAM-backed `/workspace` directory.
-2. **Network Isolation:** Network namespaces are unshared (`--unshare-all`). Generated worker code cannot initiate outbound network connections or exfiltrate host data.
-3. **Fail-Closed Policy:** By default, if Bubblewrap or unprivileged user namespaces are unavailable, execution of untrusted worker code is blocked. It will never run unisolated on the host unless explicitly authorized via `--allow-unsandboxed` or `OMNI_ALLOW_UNSANDBOXED=1`.
-4. **Session & TTY Isolation:** Executed processes run with `--new-session` (`setsid()`), detaching the sandbox from the controlling TTY to prevent `TIOCSTI` keystroke injection attacks.
-5. **Symlink Traversal Defense:** VFS host commit operations strictly reject following or overwriting existing host symlinks, and repository preloading ignores symlinks to prevent credential leaks.
-
-### Explicit Non-Goals:
-- **Shared Kernel Boundary:** Bubblewrap relies on Linux kernel namespaces (`user`, `net`, `ipc`, `pid`, `mount`) and shares the host kernel. It protects local developer workstations from filesystem corruption and data exfiltration, but is **NOT** a hardware-virtualized hypervisor.
-- **Multi-Tenant Cloud Deployments:** If running arbitrary untrusted code in multi-tenant public SaaS environments, operator deployment inside a dedicated microVM hypervisor (e.g., AWS Firecracker, gVisor, or QEMU) is strongly recommended.
+1. **Read-Only Host Mounts:** Host system roots (`/usr`, `/lib`, `/bin`) are mounted strictly read-only.
+2. **Network Isolation:** All networking namespaces are unshared (`--unshare-all`). Sandboxed processes cannot perform outbound connections or network calls.
+3. **Ephemeral Staging:** Deliverables are generated and compiled inside an isolated RAM tmpfs (`/workspace`). Host files are only updated after cleanroom verification passes.
+4. **TTY Detachment:** Commands execute with `--new-session` (`setsid()`), eliminating `TIOCSTI` terminal injection vulnerabilities.
+5. **Path Traversal Defense:** VFS commits reject directory escapes, intermediate symlinks, and absolute path traversal attacks.
 
 ---
 
-## 📄 License & Constitution
-Omni Engine is licensed under the [MIT License](LICENSE).  
-Engineered under the **Sovereign Engine Constitution**: `#![deny(unused_must_use)]` strictly enforced across all modules for decade-long reliability.
+## 📄 License
+
+Omni Engine is licensed under the [MIT License](LICENSE).
