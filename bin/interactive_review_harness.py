@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni Engine v2.1.0 - Interactive Plan Review & Steering Daemon Harness
+Omni Engine v2.1.2 - Interactive Plan Review & Steering Daemon Harness
 Enables human-in-the-loop plan review, critique steering, causal KV-cache rollback,
 and cleanroom delivery tracking in multi-turn interactive environments.
 """

@@ -5,7 +5,7 @@ fn main() {
     let bin_dir = Path::new(&manifest_dir).join("bin");
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
-    // Compile C bridge
+    // Compile C bridge with high optimization
     cc::Build::new()
         .file("src/c_bridge/llama_bridge.c")
         .include("src/c_bridge/include")
@@ -16,7 +16,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out_dir);
     println!("cargo:rustc-link-lib=static=omni_llama_bridge");
 
-    // Linker directives for libllama and libggml
+    // Linker directives for libllama and libggml dynamic libraries
     if let Ok(custom_dir) = std::env::var("LLAMA_CPP_DIR") {
         println!("cargo:rustc-link-search=native={}", custom_dir);
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", custom_dir);
@@ -24,13 +24,23 @@ fn main() {
     println!("cargo:rustc-link-search=native=/usr/local/lib");
     println!("cargo:rustc-link-search=native=/usr/lib");
     println!("cargo:rustc-link-search=native={}", bin_dir.display());
+    
     println!("cargo:rustc-link-lib=dylib=llama");
     println!("cargo:rustc-link-lib=dylib=ggml");
     println!("cargo:rustc-link-lib=dylib=ggml-base");
     println!("cargo:rustc-link-lib=dylib=ggml-cpu");
+
+    // Multi-tier $ORIGIN rpaths for robust sovereign portability
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/bin");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../bin");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../../bin");
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", bin_dir.display());
 
+    // Invalidation triggers
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=src/c_bridge/llama_bridge.c");
     println!("cargo:rerun-if-changed=src/c_bridge/include/llama.h");
+    println!("cargo:rerun-if-changed=src/c_bridge/include/ggml.h");
 }

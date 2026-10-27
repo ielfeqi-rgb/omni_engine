@@ -1,6 +1,6 @@
 # Omni Engine Development Roadmap
 
-This document outlines the strategic architectural milestones for Omni Engine, building upon the empirically verified foundation established in **v2.1.0 (Sovereign Runtime)**.
+This document outlines the strategic architectural milestones for Omni Engine, building upon the empirically verified foundation established in **v2.1.2 (Decoupled Maestro Protocol & Sovereign Runtime)**.
 
 Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosophy: we do not pursue superficial AI buzzwords. Every milestone directly expands execution throughput, language coverage, and deterministic code safety on local commodity hardware.
 

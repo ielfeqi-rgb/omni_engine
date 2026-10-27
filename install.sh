@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  Omni Engine - Universal 1-Line Sovereign Installer
+#  Omni Engine (v2.1.2) - Universal 1-Line Sovereign Installer
 #  Usage: curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
 # ==============================================================================
 set -e
@@ -12,9 +12,13 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RED="\033[31m"
 
+VERSION="2.1.2"
+TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
+RELEASE_URL="https://github.com/ielfeqi-rgb/omni_engine/releases/download/v${VERSION}/${TARBALL}"
+
 echo -e "${CYAN}${BOLD}"
 echo "  ================================================================"
-echo "     :: OMNI AI ENGINE - Sovereign Autonomous Coding Runtime"
+echo "     :: OMNI AI ENGINE v${VERSION} - Sovereign Autonomous Runtime"
 echo "     100% Offline | Zero-Cost | Pure Rust & In-Process C-Speed"
 echo "  ================================================================"
 echo -e "${RESET}"
@@ -48,7 +52,6 @@ MODEL_NAME="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
 MODEL_PATH="${MODELS_DIR}/${MODEL_NAME}"
 MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
 
-# Check if model already exists in local repo
 if [ -f "./models/${MODEL_NAME}" ]; then
     echo -e "[*] Found local model in workspace. Linking to ${MODEL_PATH}..."
     ln -sf "$(pwd)/models/${MODEL_NAME}" "${MODEL_PATH}"
@@ -67,43 +70,67 @@ else
 fi
 
 # 3. Binary Setup
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/target/release/omni_engine" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+INSTALLED=0
+
+# Priority A: Local workspace pre-built release
+if [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/target/release/omni_engine" ]; then
     echo -e "[*] Installing pre-built release binary from workspace..."
-    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni"
+    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni_engine"
     if [ -d "${SCRIPT_DIR}/bin" ]; then
         cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
     fi
-elif [ -f "${SCRIPT_DIR}/bin/omni_engine" ]; then
-    cp -f "${SCRIPT_DIR}/bin/omni_engine" "${BIN_DIR}/omni"
+    INSTALLED=1
+elif [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/bin/omni_engine" ]; then
+    echo -e "[*] Installing binary from workspace bin/ directory..."
+    cp -f "${SCRIPT_DIR}/bin/omni_engine" "${BIN_DIR}/omni_engine"
     if [ -d "${SCRIPT_DIR}/bin" ]; then
         cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
     fi
-else
-    echo -e "[*] Compiling Omni Engine optimized release binary via cargo..."
-    if command -v cargo >/dev/null 2>&1; then
-        (cd "${SCRIPT_DIR}" && cargo build --release)
-        cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni"
-        if [ -d "${SCRIPT_DIR}/bin" ]; then
-            cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
-        fi
-    else
-        echo -e "${RED}[-] Rust cargo not found. Please install Rust (https://rustup.rs) or download a release binary.${RESET}"
-        exit 1
-    fi
+    INSTALLED=1
 fi
 
-chmod +x "${BIN_DIR}/omni"
+# Priority B: Compile from source if cargo is available in repo
+if [ "${INSTALLED}" -eq 0 ] && [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
+    echo -e "[*] Compiling Omni Engine optimized release binary via cargo..."
+    (cd "${SCRIPT_DIR}" && cargo build --release)
+    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni_engine"
+    if [ -d "${SCRIPT_DIR}/bin" ]; then
+        cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
+    fi
+    INSTALLED=1
+fi
 
-# 4. Wrapper Script for LD_LIBRARY_PATH
-cat << 'EOF' > "${BIN_DIR}/omni_run"
+# Priority C: Download official release tarball from GitHub
+if [ "${INSTALLED}" -eq 0 ]; then
+    echo -e "[*] Downloading official v${VERSION} release tarball from GitHub..."
+    TMP_DIR="$(mktemp -d)"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -o "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
+    else
+        echo -e "${RED}[-] Error: Neither curl nor wget found.${RESET}"
+        exit 1
+    fi
+
+    echo -e "[*] Extracting release assets to ${INSTALL_DIR}..."
+    tar -xzf "${TMP_DIR}/${TARBALL}" -C "${INSTALL_DIR}" --strip-components=1 2>/dev/null || tar -xzf "${TMP_DIR}/${TARBALL}" -C "${INSTALL_DIR}"
+    rm -rf "${TMP_DIR}"
+    INSTALLED=1
+fi
+
+chmod +x "${BIN_DIR}/omni_engine" 2>/dev/null || true
+
+# 4. Wrapper Script for LD_LIBRARY_PATH and alias 'omni'
+cat << 'EOF' > "${BIN_DIR}/omni"
 #!/usr/bin/env bash
 INSTALL_DIR="${HOME}/.omni"
 export LD_LIBRARY_PATH="${INSTALL_DIR}/bin:${LD_LIBRARY_PATH}"
-exec "${INSTALL_DIR}/bin/omni" "$@"
+exec "${INSTALL_DIR}/bin/omni_engine" "$@"
 EOF
-chmod +x "${BIN_DIR}/omni_run"
-mv "${BIN_DIR}/omni_run" "${BIN_DIR}/omni"
+chmod +x "${BIN_DIR}/omni"
+ln -sf "${BIN_DIR}/omni" "${BIN_DIR}/omni-engine"
 
 # 5. Shell PATH Configuration
 SHELL_RC=""
@@ -122,11 +149,12 @@ if [ -f "${SHELL_RC}" ]; then
 fi
 
 echo -e "\n${GREEN}${BOLD}================================================================${RESET}"
-echo -e "${GREEN}${BOLD}   :: OMNI AI ENGINE SUCCESSFULLY INSTALLED!${RESET}"
+echo -e "${GREEN}${BOLD}   :: OMNI AI ENGINE v${VERSION} SUCCESSFULLY INSTALLED!${RESET}"
 echo -e "${GREEN}${BOLD}================================================================${RESET}\n"
 echo -e "You can now run Omni Engine from any terminal:\n"
-echo -e "  ${CYAN}omni --tui${RESET}                           # Open Sovereign Terminal Dashboard"
-echo -e "  ${CYAN}omni swarm \"build a todo CLI\"${RESET}        # Run Autonomous Multi-Agent Swarm"
-echo -e "  ${CYAN}omni status${RESET}                          # Inspect System Hardware & KV-Cache"
+echo -e "  ${CYAN}omni tui${RESET}                                # Open Sovereign Terminal Dashboard"
+echo -e "  ${CYAN}omni run \"Build a modular API\" --review${RESET}  # Autonomous Swarm with Plan Review"
+echo -e "  ${CYAN}omni run --plan-file ./plan.json${RESET}         # Execute Decoupled Maestro Protocol Blueprint"
+echo -e "  ${CYAN}omni status${RESET}                              # Inspect Hardware & KV-Cache Telemetry"
 echo -e "\nTo reload your shell environment right now, run:"
 echo -e "  ${YELLOW}source ${SHELL_RC}${RESET}\n"

@@ -15,7 +15,7 @@ use serde::{Serialize, Deserialize};
 use crate::native_llama::{NativeLlamaModel, NativeLlamaSampler, SamplingConfig};
 
 fn default_engine_version() -> String {
-    "2.1.0".to_string()
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 fn default_model_family() -> String {
@@ -49,7 +49,7 @@ pub struct OmniModelConfig {
 impl Default for OmniModelConfig {
     fn default() -> Self {
         Self {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Universal".to_string(),
             chamber_verified: false,
             eos_token: 2,
@@ -453,7 +453,7 @@ pub fn detect_and_save_model_tokens(
     let mut config = if is_chatml {
         println!("  [AUTO-DETECT] Identified Model Architecture: ChatML (Qwen/DeepSeek style)");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "ChatML".to_string(),
             chamber_verified: false,
             eos_token: if native_eos > 0 { native_eos } else { 151645 },
@@ -469,7 +469,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_llama3 {
         println!("  [AUTO-DETECT] Identified Model Architecture: Llama-3 / Llama-3.1");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Llama-3".to_string(),
             chamber_verified: false,
             eos_token: if native_eos > 0 { native_eos } else { 128009 },
@@ -485,7 +485,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_phi4 {
         println!("  [AUTO-DETECT] Identified Model Architecture: Microsoft Phi-4 / Phi-3");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Phi-4".to_string(),
             chamber_verified: false,
             eos_token: native_eos,
@@ -501,7 +501,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_gemma {
         println!("  [AUTO-DETECT] Identified Model Architecture: Google Gemma / Gemma-2");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Gemma".to_string(),
             chamber_verified: false,
             eos_token: if native_eos > 0 { native_eos } else { 1 },
@@ -517,7 +517,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_spark {
         println!("  [AUTO-DETECT] Identified Model Architecture: Spark-X2.5 (Hybrid Attention)");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Spark-X2.5".to_string(),
             chamber_verified: false,
             eos_token: native_eos,
@@ -533,7 +533,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_mistral {
         println!("  [AUTO-DETECT] Identified Model Architecture: Mistral / Llama-2 [INST]");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Mistral".to_string(),
             chamber_verified: false,
             eos_token: if native_eos > 0 { native_eos } else { 2 },
@@ -549,7 +549,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_command_r {
         println!("  [AUTO-DETECT] Identified Model Architecture: Cohere Command-R");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Command-R".to_string(),
             chamber_verified: false,
             eos_token: native_eos,
@@ -565,7 +565,7 @@ pub fn detect_and_save_model_tokens(
     } else if is_deepseek {
         println!("  [AUTO-DETECT] Identified Model Architecture: DeepSeek V2/V3");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "DeepSeek".to_string(),
             chamber_verified: false,
             eos_token: native_eos,
@@ -581,7 +581,7 @@ pub fn detect_and_save_model_tokens(
     } else {
         println!("  [AUTO-DETECT] Using Universal Markdown Framing fallback");
         OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Universal".to_string(),
             chamber_verified: false,
             eos_token: if native_eos > 0 { native_eos } else { 2 },
@@ -812,7 +812,7 @@ STOP_TOKEN_IDS = [151643, 151645]
     #[test]
     fn test_omni_to_string_and_reload() {
         let original = OmniModelConfig {
-            engine_version: "2.1.0".to_string(),
+            engine_version: default_engine_version(),
             model_family: "Cohere Command-R".to_string(),
             chamber_verified: true,
             eos_token: 255001,

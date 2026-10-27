@@ -1,19 +1,24 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ==============================================================================
-# Omni Engine - Sovereign TUI Launcher
+# Omni Engine (v2.1.2) - Sovereign TUI Launcher
 # ==============================================================================
-# This script wraps the engine in its interactive, animated Terminal User
-# Interface mode. It requires `cargo` to compile the engine if not built.
-# ==============================================================================
-
 set -e
 
-echo "[Omni] Compiling Sovereign TUI (opt-in feature)..."
-cargo build --release
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LD_LIBRARY_PATH="${SCRIPT_DIR}/bin:${LD_LIBRARY_PATH}"
 
-echo "[Omni] Launching TUI..."
-if [ -f "./target/release/omni_engine" ]; then
-    LD_LIBRARY_PATH="$(pwd)/bin:$LD_LIBRARY_PATH" ./target/release/omni_engine tui
+ENGINE_BIN=""
+if [ -f "${SCRIPT_DIR}/target/release/omni_engine" ]; then
+    ENGINE_BIN="${SCRIPT_DIR}/target/release/omni_engine"
+elif [ -f "${SCRIPT_DIR}/bin/omni_engine" ]; then
+    ENGINE_BIN="${SCRIPT_DIR}/bin/omni_engine"
+elif [ -f "${SCRIPT_DIR}/target/debug/omni_engine" ]; then
+    ENGINE_BIN="${SCRIPT_DIR}/target/debug/omni_engine"
 else
-    LD_LIBRARY_PATH="$(pwd)/bin:$LD_LIBRARY_PATH" ./target/debug/omni_engine tui
+    echo "[*] Compiling Omni Engine release binary..."
+    (cd "${SCRIPT_DIR}" && cargo build --release)
+    ENGINE_BIN="${SCRIPT_DIR}/target/release/omni_engine"
 fi
+
+echo "[*] Launching Sovereign Terminal UI..."
+exec "${ENGINE_BIN}" tui "$@"

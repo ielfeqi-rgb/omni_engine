@@ -126,7 +126,7 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
 pub fn print_help() {
     println!(r#"
 ================================================================================
-   :: OMNI AI ENGINE (v2.1.0) - Sovereign Autonomous Agentic Runtime & Controller
+   :: OMNI AI ENGINE (v{}) - Sovereign Autonomous Agentic Runtime & Controller
 ================================================================================
 DESCRIPTION:
     Omni Engine is a sovereign, 100% local, offline multi-agent software engineering
@@ -143,6 +143,9 @@ CORE COMMANDS:
                                 Decomposes goal into a Causal DAG, executes parallel
                                 workers in isolated RAM VFS, and commits to disk only
                                 after deterministic cleanroom verification passes.
+
+    run --plan-file <PATH>      Execute an architectural blueprint JSON using the
+                                Decoupled Maestro Protocol (bypasses local planning).
 
     modify "<goal>" [OPTIONS]   Incrementally refactor or extend an existing codebase.
                                 (Aliases: 'refactor', 'patch')
@@ -202,6 +205,11 @@ SWARM & CODEBASE OPTIONS (for 'run', 'modify', 'swarm', 'goal'):
     --model <PATH>              Single unified GGUF model for both Thinker (Orchestrator)
                                 and Workers. Highly recommended for 8GB RAM host systems.
 
+    --plan-file <PATH>          Path to Maestro Protocol JSON blueprint (e.g. omni_plan.json).
+                                Bypasses local System 2 planning with pre-computed DAG.
+
+    --plan <JSON>               Inline JSON string or pipe-separated subgoal specification.
+
     --orchestrator <PATH>       Explicit GGUF model path for System 2 Architecture Thinker.
     --worker <PATH>             Explicit GGUF model path for System 1 Parallel Workers.
     --subgoals <N>              Maximum subgoals/tasks decomposed in DAG (default: 3).
@@ -259,7 +267,7 @@ EXAMPLES:
     5. Verify system hardware vitals and RAM RSS headroom:
        omni_engine status
 ================================================================================
-"#);
+"#, env!("CARGO_PKG_VERSION"));
 }
 
 pub fn print_status(base_dir: &PathBuf) {
@@ -408,7 +416,7 @@ pub async fn handle_download(args: &[String], base_dir: &PathBuf) {
     println!("================================================================================");
 
     let client = match reqwest::Client::builder()
-        .user_agent("OmniEngine/2.1.0 (Linux x86_64)")
+        .user_agent(format!("OmniEngine/{} (Linux x86_64)", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
     {
@@ -1116,6 +1124,11 @@ SWARM OPTIONS:
 
     --model <PATH>              Single unified GGUF model for both Thinker & Workers
                                 (Highly recommended for 8GB RAM commodity laptops).
+
+    --plan-file <PATH>          Path to Maestro Protocol JSON blueprint (e.g. omni_plan.json).
+                                Bypasses local System 2 planning with pre-computed DAG.
+
+    --plan <JSON>               Inline JSON string or pipe-separated subgoal specification.
 
     --orchestrator <PATH>       Explicit GGUF model path for System 2 Architecture Thinker.
     --worker <PATH>             Explicit GGUF model path for System 1 Swarm Workers.

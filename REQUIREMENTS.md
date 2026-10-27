@@ -19,7 +19,7 @@ Omni Engine is completely decoupled from model weights and external library buil
 - Clean, lightweight source repository without platform-specific binary or model bloat.
 
 ### Verified Upstream llama.cpp Build
-The current production release (`v2.1.0`) is verified against:
+The current production release (`v2.1.2`) is verified against:
 - **Upstream Version:** `v0.6.0-dev`
 - **Build Number:** `11429`
 - **Git Commit:** `d81235049`
