@@ -1315,7 +1315,7 @@ EXAMPLES:
     } else {
         eprintln!("[-] No GGUF models detected.");
         eprintln!("[*] Place any open GGUF model in '{}' or pass '--model <PATH>'", models_dir.display());
-        return;
+        std::process::exit(3);
     };
 
     println!("[*] Initializing Sovereign Swarm Coordinator...");
@@ -1323,7 +1323,7 @@ EXAMPLES:
         Ok(c) => c,
         Err(e) => {
             eprintln!("[-] Failed to initialize SwarmCoordinator: {}", e);
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -1354,6 +1354,7 @@ EXAMPLES:
         }
         Err(e) => {
             eprintln!("[-] Swarm execution failed: {}", e);
+            std::process::exit(2);
         }
     }
 }
