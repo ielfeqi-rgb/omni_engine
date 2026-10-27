@@ -355,6 +355,9 @@ fn run_live_multifile_generation(model_path: &Path, base_dir: &Path) {
         auto_approve_deps: None,
         is_modify_mode: false,
         review_plan: false,
+        plan_file: None,
+        plan_spec: None,
+        max_parallel_workers: 2,
     };
 
     let coordinator = match SwarmCoordinator::new(config) {

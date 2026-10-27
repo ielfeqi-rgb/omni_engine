@@ -48,6 +48,11 @@
 | 15 | Out-of-Bounds Failure Proof | Integration test proving out-of-bounds write transitions task to `FAILED` and cancels children | M4 | Acceptance Criteria |
 | 16 | Context Boom Pause Proof | Integration test proving KV over-allocation correctly pauses backfilling | M4 | Acceptance Criteria |
 | 17 | Adversarial Hardening | Coverage and boundary verification via Challenger and Forensic Auditor | M5 | Integrity & QA |
+| 18 | Decoupled Maestro Protocol (`--plan-file`) | Ingestion of rich external JSON/text architectural blueprints from Big LLMs, bypassing local System 2 hallucination | M6 | v2.1.2 (VERIFIED) |
+| 19 | Pre-Sandbox Symbol Contract Gate | Instant in-memory AST verification for mandatory classes/methods before launching cleanroom jail | M6 | v2.1.2 (VERIFIED) |
+| 20 | Anti-Redeclaration Guard | Automatic rejection and self-healing when workers duplicate classes declared in upstream dependencies | M6 | v2.1.2 (VERIFIED) |
+| 21 | Dynamic KV-Cache Scaling | Dependency-aware context window allocation scaling smoothly up to 16,384 tokens with lean interface distillation | M6 | v2.1.2 (VERIFIED) |
+| 22 | Self-Healing Guidance Preservation | Retain original architectural specifications across worker resets, appending targeted diagnostic notes | M6 | v2.1.2 (VERIFIED) |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |

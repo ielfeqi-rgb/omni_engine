@@ -71,27 +71,27 @@ fn estimate_max_model(ram_gb: f32) -> (String, String) {
     if ram_gb < 6.0 {
         (
             "1.5B - 3B Parameters (GGUF Q4_K_M)".to_string(),
-            "يناسب الموديلات الصغيرة جداً مثل Qwen2.5-1.5B أو Llama-3.2-3B".to_string(),
+            "Suitable for small models such as Qwen2.5-1.5B or Llama-3.2-3B".to_string(),
         )
     } else if ram_gb < 12.0 {
         (
             "7B - 8B Parameters (GGUF Q4_K_M)".to_string(),
-            "يناسب الموديلات المتوسطة مثل Llama-3-8B أو Mistral-7B أو Qwen2.5-7B".to_string(),
+            "Suitable for medium models such as Llama-3-8B, Mistral-7B, or Qwen2.5-7B".to_string(),
         )
     } else if ram_gb < 24.0 {
         (
             "13B - 14B Parameters (GGUF Q4_K_M)".to_string(),
-            "يناسب الموديلات القوية مثل Qwen2.5-14B أو DeepSeek-R1-Distill-14B".to_string(),
+            "Suitable for strong models such as Qwen2.5-14B or DeepSeek-R1-Distill-14B".to_string(),
         )
     } else if ram_gb < 48.0 {
         (
             "30B - 34B Parameters (GGUF Q4_K_M)".to_string(),
-            "يناسب الموديلات العملاقة مثل Command-R 35B أو Qwen2.5-32B".to_string(),
+            "Suitable for large models such as Command-R 35B or Qwen2.5-32B".to_string(),
         )
     } else {
         (
             "70B+ Parameters (GGUF Q4_K_M)".to_string(),
-            "جهازك فائق القوة! قادر على تشغيل موديلات ضخمة مثل Llama-3-70B أو Qwen-72B".to_string(),
+            "Ultra-powerful machine! Capable of running massive models such as Llama-3-70B or Qwen-72B".to_string(),
         )
     }
 }

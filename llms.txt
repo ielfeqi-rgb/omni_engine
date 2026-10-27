@@ -15,6 +15,7 @@ Omni Engine is an offline, zero-cloud multi-agent coding engine written in Rust 
 ## Core CLI Usage
 - `omni_engine download <preset|url>`: Download GGUF models directly with live progress bar (presets: `--qwen`, `--qwen-7b`, `--phi-4`).
 - `omni_engine run "<goal>" --output-dir <dir> --review`: Synthesize new multi-file project from scratch.
+- `omni_engine run --plan-file <plan.json> --output-dir <dir>`: Execute pre-compiled Maestro architectural blueprint (decoupled big-LLM planner + sovereign 1.5B/3B worker swarm).
 - `omni_engine modify "<goal>" --dir <dir> --output-dir <dir> --review`: Incrementally extend existing codebase with Zero-Wipe Invariant.
 - `omni_engine tui`: Launch full-screen graphical Terminal Dashboard (Ratatui).
 - `omni_engine console`: Launch interactive REPL console shell.

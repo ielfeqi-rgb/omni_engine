@@ -1,0 +1,164 @@
+{
+  "project": "OmniLite",
+  "language": "python",
+  "concurrency_limit": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "entity": "models.py",
+      "kind": "CREATE",
+      "responsibility": "Define core domain models and status enumerations.",
+      "depends_on": [],
+      "imports": [
+        "from dataclasses import dataclass, field",
+        "from enum import Enum",
+        "from typing import List, Optional, Dict, Any"
+      ],
+      "symbols": "class TaskStatus(Enum):\n    PENDING = \"PENDING\"\n    RUNNING = \"RUNNING\"\n    COMPLETED = \"COMPLETED\"\n    FAILED = \"FAILED\"\n\n@dataclass\nclass Task:\n    id: str\n    name: str\n    command: str\n    depends_on: List[str] = field(default_factory=list)\n    status: TaskStatus = TaskStatus.PENDING\n    output: Optional[str] = None\n    error: Optional[str] = None\n\n    def to_dict(self) -> Dict[str, Any]:\n        return {\"id\": self.id, \"name\": self.name, \"command\": self.command, \"depends_on\": self.depends_on, \"status\": self.status.value, \"output\": self.output, \"error\": self.error}\n\n    @classmethod\n    def from_dict(cls, data: Dict[str, Any]) -> \"Task\":\n        return cls(id=data[\"id\"], name=data[\"name\"], command=data[\"command\"], depends_on=data.get(\"depends_on\", []), status=TaskStatus(data.get(\"status\", \"PENDING\")), output=data.get(\"output\"), error=data.get(\"error\"))",
+      "invariants": [
+        "Zero external dependencies: strictly Python standard library.",
+        "TaskStatus values MUST be uppercase strings ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED').",
+        "Task.to_dict() must return pure JSON-serializable types.",
+        "Task.from_dict() must parse status string back into TaskStatus enum."
+      ],
+      "acceptance_tests": [
+        "Create a Task instance, serialize with to_dict(), deserialize with from_dict(), and assert equality of all fields.",
+        "Ensure default status is TaskStatus.PENDING and depends_on defaults to empty list."
+      ]
+    },
+    {
+      "id": 2,
+      "entity": "storage.py",
+      "kind": "CREATE",
+      "responsibility": "Implement TaskStore class for atomic JSON persistence.",
+      "depends_on": ["models.py"],
+      "imports": [
+        "import os",
+        "import json",
+        "import tempfile",
+        "from typing import List, Optional",
+        "from models import Task"
+      ],
+      "symbols": "class TaskStore:\n    def __init__(self, storage_path: str):\n        self.storage_path = storage_path\n\n    def save_tasks(self, tasks: List[Task]) -> None:\n        target_dir = os.path.dirname(os.path.abspath(self.storage_path)) or \".\"\n        os.makedirs(target_dir, exist_ok=True)\n        fd, temp_path = tempfile.mkstemp(dir=target_dir, prefix=\"store_\", suffix=\".tmp\")\n        try:\n            with os.fdopen(fd, 'w', encoding='utf-8') as f:\n                data = [t.to_dict() for t in tasks]\n                json.dump(data, f, indent=2)\n                f.flush()\n                os.fsync(f.fileno())\n            os.replace(temp_path, self.storage_path)\n        except Exception:\n            if os.path.exists(temp_path):\n                os.remove(temp_path)\n            raise\n\n    def load_tasks(self) -> List[Task]:\n        if not os.path.exists(self.storage_path):\n            return []\n        with open(self.storage_path, 'r', encoding='utf-8') as f:\n            data = json.load(f)\n            return [Task.from_dict(item) for item in data]\n\n    def get_task(self, task_id: str) -> Optional[Task]:\n        for task in self.load_tasks():\n            if task.id == task_id:\n                return task\n        return None",
+      "invariants": [
+        "MUST import Task from models.",
+        "MUST NOT define Task or TaskStatus in this file.",
+        "Atomic write guarantee: write JSON to temporary file in same directory, flush/fsync, and rename atomically using os.replace.",
+        "Handle non-existent file gracefully by returning empty list without throwing exception."
+      ],
+      "acceptance_tests": [
+        "Save 2 tasks to storage, reload from disk, and assert both tasks exist with correct IDs and properties.",
+        "Ensure loading from a non-existent path returns an empty list without raising FileNotFoundError."
+      ]
+    },
+    {
+      "id": 3,
+      "entity": "graph.py",
+      "kind": "CREATE",
+      "responsibility": "Build dependency graph, perform cycle detection, and compute topological execution batches.",
+      "depends_on": ["models.py"],
+      "imports": [
+        "from collections import defaultdict, deque",
+        "from typing import List, Dict, Set",
+        "from models import Task"
+      ],
+      "symbols": "class CycleError(Exception):\n    pass\n\nclass DependencyGraph:\n    def __init__(self, tasks: List[Task]):\n        self.tasks = {t.id: t for t in tasks}\n        self.adj = defaultdict(list)\n        self.in_degree = {t.id: 0 for t in tasks}\n        for task in tasks:\n            for dep in task.depends_on:\n                if dep in self.tasks:\n                    self.adj[dep].append(task.id)\n                    self.in_degree[task.id] += 1\n\n    def has_cycle(self) -> bool:\n        in_deg = dict(self.in_degree)\n        queue = deque([tid for tid, deg in in_deg.items() if deg == 0])\n        visited_count = 0\n        while queue:\n            curr = queue.popleft()\n            visited_count += 1\n            for neighbor in self.adj[curr]:\n                in_deg[neighbor] -= 1\n                if in_deg[neighbor] == 0:\n                    queue.append(neighbor)\n        return visited_count != len(self.tasks)\n\n    def get_execution_batches(self) -> List[List[Task]]:\n        if self.has_cycle():\n            raise CycleError(\"Cycle detected in dependency graph\")\n        in_deg = dict(self.in_degree)\n        queue = deque([tid for tid, deg in in_deg.items() if deg == 0])\n        batches = []\n        while queue:\n            current_batch = list(queue)\n            queue.clear()\n            batch_tasks = [self.tasks[tid] for tid in current_batch]\n            batches.append(batch_tasks)\n            for tid in current_batch:\n                for neighbor in self.adj[tid]:\n                    in_deg[neighbor] -= 1\n                    if in_deg[neighbor] == 0:\n                        queue.append(neighbor)\n        return batches",
+      "invariants": [
+        "MUST import Task from models.",
+        "MUST NOT re-declare Task.",
+        "Cycle detection must correctly raise CycleError when cycle exists.",
+        "Each batch in get_execution_batches must only depend on tasks in earlier batches.",
+        "NEVER execute example code at top-level. Wrap any test code inside: if __name__ == '__main__':"
+      ],
+      "acceptance_tests": [
+        "Given tasks [A (no deps), B (depends on A), C (no deps)], get_execution_batches() returns [[A, C], [B]].",
+        "Given circular tasks [A -> B -> A], calling get_execution_batches() raises CycleError."
+      ]
+    },
+    {
+      "id": 4,
+      "entity": "executor.py",
+      "kind": "CREATE",
+      "responsibility": "Execute task DAG level by level, capture command outputs, and record execution metrics.",
+      "depends_on": ["models.py", "storage.py", "graph.py"],
+      "imports": [
+        "import time",
+        "import subprocess",
+        "from dataclasses import dataclass, field",
+        "from typing import List, Optional",
+        "from models import Task, TaskStatus",
+        "from storage import TaskStore",
+        "from graph import DependencyGraph, CycleError"
+      ],
+      "symbols": "@dataclass\nclass PipelineResult:\n    total_tasks: int\n    succeeded: int\n    failed: int\n    duration_ms: float\n    tasks: List[Task] = field(default_factory=list)\n\nclass PipelineExecutor:\n    def __init__(self, store: Optional[TaskStore] = None):\n        self.store = store\n\n    def execute_task(self, task: Task) -> Task:\n        task.status = TaskStatus.RUNNING\n        start = time.perf_counter()\n        proc = subprocess.run(task.command, shell=True, capture_output=True, text=True)\n        if proc.returncode == 0:\n            task.status = TaskStatus.COMPLETED\n            task.output = proc.stdout.strip()\n            task.error = None\n        else:\n            task.status = TaskStatus.FAILED\n            task.output = proc.stdout.strip()\n            task.error = proc.stderr.strip() or f\"Process exited with code {proc.returncode}\"\n        return task\n\n    def run_pipeline(self, tasks: List[Task]) -> PipelineResult:\n        start_time = time.perf_counter()\n        graph = DependencyGraph(tasks)\n        batches = graph.get_execution_batches()\n        failed_ids = set()\n        all_tasks = {t.id: t for t in tasks}\n        for batch in batches:\n            for task in batch:\n                has_failed_dep = any(dep in failed_ids for dep in task.depends_on)\n                if has_failed_dep:\n                    task.status = TaskStatus.FAILED\n                    task.error = \"Prerequisite dependency failed\"\n                    failed_ids.add(task.id)\n                else:\n                    self.execute_task(task)\n                    if task.status == TaskStatus.FAILED:\n                        failed_ids.add(task.id)\n        if self.store:\n            self.store.save_tasks(list(all_tasks.values()))\n        duration_ms = (time.perf_counter() - start_time) * 1000.0\n        succeeded = sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETED)\n        failed = sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED)\n        return PipelineResult(total_tasks=len(all_tasks), succeeded=succeeded, failed=failed, duration_ms=duration_ms, tasks=list(all_tasks.values()))",
+      "invariants": [
+        "MUST import Task, TaskStatus from models.",
+        "MUST import TaskStore from storage.",
+        "MUST import DependencyGraph, CycleError from graph.",
+        "MUST NOT re-declare any imported classes.",
+        "If a task command fails, mark status as TaskStatus.FAILED and record stderr in error field.",
+        "If a task succeeds, mark status as TaskStatus.COMPLETED and record stdout in output field.",
+        "If any dependency failed, mark task as FAILED with error message."
+      ],
+      "acceptance_tests": [
+        "Run pipeline with echo commands: assert all succeed and total_tasks == succeeded.",
+        "Run pipeline with a failing command ('exit 1'): assert failed == 1 and dependent task is skipped/failed."
+      ]
+    },
+    {
+      "id": 5,
+      "entity": "cli.py",
+      "kind": "CREATE",
+      "responsibility": "Provide standard command-line interface to validate, execute, and inspect task pipelines.",
+      "depends_on": ["models.py", "storage.py", "graph.py", "executor.py"],
+      "imports": [
+        "import sys",
+        "import argparse",
+        "import json",
+        "from typing import List, Optional",
+        "from models import Task, TaskStatus",
+        "from storage import TaskStore",
+        "from graph import DependencyGraph, CycleError",
+        "from executor import PipelineExecutor, PipelineResult"
+      ],
+      "symbols": "def load_pipeline_file(filepath: str) -> List[Task]:\n    with open(filepath, 'r', encoding='utf-8') as f:\n        raw = json.load(f)\n    return [Task.from_dict(item) for item in raw]\n\ndef main(argv: Optional[List[str]] = None) -> int:\n    parser = argparse.ArgumentParser(description=\"OmniLite Task Pipeline Runner\")\n    subparsers = parser.add_subparsers(dest=\"subcommand\", help=\"Commands\")\n\n    val_parser = subparsers.add_parser(\"validate\", help=\"Validate pipeline DAG\")\n    val_parser.add_argument(\"--file\", required=True, help=\"Path to pipeline JSON file\")\n\n    run_parser = subparsers.add_parser(\"run\", help=\"Execute pipeline DAG\")\n    run_parser.add_argument(\"--file\", required=True, help=\"Path to pipeline JSON file\")\n    run_parser.add_argument(\"--storage\", default=None, help=\"Optional persistence path\")\n\n    status_parser = subparsers.add_parser(\"status\", help=\"Show saved tasks state\")\n    status_parser.add_argument(\"--storage\", required=True, help=\"Path to storage JSON file\")\n\n    args = parser.parse_args(argv if argv is not None else sys.argv[1:])\n    if args.subcommand == \"validate\":\n        tasks = load_pipeline_file(args.file)\n        graph = DependencyGraph(tasks)\n        batches = graph.get_execution_batches()\n        print(f\"Validation SUCCESS: {len(tasks)} tasks in {len(batches)} batches.\")\n        return 0\n    elif args.subcommand == \"run\":\n        tasks = load_pipeline_file(args.file)\n        store = TaskStore(args.storage) if args.storage else None\n        executor = PipelineExecutor(store=store)\n        res = executor.run_pipeline(tasks)\n        print(f\"Execution finished: {res.succeeded}/{res.total_tasks} passed in {res.duration_ms:.1f}ms\")\n        return 0 if res.failed == 0 else 1\n    elif args.subcommand == \"status\":\n        store = TaskStore(args.storage)\n        tasks = store.load_tasks()\n        print(f\"Loaded {len(tasks)} tasks from {args.storage}\")\n        for t in tasks:\n            print(f\" - [{t.status.value}] {t.id}: {t.name}\")\n        return 0\n    else:\n        parser.print_help()\n        return 0\n\nif __name__ == \"__main__\":\n    sys.exit(main())",
+      "invariants": [
+        "MUST import models, storage, graph, and executor without re-declaring their classes.",
+        "Subcommands supported: 'run', 'validate', and 'status'.",
+        "CLI must print human-readable summary and return exit code 0 on success, 1 on failure."
+      ],
+      "acceptance_tests": [
+        "main(['validate', '--file', 'pipeline.json']) returns 0 for acyclic pipeline.",
+        "main(['--help']) prints usage instructions and exits 0."
+      ]
+    },
+    {
+      "id": 6,
+      "entity": "test_suite.py",
+      "kind": "CREATE",
+      "responsibility": "Implement comprehensive cleanroom unit test suite testing all modules.",
+      "depends_on": ["models.py", "storage.py", "graph.py", "executor.py", "cli.py"],
+      "imports": [
+        "import unittest",
+        "import tempfile",
+        "import os",
+        "import json",
+        "from models import Task, TaskStatus",
+        "from storage import TaskStore",
+        "from graph import DependencyGraph, CycleError",
+        "from executor import PipelineExecutor, PipelineResult",
+        "from cli import main, load_pipeline_file"
+      ],
+      "symbols": "class TestModels(unittest.TestCase):\n    def test_task_serialization(self):\n        t = Task(id=\"1\", name=\"test\", command=\"echo hi\")\n        self.assertEqual(t.status, TaskStatus.PENDING)\n        d = t.to_dict()\n        self.assertEqual(d[\"status\"], \"PENDING\")\n        t2 = Task.from_dict(d)\n        self.assertEqual(t, t2)\n\nclass TestStorage(unittest.TestCase):\n    def test_save_and_load(self):\n        with tempfile.TemporaryDirectory() as tmpdir:\n            p = os.path.join(tmpdir, \"tasks.json\")\n            store = TaskStore(p)\n            self.assertEqual(store.load_tasks(), [])\n            t = Task(id=\"t1\", name=\"T1\", command=\"echo test\")\n            store.save_tasks([t])\n            loaded = store.load_tasks()\n            self.assertEqual(len(loaded), 1)\n            self.assertEqual(loaded[0].id, \"t1\")\n\nclass TestGraph(unittest.TestCase):\n    def test_batches(self):\n        t1 = Task(id=\"a\", name=\"A\", command=\"echo a\")\n        t2 = Task(id=\"b\", name=\"B\", command=\"echo b\", depends_on=[\"a\"])\n        graph = DependencyGraph([t1, t2])\n        batches = graph.get_execution_batches()\n        self.assertEqual(len(batches), 2)\n        self.assertEqual(batches[0][0].id, \"a\")\n        self.assertEqual(batches[1][0].id, \"b\")\n\n    def test_cycle(self):\n        t1 = Task(id=\"a\", name=\"A\", command=\"echo a\", depends_on=[\"b\"])\n        t2 = Task(id=\"b\", name=\"B\", command=\"echo b\", depends_on=[\"a\"])\n        graph = DependencyGraph([t1, t2])\n        self.assertTrue(graph.has_cycle())\n        with self.assertRaises(CycleError):\n            graph.get_execution_batches()\n\nclass TestExecutor(unittest.TestCase):\n    def test_pipeline_execution(self):\n        t1 = Task(id=\"a\", name=\"A\", command=\"echo 'hello world'\")\n        t2 = Task(id=\"b\", name=\"B\", command=\"echo 'task b'\", depends_on=[\"a\"])\n        executor = PipelineExecutor()\n        res = executor.run_pipeline([t1, t2])\n        self.assertEqual(res.succeeded, 2)\n        self.assertEqual(res.failed, 0)\n        self.assertEqual(t1.status, TaskStatus.COMPLETED)\n        self.assertEqual(t1.output, \"hello world\")\n\n    def test_pipeline_failure_cascade(self):\n        t1 = Task(id=\"fail\", name=\"F\", command=\"exit 1\")\n        t2 = Task(id=\"dep\", name=\"D\", command=\"echo ok\", depends_on=[\"fail\"])\n        executor = PipelineExecutor()\n        res = executor.run_pipeline([t1, t2])\n        self.assertEqual(res.failed, 2)\n        self.assertEqual(t1.status, TaskStatus.FAILED)\n        self.assertEqual(t2.status, TaskStatus.FAILED)\n\nclass TestCli(unittest.TestCase):\n    def test_help(self):\n        self.assertEqual(main([]), 0)\n\nif __name__ == \"__main__\":\n    unittest.main()",
+      "invariants": [
+        "MUST import all modules from workspace.",
+        "MUST use unittest.main() when run as __main__.",
+        "Use tempfile.TemporaryDirectory for storage tests.",
+        "All test cases must assert expected properties."
+      ],
+      "acceptance_tests": [
+        "Executing 'python3 test_suite.py' must execute at least 6 tests and exit with code 0."
+      ]
+    }
+  ]
+}

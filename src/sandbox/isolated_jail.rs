@@ -312,9 +312,10 @@ impl IsolatedJail {
         // --new-session creates a new process group/session detached from TTY, preventing TIOCSTI keystroke injection.
         bwrap.args(["--unshare-all", "--die-with-parent", "--new-session"]);
 
-        // Pass headless display env var, PATH, and unbuffered I/O for Python & subprocesses
+        // Pass headless display env var, PATH, PYTHONPATH, and unbuffered I/O for Python & subprocesses
         bwrap.args(["--setenv", "DISPLAY", ":99"]);
         bwrap.args(["--setenv", "PYTHONUNBUFFERED", "1"]);
+        bwrap.args(["--setenv", "PYTHONPATH", "/workspace:."]);
         bwrap.args(["--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin"]);
 
         #[cfg(unix)]
@@ -374,6 +375,7 @@ impl IsolatedJail {
         process.current_dir(workspace);
         process.env("DISPLAY", ":99");
         process.env("PYTHONUNBUFFERED", "1");
+        process.env("PYTHONPATH", format!("{}:.", workspace.display()));
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 
@@ -493,6 +495,36 @@ impl IsolatedJail {
 
     /// Extract missing dependency name from command execution output or error trace
     pub fn extract_missing_dependency(text: &str) -> Option<String> {
+        const INTERNAL_AND_STDLIB_MODULES: &[&str] = &[
+            "vfs", "sandbox", "cleanroom", "bwrap", "omni", "omni_engine", "workspace", "stdout", "stderr", "sys", "os",
+            "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "builtins", "bz2",
+            "calendar", "cmath", "collections", "colorsys", "compileall", "concurrent", "configparser",
+            "contextlib", "copy", "csv", "ctypes", "dataclasses", "datetime", "dbm", "difflib",
+            "dis", "doctest", "email", "encodings", "enum", "errno", "faulthandler", "fcntl",
+            "filecmp", "fileinput", "fnmatch", "fractions", "functools", "gc", "getopt", "getpass",
+            "gettext", "glob", "graphlib", "gzip", "hashlib", "heapq", "hmac", "html", "http",
+            "idlelib", "imaplib", "imghdr", "importlib", "inspect", "io", "ipaddress", "itertools",
+            "json", "keyword", "linecache", "locale", "logging", "lzma", "mailbox", "mailcap",
+            "marshal", "math", "mimetypes", "mmap", "modulefinder", "multiprocessing", "netrc",
+            "nntplib", "numbers", "operator", "optparse", "pathlib", "pdb", "pickle",
+            "pickletools", "pipes", "pkgutil", "platform", "plistlib", "poplib", "posix",
+            "posixpath", "pprint", "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+            "pydoc", "queue", "quopri", "random", "re", "reprlib", "resource", "rlcompleter",
+            "runpy", "sched", "secrets", "select", "selectors", "shelve", "shlex", "shutil",
+            "signal", "site", "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "spwd",
+            "sqlite3", "sre_compile", "sre_constants", "sre_parse", "ssl", "stat", "statistics",
+            "string", "stringprep", "struct", "subprocess", "sunau", "symbol", "symtable",
+            "sysconfig", "syslog", "tabnanny", "tarfile", "telnetlib", "tempfile",
+            "termios", "test", "tests", "textwrap", "threading", "time", "timeit",
+            "token", "tokenize", "tomllib", "trace", "traceback", "tracemalloc", "tty",
+            "turtle", "turtledemo", "types", "typing", "unicodedata", "unittest", "urllib",
+            "uu", "uuid", "venv", "warnings", "wave", "weakref", "webbrowser", "wsgiref",
+            "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo",
+            "src", "app", "lib", "pkg", "core", "models", "utils", "views", "controllers",
+            "routes", "services", "helpers", "database", "cli", "library", "client", "server",
+            "fixtures", "common", "shared", "internal", "config", "constants",
+        ];
+
         // 1. Python ModuleNotFoundError: No module named 'tkinter'
         if let Some(idx) = text.find("No module named ") {
             let sub = &text[idx + "No module named ".len()..];
@@ -514,7 +546,8 @@ impl IsolatedJail {
                         .unwrap_or(dep.len())
                 };
                 let candidate = dep[..end_idx].trim().to_string();
-                if !candidate.is_empty() {
+                let lower = candidate.to_lowercase();
+                if !candidate.is_empty() && !INTERNAL_AND_STDLIB_MODULES.contains(&lower.as_str()) {
                     return Some(candidate);
                 }
             }
@@ -526,7 +559,8 @@ impl IsolatedJail {
                 let sub = &text[from_idx + 6..];
                 if let Some(end) = sub.find('\'') {
                     let dep = sub[..end].trim().to_string();
-                    if !dep.is_empty() {
+                    let lower = dep.to_lowercase();
+                    if !dep.is_empty() && !INTERNAL_AND_STDLIB_MODULES.contains(&lower.as_str()) {
                         return Some(dep);
                     }
                 }
@@ -538,7 +572,8 @@ impl IsolatedJail {
             let sub = &text[idx + "Cannot find module '".len()..];
             if let Some(end) = sub.find('\'') {
                 let dep = sub[..end].trim().to_string();
-                if !dep.is_empty() {
+                let lower = dep.to_lowercase();
+                if !dep.is_empty() && !INTERNAL_AND_STDLIB_MODULES.contains(&lower.as_str()) {
                     return Some(dep);
                 }
             }
@@ -566,7 +601,11 @@ impl IsolatedJail {
 
                 if let Some(word) = candidate {
                     let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string();
-                    if !clean.is_empty() && !IGNORED_COMMANDS.contains(&clean.to_lowercase().as_str()) {
+                    let lower = clean.to_lowercase();
+                    if !clean.is_empty()
+                        && !IGNORED_COMMANDS.contains(&lower.as_str())
+                        && !INTERNAL_AND_STDLIB_MODULES.contains(&lower.as_str())
+                    {
                         return Some(clean);
                     }
                 }
@@ -638,6 +677,20 @@ mod tests {
         assert_eq!(
             IsolatedJail::extract_missing_dependency(err3),
             Some("express".to_string())
+        );
+
+        // Standard library and internal project components must be ignored
+        assert_eq!(
+            IsolatedJail::extract_missing_dependency("ModuleNotFoundError: No module named 'sqlite3'"),
+            None
+        );
+        assert_eq!(
+            IsolatedJail::extract_missing_dependency("ModuleNotFoundError: No module named 'database'"),
+            None
+        );
+        assert_eq!(
+            IsolatedJail::extract_missing_dependency("ModuleNotFoundError: No module named 'library'"),
+            None
         );
     }
 

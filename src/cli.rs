@@ -1154,6 +1154,9 @@ EXAMPLES:
     let mut is_modify_mode = false;
     let mut review_plan = false;
     let mut explicit_project_name: Option<String> = None;
+    let mut plan_file: Option<PathBuf> = None;
+    let mut plan_spec: Option<String> = None;
+    let mut max_concurrency: usize = 2;
 
     let mut i = 0;
     while i < args.len() {
@@ -1161,6 +1164,18 @@ EXAMPLES:
             "--review" | "--review-plan" | "--interactive-plan" => {
                 review_plan = true;
                 i += 1;
+            }
+            "--plan-file" if i + 1 < args.len() => {
+                plan_file = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--plan" if i + 1 < args.len() => {
+                plan_spec = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--concurrency" if i + 1 < args.len() => {
+                max_concurrency = args[i + 1].parse().unwrap_or(2);
+                i += 2;
             }
             "--modify" | "--refactor" | "--patch" => {
                 is_modify_mode = true;
@@ -1228,9 +1243,13 @@ EXAMPLES:
     }
 
     if user_goal.is_empty() {
-        eprintln!("[-] Error: Missing research goal or query.");
-        eprintln!("Usage: omni_engine swarm \"<query>\" [OPTIONS]");
-        return;
+        if plan_file.is_some() || plan_spec.is_some() {
+            user_goal = "Execute Sovereign Maestro Architectural Plan".to_string();
+        } else {
+            eprintln!("[-] Error: Missing research goal or query.");
+            eprintln!("Usage: omni_engine run \"<goal>\" [OPTIONS] or omni_engine run --plan-file <PATH>");
+            return;
+        }
     }
 
     let is_default_workspace = output_dir == Some(PathBuf::from("./workspace"));
@@ -1241,6 +1260,11 @@ EXAMPLES:
             let proj_name = explicit_project_name.unwrap_or_else(|| infer_project_name(&user_goal));
             output_dir = Some(PathBuf::from("./workspace").join(proj_name));
         }
+    }
+
+    let explicit_count = crate::planner::SwarmCoordinator::extract_explicit_deliverables(&user_goal).len();
+    if explicit_count > 0 && max_subgoals < explicit_count + 1 {
+        max_subgoals = explicit_count + 1;
     }
 
     let config = if let Some(m) = custom_model {
@@ -1255,6 +1279,9 @@ EXAMPLES:
             auto_approve_deps,
             is_modify_mode,
             review_plan,
+            plan_file: plan_file.clone(),
+            plan_spec: plan_spec.clone(),
+            max_parallel_workers: max_concurrency,
         }
     } else if let Some((o, w)) = resolve_swarm_models(base_dir, &models_dir, orch_path, worker_path) {
         crate::planner::SwarmConfig {
@@ -1268,6 +1295,9 @@ EXAMPLES:
             auto_approve_deps,
             is_modify_mode,
             review_plan,
+            plan_file: plan_file.clone(),
+            plan_spec: plan_spec.clone(),
+            max_parallel_workers: max_concurrency,
         }
     } else {
         eprintln!("[-] No GGUF models detected.");
@@ -1778,6 +1808,9 @@ fn execute_interactive_swarm(session: &InteractiveSession, goal: &str, is_modify
         auto_approve_deps: None,
         is_modify_mode: is_modify,
         review_plan: true,
+        plan_file: None,
+        plan_spec: None,
+        max_parallel_workers: 2,
     };
 
     if is_modify {

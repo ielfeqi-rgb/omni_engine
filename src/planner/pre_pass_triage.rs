@@ -62,7 +62,6 @@ impl PrePassTriage {
         let web_signals = [
             "web", "internet", "news", "online", "search", "fetch", "download", "google",
             "wikipedia", "articles", "today", "latest", "events", "world",
-            "نت", "انترنت", "أخبار", "اخبار", "مقال", "بحث", "تصفح", "احداث", "أحداث", "العالم", "جديد", "سوق"
         ];
         if web_signals.iter().any(|s| q.contains(s)) {
             required_tools.push(ToolCapability::WebBrowser);
@@ -73,7 +72,6 @@ impl PrePassTriage {
         let terminal_signals = [
             "terminal", "exec", "run", "launch", "launcher", "minecraft", "install", "build",
             "compile", "cargo", "rust", "python", "bash", "shell", "apt", "script", "flatpak",
-            "ترمنال", "طرفية", "شغل", "شغّل", "لانشر", "ماين كرافت", "تثبيت", "برمجة", "كومبايل", "نفذ", "نفّذ"
         ];
         if terminal_signals.iter().any(|s| q.contains(s)) {
             required_tools.push(ToolCapability::TerminalBridge);
@@ -91,7 +89,6 @@ impl PrePassTriage {
         // 3. File / Storage / Document generation signals
         let file_signals = [
             "file", "txt", "csv", "json", "doc", "save", "write", "create file", "export", "notes", "log", "summary",
-            "ملف", "اكتب في", "حفظ", "انشئ ملف", "تصدير", "تقرير", "سجل", "احفظ", "مستند", "ملخص"
         ];
         let has_explicit_file_intent = file_signals.iter().any(|s| q.contains(s)) || !detected_targets.is_empty();
         if has_explicit_file_intent || required_tools.contains(&ToolCapability::WebBrowser) {
@@ -200,7 +197,6 @@ impl PrePassTriage {
         let terminal_signals = [
             "terminal", "exec", "run", "launch", "launcher", "minecraft", "install", "build",
             "compile", "cargo", "rust", "python", "bash", "shell", "apt", "script", "flatpak",
-            "ترمنال", "طرفية", "شغل", "شغّل", "لانشر", "ماين كرافت", "تثبيت", "برمجة", "كومبايل", "نفذ", "نفّذ"
         ];
         if terminal_signals.iter().any(|s| q.contains(s)) {
             return SpeculativeTarget::TermHost;
@@ -209,7 +205,6 @@ impl PrePassTriage {
         let web_signals = [
             "web", "internet", "news", "online", "search", "fetch", "download", "google",
             "wikipedia", "articles", "today", "latest", "events", "world",
-            "نت", "انترنت", "أخبار", "اخبار", "مقال", "بحث", "تصفح", "احداث", "أحداث", "العالم", "جديد", "سوق"
         ];
         if web_signals.iter().any(|s| q.contains(s)) {
             return SpeculativeTarget::WebBrowser;
@@ -217,7 +212,6 @@ impl PrePassTriage {
 
         let file_signals = [
             "file", "txt", "csv", "json", "doc", "save", "write", "create file", "export", "notes", "log", "summary",
-            "ملف", "اكتب في", "حفظ", "انشئ ملف", "تصدير", "تقرير", "سجل", "احفظ", "مستند", "ملخص"
         ];
         if file_signals.iter().any(|s| q.contains(s)) {
             return SpeculativeTarget::DirectVfs;
@@ -285,7 +279,7 @@ mod tests {
             SpeculativeTarget::TermHost
         );
         assert_eq!(
-            PrePassTriage::probe_fast_intent("شغل أمر الطرفية"),
+            PrePassTriage::probe_fast_intent("run bash command in terminal"),
             SpeculativeTarget::TermHost
         );
         assert_eq!(

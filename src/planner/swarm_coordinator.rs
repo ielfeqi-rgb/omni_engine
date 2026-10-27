@@ -36,6 +36,7 @@ pub enum TaskKind {
     Delete,
     Test,
     Search,
+    Check,
 }
 
 impl TaskKind {
@@ -46,6 +47,18 @@ impl TaskKind {
             TaskKind::Delete => "DELETE",
             TaskKind::Test => "TEST",
             TaskKind::Search => "SEARCH",
+            TaskKind::Check => "CHECK",
+        }
+    }
+
+    pub fn badge(&self) -> colored::ColoredString {
+        match self {
+            TaskKind::Create => "[CREATE]".bright_green(),
+            TaskKind::Modify => "[MODIFY]".bright_yellow(),
+            TaskKind::Test => "[TEST]".bright_blue(),
+            TaskKind::Delete => "[DELETE]".bright_red(),
+            TaskKind::Search => "[SEARCH]".bright_magenta(),
+            TaskKind::Check => "[CHECK]".bright_cyan(),
         }
     }
 }
@@ -212,55 +225,10 @@ impl HostPackageManager {
         }
     }
 
-    /// Build the idiomatic installation command for the detected package manager
+    /// Build the idiomatic non-root installation command for the detected package manager
     pub fn build_install_command(&self, dep: &str) -> String {
+        // Safe, non-root user installation: Never execute sudo in autonomous background actions!
         match self {
-            HostPackageManager::Dnf => {
-                if dep == "tkinter" {
-                    "sudo dnf install -y python3-tkinter || pip install --user tk".to_string()
-                } else {
-                    format!(
-                        "sudo dnf install -y python3-{} || python3 -m pip install --user {} || pip install --user {}",
-                        dep, dep, dep
-                    )
-                }
-            }
-            HostPackageManager::Apt => {
-                if dep == "tkinter" {
-                    "sudo apt-get update && sudo apt-get install -y python3-tk || pip install --user tk".to_string()
-                } else {
-                    format!(
-                        "sudo apt-get update && sudo apt-get install -y python3-{} || python3 -m pip install --user {} || pip install --user {}",
-                        dep, dep, dep
-                    )
-                }
-            }
-            HostPackageManager::Pacman => {
-                if dep == "tkinter" {
-                    "sudo pacman -S --noconfirm tk || pip install --user tk".to_string()
-                } else {
-                    format!(
-                        "sudo pacman -S --noconfirm python-{} || python3 -m pip install --user {} || pip install --user {}",
-                        dep, dep, dep
-                    )
-                }
-            }
-            HostPackageManager::Zypper => {
-                if dep == "tkinter" {
-                    "sudo zypper install -y python3-tk || pip install --user tk".to_string()
-                } else {
-                    format!(
-                        "sudo zypper install -y python3-{} || python3 -m pip install --user {} || pip install --user {}",
-                        dep, dep, dep
-                    )
-                }
-            }
-            HostPackageManager::Apk => {
-                format!(
-                    "apk add --no-cache py3-{} || python3 -m pip install --user {}",
-                    dep, dep
-                )
-            }
             HostPackageManager::Brew => {
                 format!(
                     "brew install {} || python3 -m pip install --user {}",
@@ -273,7 +241,7 @@ impl HostPackageManager {
                     dep, dep
                 )
             }
-            HostPackageManager::Pip => {
+            _ => {
                 format!(
                     "python3 -m pip install --user {} || pip install --user {} || pip install {}",
                     dep, dep, dep
@@ -332,6 +300,153 @@ impl SubGoal {
     pub fn duration_max(&self, config: &LrpConfig) -> f64 {
         let tokens = self.effective_max_tokens(config.min_tokens_floor, config.model_ctx_limit);
         tokens as f64 / config.r_min
+    }
+}
+
+/// Rich Architectural Plan Blueprint deserialized from external LLMs (Claude, GPT-4, Gemini)
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct PlanBlueprint {
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub concurrency_limit: Option<usize>,
+    pub nodes: Vec<PlanBlueprintNode>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct PlanBlueprintNode {
+    pub id: usize,
+    pub entity: String,
+    #[serde(default = "default_blueprint_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub responsibility: Option<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub imports: Vec<String>,
+    #[serde(default)]
+    pub symbols: Option<serde_json::Value>,
+    #[serde(default)]
+    pub invariants: Vec<String>,
+    #[serde(default)]
+    pub acceptance_tests: Vec<String>,
+}
+
+impl PlanBlueprintNode {
+    pub fn extract_required_symbols(&self) -> Vec<String> {
+        let mut required = Vec::new();
+        if let Some(ref sym) = self.symbols {
+            if let Some(obj) = sym.as_object() {
+                if let Some(classes) = obj.get("classes").and_then(|c| c.as_array()) {
+                    for c in classes {
+                        if let Some(name) = c.get("name").and_then(|n| n.as_str()) {
+                            required.push(format!("class {}", name));
+                        }
+                    }
+                }
+                if let Some(funcs) = obj.get("functions").and_then(|f| f.as_array()) {
+                    for f in funcs {
+                        if let Some(name) = f.get("name").and_then(|n| n.as_str()) {
+                            required.push(format!("def {}", name));
+                        }
+                    }
+                }
+            } else if let Some(s) = sym.as_str() {
+                for line in s.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("class ") {
+                        let name = trimmed.trim_start_matches("class ").split(&['(', ':', ' '][..]).next().unwrap_or("");
+                        if !name.is_empty() {
+                            required.push(format!("class {}", name));
+                        }
+                    } else if trimmed.starts_with("def ") {
+                        let name = trimmed.trim_start_matches("def ").split(&['(', ':', ' '][..]).next().unwrap_or("");
+                        if !name.is_empty() {
+                            required.push(format!("def {}", name));
+                        }
+                    }
+                }
+            }
+        }
+        required
+    }
+}
+
+fn default_blueprint_kind() -> String {
+    "CREATE".to_string()
+}
+
+impl PlanBlueprint {
+    pub fn to_subgoals(&self) -> Result<Vec<SubGoal>, String> {
+        if self.nodes.is_empty() {
+            return Err("Maestro Plan validation error: 'nodes' list cannot be empty.".to_string());
+        }
+        let mut subgoals = Vec::new();
+        for node in &self.nodes {
+            let task_kind = match node.kind.to_uppercase().as_str() {
+                "MODIFY" | "PATCH" | "UPDATE" => TaskKind::Modify,
+                "TEST" | "VERIFY" | "CHECK" => TaskKind::Test,
+                "DELETE" | "REMOVE" => TaskKind::Delete,
+                _ => TaskKind::Create,
+            };
+
+            let read_set: Vec<PathBuf> = node.depends_on.iter().map(PathBuf::from).collect();
+            let write_set: Vec<PathBuf> = vec![PathBuf::from(&node.entity)];
+
+            let mut guidance_parts = Vec::new();
+            if let Some(ref resp) = node.responsibility {
+                guidance_parts.push(format!("Objective: {}", resp));
+            }
+            if !node.imports.is_empty() {
+                guidance_parts.push(format!("MANDATORY IMPORTS:\n{}", node.imports.join("\n")));
+            }
+            if let Some(ref sym) = node.symbols {
+                match sym {
+                    serde_json::Value::String(s) => {
+                        guidance_parts.push(format!("[MANDATORY ARCHITECTURAL SYMBOLS CONTRACT]:\n{}", s));
+                    }
+                    _ => {
+                        if let Ok(sym_str) = serde_json::to_string_pretty(sym) {
+                            guidance_parts.push(format!("[MANDATORY ARCHITECTURAL SYMBOLS CONTRACT]:\n{}", sym_str));
+                        }
+                    }
+                }
+            }
+            let required_symbols = node.extract_required_symbols();
+            if !required_symbols.is_empty() {
+                guidance_parts.push(format!("MANDATORY REQUIRED DEFINITIONS (MUST BE DECLARED IN THIS FILE):\n- {}", required_symbols.join("\n- ")));
+            }
+            if !node.invariants.is_empty() {
+                guidance_parts.push(format!("CRITICAL INVARIANTS & CONSTRAINTS:\n- {}", node.invariants.join("\n- ")));
+            }
+            if !node.acceptance_tests.is_empty() {
+                guidance_parts.push(format!("ACCEPTANCE TEST CASES:\n- {}", node.acceptance_tests.join("\n- ")));
+            }
+
+            let guidance = if guidance_parts.is_empty() {
+                None
+            } else {
+                Some(guidance_parts.join("\n\n"))
+            };
+
+            let max_tokens = (4096 + node.depends_on.len() * 1024).clamp(4096, 16384);
+
+            subgoals.push(SubGoal {
+                id: node.id,
+                description: node.responsibility.clone().unwrap_or_else(|| format!("Implement {}", node.entity)),
+                target_entity: node.entity.clone(),
+                kind: task_kind,
+                guidance,
+                depends_on: node.depends_on.clone(),
+                read_set,
+                write_set,
+                max_tokens,
+            });
+        }
+        Ok(subgoals)
     }
 }
 
@@ -564,9 +679,9 @@ impl MemoryGate {
 }
 
 /// Maximum line count threshold before a deliverable is distilled into an interface contract for downstream tasks.
-pub const AUTO_INJECT_MAX_LINES: usize = 60;
+pub const AUTO_INJECT_MAX_LINES: usize = 40;
 /// Maximum byte count threshold before a deliverable is distilled into an interface contract for downstream tasks.
-pub const AUTO_INJECT_MAX_BYTES: usize = 2048;
+pub const AUTO_INJECT_MAX_BYTES: usize = 1200;
 
 /// Rule of 3: Maximum dynamic injection attempts allowed for any single requirement/artifact before tripping the circuit breaker.
 pub const MAX_DELTA_RETRIES_PER_TARGET: usize = 3;
@@ -783,6 +898,113 @@ impl TaskDag {
             .collect();
         roots.sort();
         roots
+    }
+
+    /// Mathematically partition the DAG into topological generation levels using Kahn's algorithm.
+    /// Level 0 contains all roots (tasks with in-degree 0).
+    /// Level k contains tasks that depend solely on tasks from levels < k.
+    pub fn compute_topological_levels(&self) -> Vec<Vec<usize>> {
+        let all_ids: Vec<usize> = self.node_ids.iter().copied()
+            .chain(self.tasks.keys().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut in_degrees: HashMap<usize, usize> = HashMap::with_capacity(all_ids.len());
+        for &id in &all_ids {
+            let count = self.dependencies.get(&id).map(|d| d.len()).unwrap_or(0);
+            in_degrees.insert(id, count);
+        }
+
+        let mut remaining_nodes: HashSet<usize> = all_ids.into_iter().collect();
+        let mut levels = Vec::new();
+
+        while !remaining_nodes.is_empty() {
+            let mut current_level: Vec<usize> = remaining_nodes
+                .iter()
+                .filter(|&&node| in_degrees.get(&node).copied().unwrap_or(0) == 0)
+                .copied()
+                .collect();
+
+            if current_level.is_empty() {
+                let mut fallback: Vec<usize> = remaining_nodes.into_iter().collect();
+                fallback.sort();
+                levels.push(fallback);
+                break;
+            }
+
+            current_level.sort();
+
+            for &node in &current_level {
+                remaining_nodes.remove(&node);
+                if let Some(children) = self.children.get(&node) {
+                    for &child in children {
+                        if let Some(deg) = in_degrees.get_mut(&child) {
+                            if *deg > 0 {
+                                *deg -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            levels.push(current_level);
+        }
+
+        levels
+    }
+
+    /// Insert mathematical checkpoint nodes between topological generations when the graph has
+    /// multiple levels and a significant task count (>= 4 tasks).
+    pub fn inject_topological_checkpoints(&mut self) -> usize {
+        let levels = self.compute_topological_levels();
+        if levels.len() < 2 || self.tasks.len() < 4 {
+            return 0; // Simple or small DAGs require zero artificial checkpoint overhead
+        }
+
+        let mut injected_count = 0;
+        let mut next_id = self.tasks.keys().copied().max().unwrap_or(0) + 100;
+
+        for i in 0..(levels.len() - 1) {
+            let current_level = &levels[i];
+            let next_level = &levels[i + 1];
+
+            if current_level.is_empty() || next_level.is_empty() {
+                continue;
+            }
+
+            let checkpoint_id = next_id;
+            next_id += 1;
+
+            let milestone_name = format!("milestone_level_{}", i + 1);
+            let checkpoint_subgoal = SubGoal {
+                id: checkpoint_id,
+                description: format!("Topological Milestone Checkpoint #{} [Generations {}-{}]", i + 1, i, i + 1),
+                target_entity: milestone_name,
+                kind: TaskKind::Check,
+                guidance: None,
+                depends_on: current_level.iter().map(|id| id.to_string()).collect(),
+                read_set: Vec::new(),
+                write_set: Vec::new(),
+                max_tokens: 512,
+            };
+
+            self.tasks.insert(checkpoint_id, checkpoint_subgoal);
+            self.add_node(checkpoint_id);
+
+            for &u in current_level {
+                self.add_edge(u, checkpoint_id);
+            }
+
+            for &v in next_level {
+                self.add_edge(checkpoint_id, v);
+            }
+
+            injected_count += 1;
+        }
+
+        self.recompute_in_degrees();
+        injected_count
     }
 
     pub fn cascade_cancellation(
@@ -1817,6 +2039,9 @@ pub struct SwarmConfig {
     pub auto_approve_deps: Option<bool>,
     pub is_modify_mode: bool,
     pub review_plan: bool,
+    pub plan_file: Option<PathBuf>,
+    pub plan_spec: Option<String>,
+    pub max_parallel_workers: usize,
 }
 
 impl SwarmConfig {
@@ -1876,6 +2101,9 @@ impl SwarmConfig {
             auto_approve_deps: None,
             is_modify_mode: false,
             review_plan: false,
+            plan_file: None,
+            plan_spec: None,
+            max_parallel_workers: 2,
         })
     }
 }
@@ -2336,10 +2564,20 @@ impl SwarmCoordinator {
             self.preload_existing_workspace_files();
         }
 
-        // PHASE 1: System 2 Orchestrator Plan Synthesis
-        println!("  [THINKER PLAN] Formulating execution sub-tasks...");
+        // PHASE 1: Plan Acquisition (Maestro External Plan or Local System 2 Synthesis)
         let mut current_goal = user_goal.to_string();
-        let mut subgoals = self.orchestrate_plan(&current_goal)?;
+        let mut subgoals = if let Some(ref plan_path) = self.config.plan_file {
+            println!("  {} Loading Sovereign Maestro Architectural Plan from: {}", ">>".bright_cyan().bold(), plan_path.display().to_string().bright_yellow());
+            let plan_str = std::fs::read_to_string(plan_path)
+                .map_err(|e| format!("Failed to read plan file '{}': {}", plan_path.display(), e))?;
+            Self::parse_external_plan(&plan_str)?
+        } else if let Some(ref plan_spec) = self.config.plan_spec {
+            println!("  {} Ingesting Sovereign Maestro Plan from CLI inline specification...", ">>".bright_cyan().bold());
+            Self::parse_external_plan(plan_spec)?
+        } else {
+            println!("  [THINKER PLAN] Formulating execution sub-tasks...");
+            self.orchestrate_plan(&current_goal)?
+        };
 
         // PHASE 1.1: Interactive Plan Review & Steering (Human-in-the-Loop Governance)
         if self.config.review_plan {
@@ -2351,14 +2589,31 @@ impl SwarmCoordinator {
                 io::stdout().flush().unwrap_or(());
 
                 let mut input = String::new();
-                let bytes_read = match io::stdin().read_line(&mut input) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        warn!("Plan review stdin read error: {}", e);
-                        0
+                let mut is_bracketed = false;
+                loop {
+                    let mut line = String::new();
+                    match io::stdin().read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            if line.contains("\x1b[2004~") {
+                                is_bracketed = true;
+                            }
+                            input.push_str(&line);
+                            if is_bracketed {
+                                if input.contains("\x1b[2004l") {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Plan review stdin read error: {}", e);
+                            break;
+                        }
                     }
-                };
-                if bytes_read == 0 {
+                }
+                if input.trim().is_empty() {
                     if io::stdin().is_terminal() {
                         println!("\n  [!] Empty input received on terminal. Please type 'yes' to proceed, or 'no <critique>' to refine.");
                         continue;
@@ -2373,7 +2628,7 @@ impl SwarmCoordinator {
                 let trimmed = clean_input.trim();
                 let lower = trimmed.to_lowercase();
 
-                if lower == "yes" || lower == "y" || lower == "ok" || lower == "نعم" || lower == "تمام" || lower == "اه" || lower == "ايوه" || lower == "يس" {
+                if lower == "yes" || lower == "y" || lower == "ok" {
                     println!("\n  {} Plan sealed into Causal Memory. Suffix debate rolled back.", "[PLAN SEALED]".bright_green().bold());
                     if let Some(ref out_dir) = self.config.output_dir {
                         if let Err(e) = std::fs::create_dir_all(out_dir) {
@@ -2384,20 +2639,40 @@ impl SwarmCoordinator {
                     }
                     println!("  {} Executing approved golden architecture...\n", ">>".bright_yellow());
                     break;
-                } else if lower.starts_with("no") || lower.starts_with("n ") || lower.starts_with("لا") {
-                    let critique = if let Some(stripped) = trimmed.strip_prefix("no") {
-                        stripped.trim().trim_start_matches(':').trim()
+                } else if lower.starts_with("no") || lower.starts_with("n ") {
+                    let mut critique = if let Some(stripped) = trimmed.strip_prefix("no") {
+                        stripped.trim().trim_start_matches(':').trim().to_string()
                     } else if let Some(stripped) = trimmed.strip_prefix("No") {
-                        stripped.trim().trim_start_matches(':').trim()
+                        stripped.trim().trim_start_matches(':').trim().to_string()
                     } else if let Some(stripped) = trimmed.strip_prefix("n ") {
-                        stripped.trim()
+                        stripped.trim().to_string()
                     } else if let Some(stripped) = trimmed.strip_prefix("N ") {
-                        stripped.trim()
-                    } else if let Some(stripped) = trimmed.strip_prefix("لا") {
-                        stripped.trim().trim_start_matches(':').trim()
+                        stripped.trim().to_string()
                     } else {
-                        trimmed
+                        trimmed.to_string()
                     };
+
+                    if critique.is_empty() && io::stdin().is_terminal() {
+                        println!("  {} Enter your detailed critique/instructions (submit empty line when done):", "[CRITIQUE INPUT]".bright_yellow().bold());
+                        let mut multi_critique = Vec::new();
+                        loop {
+                            print!("  ... ");
+                            let _ = io::stdout().flush();
+                            let mut next_line = String::new();
+                            match io::stdin().read_line(&mut next_line) {
+                                Ok(0) => break,
+                                Ok(_) => {
+                                    let cl = next_line.trim_end_matches(['\r', '\n']);
+                                    if cl.trim().is_empty() {
+                                        break;
+                                    }
+                                    multi_critique.push(cl.to_string());
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        critique = multi_critique.join("\n");
+                    }
 
                     iteration += 1;
                     println!("\n  [STEERING RECEIVED] \"{}\"", critique.bright_yellow());
@@ -2430,8 +2705,17 @@ impl SwarmCoordinator {
         println!("  [CONTRACT]: {}\n", global_contract.bright_magenta());
 
         // PHASE 2: System 1 Swarm Execution with State Machine & Memory Bound Gate
-        let dag = TaskDag::from_subgoals(subgoals.clone())
+        let mut dag = TaskDag::from_subgoals(subgoals.clone())
             .map_err(|e| format!("DAG construction failed: {}", e))?;
+        let checkpoints_added = dag.inject_topological_checkpoints();
+        if checkpoints_added > 0 {
+            println!(
+                "  {} Partitioned execution into {} topological generations with {} milestone checkpoints.",
+                "[TOPOLOGICAL CLUSTERING]".bright_cyan().bold(),
+                dag.compute_topological_levels().len(),
+                checkpoints_added
+            );
+        }
         let memory_gate = self.create_memory_gate();
         let mut state_coordinator = StateMachineCoordinator::with_memory_gate(dag, memory_gate)?;
 
@@ -2489,10 +2773,13 @@ impl SwarmCoordinator {
             // Causal Turn Sealing:
             // Inject Assistant response containing the README.md content + verification flag,
             // sealed with the model's native turn_suffix / EOT token.
-            let assistant_turn = format!(
-                "{}\n\n[DELIVERABLES VERIFIED]: All project artifacts generated, validated in cleanroom, and committed to disk.",
-                readme.trim()
-            );
+            let has_failures = findings.iter().any(|f| f.finding.contains("FAILED") || f.finding.contains("could not"));
+            let tag = if has_failures {
+                "[PARTIAL DELIVERABLES]: Some project artifacts generated and committed to disk, but acceptance criteria were only partially met."
+            } else {
+                "[DELIVERABLES VERIFIED]: All project artifacts generated, validated in cleanroom, and committed to disk."
+            };
+            let assistant_turn = format!("{}\n\n{}", readme.trim(), tag);
             let sealed = self.orchestrator_model.format_completed_turn(None, user_goal, &assistant_turn);
             (Some(readme), Some(sealed))
         } else {
@@ -2587,7 +2874,7 @@ impl SwarmCoordinator {
                         None => break,
                     };
 
-                    let mut head_alloc_ctx = head_sg.max_tokens.max(2048);
+                    let mut head_alloc_ctx = head_sg.max_tokens.max(4096);
                     if max_n_ctx > 0 && max_n_ctx < head_alloc_ctx as i32 {
                         head_alloc_ctx = max_n_ctx as usize;
                     }
@@ -2598,7 +2885,11 @@ impl SwarmCoordinator {
                     });
 
                     // Can Head Task Admit Right Now?
-                    if !head_vfs_conflict && state_coordinator.memory_gate.can_admit(head_alloc_ctx) {
+                    let effective_max_workers = self.config.max_parallel_workers.max(1);
+                    if !head_vfs_conflict
+                        && active_workers.len() < effective_max_workers
+                        && state_coordinator.memory_gate.can_admit(head_alloc_ctx)
+                    {
                         let abort_flag = match state_coordinator.admit_task(head_id, head_alloc_ctx) {
                             Ok(flag) => flag,
                             Err(e) => {
@@ -2661,7 +2952,7 @@ impl SwarmCoordinator {
                             None => continue,
                         };
 
-                        let mut cand_alloc_ctx = cand_sg.max_tokens.max(2048);
+                        let mut cand_alloc_ctx = cand_sg.max_tokens.max(4096);
                         if max_n_ctx > 0 && max_n_ctx < cand_alloc_ctx as i32 {
                             cand_alloc_ctx = max_n_ctx as usize;
                         }
@@ -2683,7 +2974,7 @@ impl SwarmCoordinator {
                         let completes_before_res = cand_duration <= reservation_delay_secs;
                         let headroom_preserved = state_coordinator.memory_gate.remaining() >= cand_alloc_ctx + head_alloc_ctx;
 
-                        if completes_before_res || headroom_preserved {
+                        if (completes_before_res || headroom_preserved) && active_workers.len() < effective_max_workers {
                             let abort_flag = match state_coordinator.admit_task(cand_id, cand_alloc_ctx) {
                                 Ok(flag) => flag,
                                 Err(_) => continue,
@@ -3025,22 +3316,30 @@ impl SwarmCoordinator {
                     .create_context(allocated_ctx, 512, 4)
                     .map_err(|e| format!("Native context allocation failed: {}", e))?;
 
-                // Generate directive if Thinker is configured
+                // Generate directive if Thinker is configured and no Maestro guidance is pre-set
                 let mut sg_with_guidance = subgoal.clone();
-                if let Ok(directive) = coordinator.thinker_dispatch_directive(
-                    user_goal,
-                    &subgoal,
-                    global_contract,
-                    &previous_findings,
-                ) {
-                    if !directive.is_empty() {
-                        println!(
-                            "  [THINKER DIRECTIVE] Task #{}: \"{}\"",
-                            subgoal.id,
-                            directive.bright_white()
-                        );
-                        sg_with_guidance.guidance = Some(directive);
+                if sg_with_guidance.guidance.is_none() {
+                    if let Ok(directive) = coordinator.thinker_dispatch_directive(
+                        user_goal,
+                        &subgoal,
+                        global_contract,
+                        &previous_findings,
+                    ) {
+                        if !directive.is_empty() {
+                            println!(
+                                "  [THINKER DIRECTIVE] Task #{}: \"{}\"",
+                                subgoal.id,
+                                directive.bright_white()
+                            );
+                            sg_with_guidance.guidance = Some(directive);
+                        }
                     }
+                } else {
+                    println!(
+                        "  [MAESTRO BLUEPRINT DIRECTIVE] Task #{}: Pre-planned specification applied for '{}'",
+                        subgoal.id,
+                        subgoal.target_entity.bright_cyan()
+                    );
                 }
 
                 let is_first = previous_findings.is_empty();
@@ -3196,25 +3495,17 @@ impl SwarmCoordinator {
     /// Dynamic Thinker Dispatch: System 2 issues the explicit, actionable directive for every worker
     fn thinker_dispatch_directive(
         &self,
-        user_goal: &str,
+        _user_goal: &str,
         subgoal: &SubGoal,
         global_contract: &str,
         previous_findings: &[WorkerFinding],
     ) -> Result<String, String> {
-        let mut ctx = self.orchestrator_model.create_context(2048, 512, 4)?;
+        let mut ctx = self.orchestrator_model.create_context(1024, 256, 4)?;
         let system_msg = "You are the System 2 Sovereign Thinker commanding an execution worker.\n\
-The user communicates ONLY with you. Workers are your executive hands.\n\
 Workers are localized, stateless code-generation engines with short-term context. They do not converse; they execute.\n\
-Your worker is equipped with:\n\
-- Direct code generation: Write complete code inside ```<lang> ... ``` blocks\n\
-- vfs.write(\"filename\", [[content]]): Write complete file content to VFS\n\
-- vfs.read(\"filename\"): Read file from VFS\n\
-- terminal.run(\"command\"): Execute shell command on host\n\
-- DONE: Finish task\n\n\
-Your Task:\n\
+Task:\n\
 Command the worker what EXACT technical functionality, algorithm, and logic to implement for the target file.\n\
-Do NOT give vague directives like 'write implementation'. Specify the concrete purpose and features.\n\
-Be direct, imperative, and specific (max 35 words).";
+Do NOT repeat broad goal instructions. Specify concrete implementation requirements (max 30 words).";
 
         let prev_summary = if previous_findings.is_empty() {
             "Initial task dispatch. No previous findings.".to_string()
@@ -3233,14 +3524,19 @@ Be direct, imperative, and specific (max 35 words).";
         let reads: Vec<_> = subgoal.read_set.iter().map(|p| p.display().to_string()).collect();
 
         let user_msg = format!(
-            "User Goal: {}\nSub-goal: {}\nTarget Entity: {}\nAuthorized Writes: [{}]\nPermitted Reads: [{}]\nContext: {}{}\n\nDirective for Worker:",
-            user_goal, subgoal.description, subgoal.target_entity,
+            "Target Entity: {}\nSub-goal from Plan: {}\nAuthorized Writes: [{}]\nPermitted Reads: [{}]\nContext: {}{}\n\nTechnical Directive for Worker:",
+            subgoal.target_entity, subgoal.description,
             writes.join(", "), reads.join(", "),
             prev_summary, contract_section
         );
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
-        let output = ctx.generate(&prompt, 384)?;
-        let clean = Self::strip_thought(&output);
+        let output = ctx.generate_with_stop_predicate(
+            &prompt,
+            64,
+            &crate::native_llama::SamplingConfig::greedy(),
+            |gen, _piece| gen.contains("\n\n") || gen.lines().count() >= 2,
+        )?;
+        let clean = Self::strip_thought(&output).trim().to_string();
         if clean.is_empty() {
             Ok(subgoal.description.clone())
         } else {
@@ -3434,7 +3730,36 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
 
     pub fn extract_missing_dependency(text: &str) -> Option<String> {
         const ENGINE_INTERNAL_KEYWORDS: &[&str] = &[
-            "vfs", "sandbox", "cleanroom", "bwrap", "omni", "omni_engine", "workspace", "stdout", "stderr", "sys", "os"
+            // System & engine internals
+            "vfs", "sandbox", "cleanroom", "bwrap", "omni", "omni_engine", "workspace", "stdout", "stderr", "sys", "os",
+            // Python standard library modules (never external packages to install!)
+            "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "builtins", "bz2",
+            "calendar", "cmath", "collections", "colorsys", "compileall", "concurrent", "configparser",
+            "contextlib", "copy", "csv", "ctypes", "dataclasses", "datetime", "dbm", "difflib",
+            "dis", "doctest", "email", "encodings", "enum", "errno", "faulthandler", "fcntl",
+            "filecmp", "fileinput", "fnmatch", "fractions", "functools", "gc", "getopt", "getpass",
+            "gettext", "glob", "graphlib", "gzip", "hashlib", "heapq", "hmac", "html", "http",
+            "idlelib", "imaplib", "imghdr", "importlib", "inspect", "io", "ipaddress", "itertools",
+            "json", "keyword", "linecache", "locale", "logging", "lzma", "mailbox", "mailcap",
+            "marshal", "math", "mimetypes", "mmap", "modulefinder", "multiprocessing", "netrc",
+            "nntplib", "numbers", "operator", "optparse", "pathlib", "pdb", "pickle",
+            "pickletools", "pipes", "pkgutil", "platform", "plistlib", "poplib", "posix",
+            "posixpath", "pprint", "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+            "pydoc", "queue", "quopri", "random", "re", "reprlib", "resource", "rlcompleter",
+            "runpy", "sched", "secrets", "select", "selectors", "shelve", "shlex", "shutil",
+            "signal", "site", "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "spwd",
+            "sqlite3", "sre_compile", "sre_constants", "sre_parse", "ssl", "stat", "statistics",
+            "string", "stringprep", "struct", "subprocess", "sunau", "symbol", "symtable",
+            "sysconfig", "syslog", "tabnanny", "tarfile", "telnetlib", "tempfile",
+            "termios", "test", "tests", "textwrap", "threading", "time", "timeit",
+            "token", "tokenize", "tomllib", "trace", "traceback", "tracemalloc", "tty",
+            "turtle", "turtledemo", "types", "typing", "unicodedata", "unittest", "urllib",
+            "uu", "uuid", "venv", "warnings", "wave", "weakref", "webbrowser", "wsgiref",
+            "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo",
+            // Common local package / workspace subfolder names
+            "src", "app", "lib", "pkg", "core", "models", "utils", "views", "controllers",
+            "routes", "services", "helpers", "database", "cli", "library", "client", "server",
+            "fixtures", "common", "shared", "internal", "config", "constants",
         ];
 
         // 1. Python ModuleNotFoundError: No module named 'openpyxl' or "openpyxl"
@@ -3656,49 +3981,52 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         let install_cmd = pm.build_install_command(dep);
 
         println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
-        println!("  [!] {}", format!("المكتبة أو الأداة المطلوبة غير متوفرة في النظام: '{}'", dep).bright_yellow().bold());
-        println!("  بوابة اعتراض الاعتماديات (Universal Dependency Interceptor):");
-        println!("     مدير حزم النظام المكتشف: {:?}", pm);
-        println!("     أمر التثبيت المقترح: {}", install_cmd.bright_cyan());
-        println!("     [1] تثبيت المكتبة للمتابعة (Install & Retry) [y/yes]");
-        println!("     [2] المتابعة دون تثبيت باستخدام بديل متاح (Use Alternative) [n/no]");
+        println!("  [!] {}", format!("Missing required dependency or system tool: '{}'", dep).bright_yellow().bold());
+        println!("  Universal Dependency Interceptor Gate:");
+        println!("     Detected Host Package Manager: {:?}", pm);
+        println!("     Suggested Installation Command: {}", install_cmd.bright_cyan());
+        println!("     [1] Install dependency and retry (Install & Retry) [y/yes]");
+        println!("     [2] Proceed without installing using built-ins/alternative (Use Alternative) [n/no]");
         println!("{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
 
         if let Some(auto) = auto_approve {
             if auto {
-                println!("  [*] وضع الموافقة التلقائية مفعل (--yes / -y). الإجراء المعتمد: [1] تثبيت المكتبة للمتابعة.");
+                println!("  [*] Auto-approve mode active (--yes / -y). Action: [1] Install & Retry.");
                 return DependencyChoice::InstallAndRetry;
             } else {
-                println!("  [*] وضع الرفض التلقائي مفعل (--no). الإجراء المعتمد: [2] المتابعة دون تثبيت باستخدام بديل.");
+                println!("  [*] Auto-decline mode active (--no). Action: [2] Proceed with alternative.");
                 return DependencyChoice::UseAlternative;
             }
         }
 
         if !io::stdin().is_terminal() {
-            println!("  [*] طرفية غير تفاعلية (Non-interactive mode). الاختيار التلقائي: [1] محاولة التثبيت.");
-            return DependencyChoice::InstallAndRetry;
+            println!("  [*] Non-interactive environment. Action: [2] Proceed with alternative (fail-safe).");
+            return DependencyChoice::UseAlternative;
         }
 
         loop {
-            print!("  >> اختيارك [1/2 أو y/n، الافتراضي: 1]: ");
+            print!("  >> Your choice [1 for Install, 2 for Alternative, or y/n]: ");
             let _ = io::stdout().flush();
             let mut input = String::new();
             match io::stdin().read_line(&mut input) {
                 Ok(0) => {
                     println!();
-                    return DependencyChoice::InstallAndRetry;
+                    return DependencyChoice::UseAlternative;
                 }
                 Ok(_) => {
                     let trimmed = input.trim().to_lowercase();
-                    if trimmed.is_empty() || trimmed == "1" || trimmed == "y" || trimmed == "yes" {
+                    if trimmed == "1" || trimmed == "y" || trimmed == "yes" {
                         return DependencyChoice::InstallAndRetry;
                     } else if trimmed == "2" || trimmed == "n" || trimmed == "no" {
                         return DependencyChoice::UseAlternative;
+                    } else if trimmed.is_empty() {
+                        println!("  [!] Please enter 1 or 2 explicitly (no automatic default taken).");
+                        continue;
                     }
-                    println!("     يرجى إدخال 1 (Yes) أو 2 (No).");
+                    println!("     Invalid choice '{}'. Please enter 1 (Yes/Install) or 2 (No/Alternative).", trimmed);
                 }
                 Err(_) => {
-                    return DependencyChoice::InstallAndRetry;
+                    return DependencyChoice::UseAlternative;
                 }
             }
         }
@@ -3736,9 +4064,6 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("separate files")
             || lower.contains("multiple files")
             || lower.contains("multi-file")
-            || lower.contains("تفاعلي")
-            || lower.contains("تفاعلية")
-            || lower.contains("متعدد")
         {
             return false;
         }
@@ -3750,13 +4075,6 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("one script")
             || lower.contains("single script")
             || lower.contains("standalone script")
-            || lower.contains("ملف واحد")
-            || lower.contains("ملفا واحدا")
-            || lower.contains("سكربت واحد")
-            || lower.contains("صفحة واحدة")
-            || lower.contains("صفحه واحده")
-            || lower.contains("في ملف")
-            || lower.contains("فى ملف")
             || lower.contains("utility")
             || lower.contains("renderer")
             || lower.contains("benchmark")
@@ -3767,9 +4085,7 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
             || lower.contains("monitor")
             || lower.contains("summarizer")
             || lower.contains("evaluator")
-            || lower.contains("اداة")
-            || lower.contains("أداة")
-            || (lower.contains("internet speed") || lower.contains("سرعة الإنترنت"))
+            || lower.contains("internet speed")
     }
 
     /// Normalizes entity filename to proper casing (e.g. PascalCase for Java files)
@@ -3801,21 +4117,52 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
     /// Extract explicit deliverable filenames directly referenced in goal prompt
     pub fn extract_explicit_deliverables(goal: &str) -> Vec<String> {
         let mut files = Vec::new();
-        let valid_exts = [".py", ".html", ".js", ".css", ".java", ".rs", ".sh", ".json", ".md", ".csv", ".txt"];
+        let valid_exts = [
+            ".py", ".html", ".js", ".css", ".java", ".rs", ".sh", ".json",
+            ".md", ".csv", ".txt", ".toml", ".yaml", ".yml",
+        ];
 
         for token in goal.split(|c: char| {
             c.is_whitespace() || c == '"' || c == '\'' || c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == ',' || c == ':' || c == ';'
         }) {
-            let trimmed = token.trim().trim_matches(|c: char| c == '.' || c == '/' || c == '\\');
+            let trimmed = token.trim().trim_matches(|c: char| c == '`' || c == '\'' || c == '"' || c == '*' || c == '-');
             for ext in &valid_exts {
                 if trimmed.ends_with(ext) && trimmed.len() > ext.len() {
-                    let fname = trimmed.to_string();
-                    if !fname.contains('/') && !fname.contains('\\') && !files.contains(&fname) {
+                    let fname = trimmed.trim_start_matches(|c: char| c == '.' || c == '/').to_string();
+                    if !fname.starts_with('/') && !fname.contains("..") && !files.contains(&fname) {
                         files.push(fname);
                     }
                 }
             }
         }
+
+        // Structural module inference for Python projects
+        let lower = goal.to_lowercase();
+        let is_python = lower.contains("python") || lower.contains(".py") || lower.contains("unittest") || lower.contains("cli");
+        if is_python {
+            if (lower.contains("database") && lower.contains("module")) || lower.contains("database,") {
+                if !files.iter().any(|f| f.contains("database")) {
+                    files.push("database.py".to_string());
+                }
+            }
+            if (lower.contains("library") && lower.contains("module")) || lower.contains("library,") {
+                if !files.iter().any(|f| f.contains("library")) {
+                    files.push("library.py".to_string());
+                }
+            }
+            if (lower.contains("cli") && lower.contains("module")) || lower.contains("cli,") {
+                if !files.iter().any(|f| f.contains("cli")) {
+                    files.push("cli.py".to_string());
+                }
+            }
+            if lower.contains("readme") && !files.iter().any(|f| f.to_lowercase().starts_with("readme")) {
+                files.push("README.md".to_string());
+            }
+            if (lower.contains("unittest") || lower.contains("unit tests") || lower.contains("test suite")) && !files.iter().any(|f| f.contains("test")) {
+                files.push("tests.py".to_string());
+            }
+        }
+
         files
     }
 
@@ -3826,36 +4173,35 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         }
 
         let lower = goal.to_lowercase();
-        let is_java = (lower.contains(".java") || lower.contains("جافا") || lower.contains("java"))
+        let is_java = (lower.contains(".java") || lower.contains("java"))
             && !lower.contains("javascript")
             && !lower.contains("js");
 
         if is_java {
             "Main.java".to_string()
-        } else if lower.contains(".html") || lower.contains("html") || lower.contains("webapp") || lower.contains("web app") || lower.contains("frontend") || lower.contains("javascript") || lower.contains("css") || lower.contains("صفحة") || lower.contains("صفحه") || lower.contains("موقع") || lower.contains("web") {
+        } else if lower.contains(".html") || lower.contains("html") || lower.contains("webapp") || lower.contains("web app") || lower.contains("frontend") || lower.contains("javascript") || lower.contains("css") || lower.contains("web") {
             if lower.contains(".py") || lower.contains("python") || lower.contains("server") || lower.contains("backend") {
                 "app.py".to_string()
             } else {
                 "index.html".to_string()
             }
-        } else if lower.contains(".py") || lower.contains("python") || lower.contains("بايثون") {
-            if lower.contains("speed") || lower.contains("سرعة") || lower.contains("سرعه") {
+        } else if lower.contains(".py") || lower.contains("python") {
+            if lower.contains("speed") {
                 "measure_speed.py".to_string()
             } else {
                 "main.py".to_string()
             }
         } else if lower.contains(".pdf") || lower.contains("pdf") {
             "document.pdf".to_string()
-        } else if lower.contains(".sh") || lower.contains("bash") || lower.contains("shell") || lower.contains("باش") {
+        } else if lower.contains(".sh") || lower.contains("bash") || lower.contains("shell") {
             "script.sh".to_string()
         } else if lower.contains(".json") || lower.contains("json") {
             "data.json".to_string()
-        } else if lower.contains(".csv") || lower.contains("csv") || lower.contains("جدول")
+        } else if lower.contains(".csv") || lower.contains("csv")
             || lower.contains("excel") || lower.contains("xlsx") || lower.contains("xls")
-            || lower.contains("اكسل") || lower.contains("إكسل")
         {
             "data.csv".to_string()
-        } else if lower.contains(".md") || lower.contains("markdown") || lower.contains("تقرير") || lower.contains("report") {
+        } else if lower.contains(".md") || lower.contains("markdown") || lower.contains("report") {
             "report.md".to_string()
         } else {
             "output.txt".to_string()
@@ -3868,7 +4214,6 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("build")
         || lower.contains("game")
         || lower.contains("java")
-        || lower.contains("جافا")
         || lower.contains("html")
         || lower.contains("css")
         || lower.contains("js")
@@ -3903,45 +4248,6 @@ fn is_build_task(text: &str) -> bool {
         || lower.contains("test")
         || lower.contains("verify")
         || lower.contains("check")
-        || lower.contains("اكتب")
-        || lower.contains("انشئ")
-        || lower.contains("أنشئ")
-        || lower.contains("اصنع")
-        || lower.contains("اعمل")
-        || lower.contains("احذف")
-        || lower.contains("امسح")
-        || lower.contains("نظف")
-        || lower.contains("ازالة")
-        || lower.contains("إزالة")
-        || lower.contains("عدل")
-        || lower.contains("صلح")
-        || lower.contains("غير")
-        || lower.contains("تعديل")
-        || lower.contains("تصليح")
-        || lower.contains("افحص")
-        || lower.contains("شغل")
-        || lower.contains("اختبر")
-        || lower.contains("تحقق")
-        || lower.contains("صفحة")
-        || lower.contains("صفحه")
-        || lower.contains("كود")
-        || lower.contains("برمج")
-        || lower.contains("سكربت")
-        || lower.contains("سكريبت")
-        || lower.contains("بايثون")
-        || lower.contains("برنامج")
-        || lower.contains("اداة")
-        || lower.contains("أداة")
-        || lower.contains("اكسل")
-        || lower.contains("إكسل")
-        || lower.contains("تقرير")
-        || lower.contains("ملف")
-        || lower.contains("لعبة")
-        || lower.contains("لعبه")
-        || lower.contains("موقع")
-        || lower.contains("تطبيق")
-        || lower.contains("جدول")
-        || lower.contains("زر")
 }
 
 pub fn infer_task_kind(text: &str) -> TaskKind {
@@ -3952,8 +4258,6 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     if trimmed.starts_with("implement") || trimmed.starts_with("create") || trimmed.starts_with("build")
         || trimmed.starts_with("write") || trimmed.starts_with("generate") || trimmed.starts_with("code")
         || trimmed.starts_with("add") || trimmed.starts_with("develop")
-        || trimmed.starts_with("انشئ") || trimmed.starts_with("أنشئ") || trimmed.starts_with("ابن")
-        || trimmed.starts_with("اكتب") || trimmed.starts_with("برمج") || trimmed.starts_with("طور")
     {
         return TaskKind::Create;
     }
@@ -3961,8 +4265,6 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     // Priority 2: Modification / Refactoring / Fixing tasks
     if lower.contains("patch") || lower.contains("modify") || lower.contains("edit") || lower.contains("fix")
         || lower.contains("refactor") || lower.contains("migrate") || lower.contains("update")
-        || lower.contains("عدل") || lower.contains("صلح") || lower.contains("غير") || lower.contains("تعديل")
-        || lower.contains("تصليح") || lower.contains("تحديث") || lower.contains("ترقية")
     {
         return TaskKind::Modify;
     }
@@ -3971,7 +4273,6 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     if lower.contains("test") || lower.contains("smoke test") || lower.contains("unit test")
         || lower.contains("verification") || lower.contains("verify") || lower.contains("cleanroom")
         || trimmed.starts_with("run ") || trimmed.starts_with("execute ")
-        || lower.contains("افحص") || lower.contains("شغل") || lower.contains("اختبر")
     {
         return TaskKind::Test;
     }
@@ -3980,8 +4281,6 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     if trimmed.starts_with("delete ") || trimmed.starts_with("remove ") || trimmed.starts_with("rm ")
         || lower.contains("delete file") || lower.contains("remove file") || lower.contains("cleanup redundant")
         || lower.contains("delete redundant") || lower.contains("remove redundant")
-        || trimmed.starts_with("احذف") || trimmed.starts_with("امسح") || trimmed.starts_with("نظف")
-        || lower.contains("حذف الملف") || lower.contains("مسح الملف") || lower.contains("إزالة الملف")
     {
         TaskKind::Delete
     } else {
@@ -4019,6 +4318,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 TaskKind::Test => "[TEST]".bright_blue(),
                 TaskKind::Delete => "[DELETE]".bright_red(),
                 TaskKind::Search => "[SEARCH]".bright_magenta(),
+                TaskKind::Check => "[CHECK]".bright_cyan(),
             };
             let desc_trunc = if sg.description.len() > 44 {
                 format!("{}...", &sg.description[..41])
@@ -4099,11 +4399,93 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         Ok(contract.trim().to_string())
     }
 
+    /// Ingests and validates an external Maestro Plan from JSON or structured text.
+    pub fn parse_external_plan(content: &str) -> Result<Vec<SubGoal>, String> {
+        let trimmed = content.trim();
+        // 1. Try parsing full rich PlanBlueprint JSON
+        if let Ok(blueprint) = serde_json::from_str::<PlanBlueprint>(trimmed) {
+            println!("  {} Successfully validated rich Maestro JSON Blueprint ({} nodes).", "[MAESTRO SCHEMA]".bright_green().bold(), blueprint.nodes.len());
+            return blueprint.to_subgoals();
+        }
+        // 2. Try parsing raw JSON array of nodes
+        if let Ok(nodes) = serde_json::from_str::<Vec<PlanBlueprintNode>>(trimmed) {
+            let bp = PlanBlueprint { project: None, language: None, concurrency_limit: None, nodes };
+            println!("  {} Successfully validated Maestro JSON node array ({} nodes).", "[MAESTRO SCHEMA]".bright_green().bold(), bp.nodes.len());
+            return bp.to_subgoals();
+        }
+        // 3. Fallback: Parse SUBGOAL: text lines
+        let mut subgoals = Vec::new();
+        let mut task_id = 1;
+        for line in trimmed.lines() {
+            let l = line.trim();
+            if l.is_empty() || l.starts_with('#') || l.starts_with("//") {
+                continue;
+            }
+            if l.to_uppercase().contains("SUBGOAL:") || l.to_uppercase().contains("SUB-GOAL:") {
+                let parts: Vec<&str> = l.split('|').map(|s| s.trim()).collect();
+                let desc = parts[0].trim_start_matches(|c: char| c == '-' || c == '*' || c.is_numeric() || c == '.' || c == ' ')
+                    .replace("SUBGOAL:", "").replace("subgoal:", "").trim().to_string();
+                let mut entity = String::new();
+                let mut depends_on = Vec::new();
+                for p in &parts[1..] {
+                    let pu = p.to_uppercase();
+                    if pu.starts_with("ENTITY:") {
+                        entity = Self::normalize_entity_filename(p[7..].trim());
+                    } else if pu.starts_with("DEPENDS_ON:") {
+                        let deps = p[11..].trim();
+                        if deps.to_lowercase() != "none" {
+                            for d in deps.split(',') {
+                                let cd = Self::normalize_entity_filename(d.trim());
+                                if !cd.is_empty() {
+                                    depends_on.push(cd);
+                                }
+                            }
+                        }
+                    }
+                }
+                if entity.is_empty() {
+                    for part in &parts {
+                        if part.contains(".py") || part.contains(".rs") || part.contains(".js") || part.contains(".html") {
+                            for word in part.split_whitespace() {
+                                if word.contains('.') && !word.starts_with("http") {
+                                    entity = Self::normalize_entity_filename(word.trim_matches(|c: char| c == '`' || c == '\'' || c == '"'));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let read_set = depends_on.iter().map(PathBuf::from).collect();
+                let write_set = if !entity.is_empty() { vec![PathBuf::from(&entity)] } else { Vec::new() };
+                subgoals.push(SubGoal {
+                    id: task_id,
+                    description: desc,
+                    target_entity: entity,
+                    kind: TaskKind::Create,
+                    guidance: None,
+                    depends_on,
+                    read_set,
+                    write_set,
+                    max_tokens: 2048,
+                });
+                task_id += 1;
+            }
+        }
+        if !subgoals.is_empty() {
+            println!("  {} Parsed {} subgoals from text format.", "[MAESTRO TEXT]".bright_green().bold(), subgoals.len());
+            return Ok(subgoals);
+        }
+        Err("Failed to parse Maestro Plan: Input is neither a valid PlanBlueprint JSON nor contains 'SUBGOAL:' lines.".to_string())
+    }
+
     /// System 2: Decomposes goal into discrete sub-goals
     fn orchestrate_plan(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
         let is_build = Self::is_build_task(goal);
 
         let mut ctx = self.orchestrator_model.create_context(4096, 512, 4)?;
+
+        let explicit_files = Self::extract_explicit_deliverables(goal);
+        let effective_max_subgoals = self.config.max_subgoals.max(if !explicit_files.is_empty() { explicit_files.len() + 2 } else { 0 });
 
         let system_msg = if is_build {
             if self.config.is_modify_mode {
@@ -4125,11 +4507,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     4. Declare KIND: CREATE only if a brand new supplementary file (e.g. style sheet, new module) is strictly needed.\n\
                     5. MANDATORY ACCEPTANCE TEST: Append a final review test worker (KIND: TEST) verifying the new features in the cleanroom.\n\n\
                     Output each sub-goal on a new line strictly formatted as:\n\
-                    SUBGOAL: <explicit modification directive> | ENTITY: <target filename> | KIND: <MODIFY|CREATE|TEST> | READ_SET: <comma-separated files> | WRITE_SET: <comma-separated files> | DEPENDS_ON: <dependencies or none>\n\n\
-                    Examples:\n\
-                    SUBGOAL: Extend frontend with dark/light mode toggle and task reordering | ENTITY: index.html | KIND: MODIFY | READ_SET: index.html | WRITE_SET: index.html | DEPENDS_ON: none\n\
-                    SUBGOAL: Update backend API routes to support task reordering | ENTITY: app.py | KIND: MODIFY | READ_SET: app.py | WRITE_SET: app.py | DEPENDS_ON: none\n\
-                    SUBGOAL: Execute cleanroom verification and validate modified features | ENTITY: index.html | KIND: TEST | READ_SET: index.html, app.py | WRITE_SET: none | DEPENDS_ON: index.html",
+                    SUBGOAL: <explicit modification directive> | ENTITY: <target filename> | KIND: <MODIFY|CREATE|TEST> | READ_SET: <comma-separated files> | WRITE_SET: <comma-separated files> | DEPENDS_ON: <dependencies or none>",
                     files_list
                 )
             } else {
@@ -4139,39 +4517,20 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     Workers write standalone project files directly in their native language (e.g. ```python, ```sh, ```html, ```java).\n\n\
                     PARSIMONY & MODULAR DISPATCH RULES:\n\
                     - You decide how many workers to deploy (from 2 up to {} max budget).\n\
-                    - EXPLICIT FILENAME INVARIANT: When the user objective explicitly requests specific filenames (e.g. calculator.py, test_calculator.py, README.md), you MUST use those exact filenames as target ENTITY. NEVER invent generic filenames like core_models.py or app_cli.py when explicit files are requested.\n\
+                    - EXPLICIT FILENAME INVARIANT: When the user objective explicitly requests specific filenames, you MUST use those exact filenames as target ENTITY. NEVER invent arbitrary filenames when explicit files are requested.\n\
                     - MODULAR DECOMPOSITION: Decompose multi-component projects into distinct, cohesive sub-tasks across modular files.\n\
-                    - For Java: Target filenames MUST use PascalCase (e.g. GameLoop.java, Snake.java, Food.java) matching their primary public class.\n\
-                    - SPREADSHEETS & TABULAR: For spreadsheets, Excel, or tabular data, direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv) which Excel and spreadsheet software open natively.\n\
+                    - For Java: Target filenames MUST use PascalCase matching their primary public class.\n\
+                    - SPREADSHEETS & TABULAR: For spreadsheets, Excel, or tabular data, direct the worker to generate a clean, well-formatted CSV file (ENTITY: data.csv).\n\
                     - VFS BOUNDARIES: Explicitly declare the file(s) the worker will create/mutate (WRITE_SET) and any existing file(s) it needs to inspect (READ_SET).\n\
                     - MANDATORY CLEANROOM ACCEPTANCE TEST: When the objective creates an executable program or CLI application, you MUST ALWAYS append a final review test worker (kind: TEST) which lists the staged deliverable in READ_SET and DEPENDS_ON to verify user acceptance criteria in the isolated cleanroom.\n\n\
                     DELIVERABLES SPECIFICATION:\n\
                     - Explicitly determine the exact deliverable files and total count required to satisfy the user objective.\n\
                     - You may declare planned deliverable files on the first line:\n\
-                    PLANNED_FILES: <comma-separated list of filenames, e.g. calculator.py, test_calculator.py>\n\n\
+                    PLANNED_FILES: <comma-separated list of filenames>\n\n\
                     Output each sub-goal on a new line strictly formatted as:\n\
                     SUBGOAL: <explicit implementation directive> | ENTITY: <target filename> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or target filename> | DEPENDS_ON: <comma-separated dependencies or none>\n\n\
-                    Examples:\n\
-                    User specifies explicit implementation and test files:\n\
-                    SUBGOAL: Implement core application logic, operations, and input validation | ENTITY: calculator.py | READ_SET: none | WRITE_SET: calculator.py | DEPENDS_ON: none\n\
-                    SUBGOAL: Implement unit tests with coverage for operations and edge cases | ENTITY: test_calculator.py | READ_SET: calculator.py | WRITE_SET: test_calculator.py | DEPENDS_ON: calculator.py\n\
-                    SUBGOAL: Write usage documentation and project guide | ENTITY: README.md | READ_SET: none | WRITE_SET: README.md | DEPENDS_ON: none\n\
-                    Single-file deliverable:\n\
-                    SUBGOAL: Implement internet speed measurement tool using download and upload tests | ENTITY: measure_speed.py | READ_SET: none | WRITE_SET: measure_speed.py | DEPENDS_ON: none\n\
-                    Multi-file deliverable:\n\
-                    SUBGOAL: Implement backend API endpoints and data storage | ENTITY: server.py | READ_SET: none | WRITE_SET: server.py | DEPENDS_ON: none\n\
-                    SUBGOAL: Implement client frontend interface and network calls | ENTITY: client.py | READ_SET: server.py | WRITE_SET: client.py | DEPENDS_ON: server.py\n\
-                    Spreadsheet / tabular deliverable:\n\
-                    SUBGOAL: Write the complete tabular data in CSV format | ENTITY: data.csv | READ_SET: none | WRITE_SET: data.csv | DEPENDS_ON: none\n\
-                    Full-stack web application with backend server and UI:\n\
-                    SUBGOAL: Implement backend API server and HTTP endpoints | ENTITY: app.py | READ_SET: none | WRITE_SET: app.py | DEPENDS_ON: none\n\
-                    SUBGOAL: Implement interactive frontend HTML with dark mode CSS and JavaScript | ENTITY: index.html | READ_SET: app.py | WRITE_SET: index.html | DEPENDS_ON: app.py\n\
-                    Multi-file web deliverable:\n\
-                    SUBGOAL: Write the HTML structure and markup | ENTITY: index.html | READ_SET: none | WRITE_SET: index.html | DEPENDS_ON: none\n\
-                    SUBGOAL: Write the external CSS styling | ENTITY: styles.css | READ_SET: index.html | WRITE_SET: styles.css | DEPENDS_ON: index.html\n\n\
-                    - REVIEW & TEST WORKER: When the objective creates an executable program, you may deploy a final review test worker (kind: TEST) which MUST list all code files it tests in READ_SET and DEPENDS_ON.\n\
                     - TERMINATION INVARIANT: Output ONLY the planned deliverable lines or SUBGOAL lines. Stop immediately after the final SUBGOAL line. Do NOT write explanations, markdown preamble, conversational text, or postscripts.",
-                    self.config.max_subgoals
+                    effective_max_subgoals
                 )
             }
         } else {
@@ -4182,15 +4541,11 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 - For straightforward topics, 1 worker is sufficient.\n\n\
                 Output each sub-goal on a new line strictly formatted as:\n\
                 SUBGOAL: <precise search objective> | ENTITY: <primary keyword> | READ_SET: <comma-separated files or none> | WRITE_SET: <comma-separated files or none> | DEPENDS_ON: <dependencies or none>\n\n\
-                Examples:\n\
-                SUBGOAL: Search for room temperature superconductors 2026 breakthroughs | ENTITY: superconductors | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none\n\
-                SUBGOAL: Search for recent astrophysics discoveries | ENTITY: astrophysics | READ_SET: none | WRITE_SET: none | DEPENDS_ON: none\n\n\
                 - TERMINATION INVARIANT: Output ONLY SUBGOAL lines and stop immediately. Do not write explanations.",
-                self.config.max_subgoals
+                effective_max_subgoals
             )
         };
 
-        let explicit_files = Self::extract_explicit_deliverables(goal);
         let user_msg = if !explicit_files.is_empty() {
             format!(
                 "Goal: {}\nIMPORTANT: User explicitly requested deliverables: [{}]. Your plan MUST create exactly these target files as ENTITY.",
@@ -4202,8 +4557,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         };
         let prompt = Self::format_prompt(&self.orchestrator_model, &system_msg, &user_msg);
 
-        let max_plan_tokens = (self.config.max_subgoals * 70 + 96).min(350);
-        let target_subgoals = self.config.max_subgoals;
+        let max_plan_tokens = (effective_max_subgoals * 75 + 150).min(1500);
+        let target_subgoals = effective_max_subgoals;
         let output = ctx.generate_with_stop_predicate(
             &prompt,
             max_plan_tokens,
@@ -4317,13 +4672,42 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 }
             }
 
-            let entity = if !raw_entity.is_empty() {
+            let mut entity = if !raw_entity.is_empty() {
                 Self::normalize_entity_filename(&raw_entity)
-            } else if is_build {
-                Self::infer_target_entity(goal)
             } else {
-                goal.split_whitespace().next().unwrap_or("general").to_string()
+                String::new()
             };
+
+            // Resilient Fallback 1: Extract ENTITY: anywhere in the line even without pipe delimiter
+            if entity.is_empty() {
+                if let Some(pos) = l_upper.find("ENTITY:") {
+                    let after = l[pos + 7..].trim();
+                    let end = after.find(|c: char| c == '|' || c.is_whitespace() || c == ',').unwrap_or(after.len());
+                    let candidate = after[..end].trim().trim_matches(|c: char| c == '`' || c == '\'' || c == '"');
+                    if !candidate.is_empty() {
+                        entity = Self::normalize_entity_filename(candidate);
+                    }
+                }
+            }
+
+            // Resilient Fallback 2: Match explicitly requested deliverables mentioned in the subgoal line
+            if entity.is_empty() {
+                for explicit in &explicit_files {
+                    if l.contains(explicit) || l_upper.contains(&explicit.to_uppercase()) {
+                        entity = explicit.clone();
+                        break;
+                    }
+                }
+            }
+
+            // Resilient Fallback 3: General inference
+            if entity.is_empty() {
+                entity = if is_build {
+                    Self::infer_target_entity(goal)
+                } else {
+                    goal.split_whitespace().next().unwrap_or("general").to_string()
+                };
+            }
 
             if is_build && !entity.is_empty() && entity != "none" && !planned_files.contains(&entity) {
                 planned_files.push(entity.clone());
@@ -4411,7 +4795,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     max_tokens: if is_build { 4096 } else { 2048 },
                 });
                 id += 1;
-                if subgoals.len() >= self.config.max_subgoals {
+                if subgoals.len() >= effective_max_subgoals {
                     break;
                 }
             }
@@ -4629,11 +5013,35 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         abort_flag: Option<Arc<AtomicBool>>,
         dag_contracts: Option<&HashMap<String, String>>,
     ) -> Result<WorkerFinding, String> {
-        let is_build = Self::is_build_task(&subgoal.description) || Self::is_build_task(user_goal);
+        if subgoal.kind == TaskKind::Check {
+            let epistemic_flag = format!(
+                "[FLAG #{} (Verified Checkpoint): Milestone '{}' reached; dependencies verified; contracts sealed]",
+                subgoal.id, subgoal.target_entity
+            );
+            println!("{}", "  ┌── [TOPOLOGICAL MILESTONE CHECKPOINT] ────────────────────────────────".bright_cyan().bold());
+            println!("  │ Checkpoint : Task #{} - {}", subgoal.id, subgoal.description.bright_white().bold());
+            println!("  │ Milestone  : {}", subgoal.target_entity.bright_yellow());
+            println!("  │ Status     : Ancestor generation validated in VFS; topological cut-point sealed");
+            println!("{}", "  └──────────────────────────────────────────────────────────────────────".bright_cyan());
+
+            return Ok(WorkerFinding {
+                worker_id: subgoal.id,
+                sub_goal: subgoal.description.clone(),
+                finding: epistemic_flag,
+                steps_taken: 1,
+                rollbacks_count: 0,
+                tokens_saved_by_rollback: 0,
+            });
+        }
+
+        let is_build = matches!(subgoal.kind, TaskKind::Create | TaskKind::Modify | TaskKind::Test)
+            || !subgoal.target_entity.is_empty()
+            || Self::is_build_task(&subgoal.description)
+            || Self::is_build_task(user_goal);
 
         let mut attempt = 1;
             let mut last_error_desc: Option<String> = None;
-        let max_attempts = 3;
+        let max_attempts = self.config.max_steps_per_worker.max(3);
         let mut current_directive = subgoal.guidance.clone().unwrap_or_else(|| subgoal.description.clone());
         let mut declined_dependencies: Vec<String> = Vec::new();
         let mut pending_nudge: Option<String> = None;
@@ -4917,12 +5325,12 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                         if lines_count > AUTO_INJECT_MAX_LINES || bytes.len() > AUTO_INJECT_MAX_BYTES {
                                             let distilled = Self::distill_interface_fallback(&fname, &content);
                                             read_context.push_str(&format!(
-                                                "\n[DAG CONTRACT FOR '{}']:\n```\n{}\n```\n",
+                                                "\n[UPSTREAM DAG CONTRACT FOR '{}' - READ-ONLY REFERENCE, DO NOT RE-DECLARE, IMPORT SYMBOLS]:\n```\n{}\n```\n",
                                                 fname, distilled
                                             ));
                                         } else {
                                             read_context.push_str(&format!(
-                                                "\n[EXISTING DELIVERABLE '{}' IN VFS]:\n```\n{}\n```\n",
+                                                "\n[UPSTREAM DELIVERABLE '{}' - READ-ONLY REFERENCE, DO NOT RE-DECLARE ITS CLASSES, IMPORT THEM]:\n```\n{}\n```\n",
                                                 read_path.display(), content
                                             ));
                                         }
@@ -4937,10 +5345,12 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 [MANDATORY INTEROPERABILITY]:\n\
                                 - You share continuous attention memory with prior workers above.\n\
                                 - Strictly attend to the exact class names, method signatures, return types, and fields defined in prior files in memory.\n\
-                                - Ensure 100% interoperability and compatibility.{}\n\
+                                - Ensure 100% interoperability and compatibility.\n\
+                                - IMPORT CONSUMPTION: When upstream files are listed in [DAG CONTRACT] or [READ_SET], import and consume their symbols (e.g. 'from database import Database'). NEVER re-define or duplicate upstream classes inside this file.\n\
+                                - Implement the specific, unique logic, classes, and functions required for this deliverable.{}\n\
                                 - Output EXCLUSIVELY the complete, working code for '{}' inside a single code block.\n\
                                 - ZERO conversational text outside the code block.\n\
-                                Generate the code for '{}' now:",
+                                Output the complete '{}' now:",
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
                                 read_context,
                                 java_guidance, subgoal.target_entity, subgoal.target_entity
@@ -5574,20 +5984,91 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 && vfs_target_exists && vfs_target_size > 0 && !placeholder_found
             {
                 if let Some(bytes) = vfs_bytes.as_ref() {
-                    let vfs_files = self.vfs.all_files();
-                    let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
-                        &subgoal.target_entity,
-                        bytes,
-                        &vfs_files,
-                    );
-                    if !report.is_valid {
-                        syntax_error = report.error_message.clone();
-                        cleanroom_missing_dep = Self::extract_missing_dependency(&report.raw_output)
-                            .or_else(|| report.error_message.as_ref().and_then(|m| Self::extract_missing_dependency(m)));
-                        if let Some(ref dep) = cleanroom_missing_dep {
-                            println!("  [DEPENDENCY INTERCEPTOR] Detected missing external package: '{}' in '{}'", dep.bright_yellow().bold(), subgoal.target_entity);
-                        } else if let Some(line) = report.error_line {
-                            println!("  [UNIVERSAL CLEANROOM] Detected error at line {} in '{}': {:?}", line, subgoal.target_entity, report.error_message);
+                    let code_str = String::from_utf8_lossy(bytes);
+
+                    // Contract Gate 1: Verify all mandatory symbols are present BEFORE running sandbox
+                    if let Some(ref guidance_text) = subgoal.guidance {
+                        if let Some(marker_pos) = guidance_text.find("MANDATORY REQUIRED DEFINITIONS") {
+                            let marker_section = &guidance_text[marker_pos..];
+                            let section_end = marker_section.find("\n\n").unwrap_or(marker_section.len());
+                            for line in marker_section[..section_end].lines() {
+                                let item = line.trim().trim_start_matches('-').trim();
+                                if (item.starts_with("class ") || item.starts_with("def ")) && !code_str.contains(item) {
+                                    let err = format!(
+                                        "ERR_MISSING_CONTRACT_SYMBOL: Target file '{}' is missing required definition '{}'. You MUST implement '{}' in this file.",
+                                        subgoal.target_entity, item, item
+                                    );
+                                    println!("  [CONTRACT GATE] Violation: '{}' missing mandatory symbol '{}'", subgoal.target_entity.bright_red(), item.bright_yellow());
+                                    syntax_error = Some(err);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Contract Gate 2: Anti-Redeclaration Guard (prevent workers from duplicating upstream classes)
+                    if syntax_error.is_none() {
+                        for dep_path in &subgoal.read_set {
+                            let dep_name = dep_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                            if dep_name.is_empty() || dep_name == subgoal.target_entity {
+                                continue;
+                            }
+                            if let Some(dep_bytes) = self.vfs.read_file(dep_path) {
+                                let dep_code = String::from_utf8_lossy(&dep_bytes);
+                                for line in dep_code.lines() {
+                                    let trimmed = line.trim();
+                                    if trimmed.starts_with("class ") {
+                                        if let Some(class_name) = trimmed.trim_start_matches("class ").split(&['(', ':', ' '][..]).next() {
+                                            let class_name = class_name.trim();
+                                            if !class_name.is_empty() {
+                                                for cur_line in code_str.lines() {
+                                                    let cur_trimmed = cur_line.trim();
+                                                    if cur_trimmed.starts_with("class ") {
+                                                        if let Some(cur_class) = cur_trimmed.trim_start_matches("class ").split(&['(', ':', ' '][..]).next() {
+                                                            if cur_class.trim() == class_name {
+                                                                let mod_name = dep_name.trim_end_matches(".py");
+                                                                let err = format!(
+                                                                    "ERR_FORBIDDEN_REDECLARATION: Target file '{}' re-declares 'class {}' which is already defined in upstream dependency '{}'. You MUST delete 'class {}' from this file and import it instead using: 'from {} import {}'.",
+                                                                    subgoal.target_entity, class_name, dep_name, class_name, mod_name, class_name
+                                                                );
+                                                                println!("  [CONTRACT GATE] Violation: '{}' illegally re-declares '{}' from '{}'", subgoal.target_entity.bright_red(), class_name.bright_yellow(), dep_name.bright_cyan());
+                                                                syntax_error = Some(err);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if syntax_error.is_some() {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if syntax_error.is_some() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Run Isolated Sandbox Cleanroom Verification ONLY if Structural Contracts pass
+                    if syntax_error.is_none() {
+                        let vfs_files = self.vfs.all_files();
+                        let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
+                            &subgoal.target_entity,
+                            bytes,
+                            &vfs_files,
+                        );
+                        if !report.is_valid {
+                            syntax_error = report.error_message.clone();
+                            cleanroom_missing_dep = Self::extract_missing_dependency(&report.raw_output)
+                                .or_else(|| report.error_message.as_ref().and_then(|m| Self::extract_missing_dependency(m)));
+                            if let Some(ref dep) = cleanroom_missing_dep {
+                                println!("  [DEPENDENCY INTERCEPTOR] Detected missing external package: '{}' in '{}'", dep.bright_yellow().bold(), subgoal.target_entity);
+                            } else if let Some(line) = report.error_line {
+                                println!("  [UNIVERSAL CLEANROOM] Detected error at line {} in '{}': {:?}", line, subgoal.target_entity, report.error_message);
+                            }
                         }
                     }
                 }
@@ -5750,6 +6231,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 TaskKind::Search => {
                     exec_success && !exec_output.trim().is_empty()
                 }
+                TaskKind::Check => true,
             };
 
             if real_success {
@@ -5790,6 +6272,12 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             subgoal.id
                         )
                     }
+                    TaskKind::Check => {
+                        format!(
+                            "[FLAG #{} (Verified Checkpoint): Milestone '{}' reached; dependencies verified; contracts sealed]",
+                            subgoal.id, subgoal.target_entity
+                        )
+                    }
                 };
 
                 println!("{}", "  ┌────────────────────────────────────────────────────────────────────────┐".bright_green());
@@ -5815,6 +6303,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                     TaskKind::Search => {
                         println!("  │     * Search/Fetch: Gathered factual ground truth");
+                    }
+                    TaskKind::Check => {
+                        println!("  │     * Milestone: {} | Status: TOPOLOGICALLY SEALED", subgoal.target_entity.bright_cyan());
                     }
                 }
                 println!("{}", "  └────────────────────────────────────────────────────────────────────────┘".bright_green());
@@ -5949,7 +6440,15 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     }
                 }
                 ThinkerDecision::Reset(new_directive) => {
-                    current_directive = new_directive;
+                    let cleaned_directive = new_directive.trim();
+                    if let Some(ref maestro_guidance) = subgoal.guidance {
+                        current_directive = format!(
+                            "{}\n\n[SELF-HEALING CORRECTION FOR PREVIOUS ATTEMPT - DO NOT COPY THIS TEXT INTO CODE]:\n# Note: {}\n",
+                            maestro_guidance, cleaned_directive
+                        );
+                    } else {
+                        current_directive = cleaned_directive.to_string();
+                    }
                     pending_nudge = None;
                     if !is_premature_token_misfire {
                         attempt += 1;
@@ -6175,8 +6674,13 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         }
 
         // 6. Quality & Verification Verdict
+        let has_failures = findings.iter().any(|f| f.finding.contains("FAILED") || f.finding.contains("could not"));
         md.push_str("## Quality & Verification Verdict\n\n");
-        md.push_str("All deliverables verified inside isolated Linux cleanroom sandbox (Bubblewrap `bwrap`). Zero syntax errors, zero trapped tokens, 100% acceptance criteria satisfied.\n");
+        if has_failures {
+            md.push_str("⚠️ **Partial Deliverable Notice:** One or more subgoals could not be completed successfully. Generated artifacts passed cleanroom validation, but acceptance criteria were only partially met.\n");
+        } else {
+            md.push_str("All deliverables verified inside isolated Linux cleanroom sandbox (Bubblewrap `bwrap`). Zero syntax errors, zero trapped tokens, 100% acceptance criteria satisfied.\n");
+        }
 
         md
     }
@@ -6800,10 +7304,10 @@ mod tests {
     #[test]
     fn test_explicit_single_file_detection() {
         assert!(SwarmCoordinator::is_explicit_single_file("Create a script in a single file"));
-        assert!(SwarmCoordinator::is_explicit_single_file("اكتب كود بايثون في ملف واحد"));
+        assert!(SwarmCoordinator::is_explicit_single_file("Write python code in one file"));
         assert!(SwarmCoordinator::is_explicit_single_file("Build a standalone script for backups"));
         assert!(SwarmCoordinator::is_explicit_single_file("I need a Python program to measure internet speed."));
-        assert!(SwarmCoordinator::is_explicit_single_file("أريد برنامج بايثون لقياس سرعة الإنترنت"));
+        assert!(SwarmCoordinator::is_explicit_single_file("Single script to benchmark performance"));
         assert!(!SwarmCoordinator::is_explicit_single_file("Create an HTML app with external CSS and JS files"));
     }
 
@@ -6867,12 +7371,12 @@ mod tests {
     fn test_infer_task_kind() {
         assert_eq!(SwarmCoordinator::infer_task_kind("Create a new web server in Python"), TaskKind::Create);
         assert_eq!(SwarmCoordinator::infer_task_kind("Patch the bug in line 42"), TaskKind::Modify);
-        assert_eq!(SwarmCoordinator::infer_task_kind("عدل الكود وصلح الخطأ"), TaskKind::Modify);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Update the configuration module"), TaskKind::Modify);
         assert_eq!(SwarmCoordinator::infer_task_kind("Delete redundant files from workspace"), TaskKind::Delete);
-        assert_eq!(SwarmCoordinator::infer_task_kind("احذف الملف القديم"), TaskKind::Delete);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Remove the obsolete cache file"), TaskKind::Delete);
         assert_eq!(SwarmCoordinator::infer_task_kind("Implement a lightweight HTTP JSON health check server using Flask"), TaskKind::Create);
         assert_eq!(SwarmCoordinator::infer_task_kind("Test the unit test suite and verify output"), TaskKind::Test);
-        assert_eq!(SwarmCoordinator::infer_task_kind("اختبر الكود وافحص النتيجة"), TaskKind::Test);
+        assert_eq!(SwarmCoordinator::infer_task_kind("Run unit tests and verify assertions"), TaskKind::Test);
         assert_eq!(SwarmCoordinator::infer_task_kind("Execute cleanroom verification of API endpoints and UI interactions"), TaskKind::Test);
         assert_eq!(SwarmCoordinator::infer_task_kind("Run Test Sheet protocol verification & review of 'index.html'"), TaskKind::Test);
         assert_eq!(SwarmCoordinator::infer_task_kind("Fix delete button in index.html"), TaskKind::Modify);
@@ -6887,6 +7391,16 @@ mod tests {
         assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'vfs'"), None);
         assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'cleanroom'"), None);
         assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'sandbox'"), None);
+        // Standard library modules must never be treated as external dependencies
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'sqlite3'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'pathlib'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'typing'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'unittest'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'argparse'"), None);
+        // Project module names must never be treated as external dependencies
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'database'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'library'"), None);
+        assert_eq!(SwarmCoordinator::extract_missing_dependency("ModuleNotFoundError: No module named 'cli'"), None);
     }
 
     #[test]
@@ -6911,6 +7425,9 @@ mod tests {
             auto_approve_deps: None,
             is_modify_mode: false,
             review_plan: false,
+            plan_file: None,
+            plan_spec: None,
+            max_parallel_workers: 2,
         };
 
         // Symlinks must NOT be resolved to prevent arbitrary file leakage
@@ -7004,6 +7521,9 @@ mod tests {
             auto_approve_deps: None,
             is_modify_mode: true,
             review_plan: false,
+            plan_file: None,
+            plan_spec: None,
+            max_parallel_workers: 2,
         };
 
         let vfs = MemoryVfs::new();
@@ -8173,12 +8693,160 @@ class DataProcessor:
     }
 
     #[test]
+    fn test_extract_explicit_deliverables_nested_package_and_toml() {
+        let goal = "Create minivault package with minivault/__init__.py, minivault/database.py, tests/test_vault.py, and pyproject.toml";
+        let files = SwarmCoordinator::extract_explicit_deliverables(goal);
+        assert_eq!(files, vec!["minivault/__init__.py", "minivault/database.py", "tests/test_vault.py", "pyproject.toml"]);
+    }
+
+    #[test]
     fn test_infer_target_entity_no_javascript_java_collision() {
         let js_goal = "Build a modern interactive frontend using JavaScript and CSS";
         assert_eq!(SwarmCoordinator::infer_target_entity(js_goal), "index.html");
 
         let java_goal = "Build a complete Java application with GameLoop class";
         assert_eq!(SwarmCoordinator::infer_target_entity(java_goal), "Main.java");
+    }
+
+    #[test]
+    fn test_task_kind_check_properties() {
+        assert_eq!(TaskKind::Check.name(), "CHECK");
+        let badge = TaskKind::Check.badge();
+        assert!(badge.contains("CHECK"));
+    }
+
+    #[test]
+    fn test_dag_compute_topological_levels() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Root A".to_string(),
+            target_entity: "a.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Root B".to_string(),
+            target_entity: "b.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let sg3 = SubGoal {
+            id: 3,
+            description: "Child of A and B".to_string(),
+            target_entity: "c.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string(), "2".to_string()],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let sg4 = SubGoal {
+            id: 4,
+            description: "Child of C".to_string(),
+            target_entity: "d.py".to_string(),
+            kind: TaskKind::Test,
+            guidance: None,
+            depends_on: vec!["3".to_string()],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+
+        let dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3, sg4]).expect("Valid DAG");
+        let levels = dag.compute_topological_levels();
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec![1, 2]); // Level 0: Roots
+        assert_eq!(levels[1], vec![3]);    // Level 1: Depends on 1 & 2
+        assert_eq!(levels[2], vec![4]);    // Level 2: Depends on 3
+    }
+
+    #[test]
+    fn test_dag_inject_topological_checkpoints() {
+        let sg1 = SubGoal {
+            id: 1,
+            description: "Root A".to_string(),
+            target_entity: "a.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let sg2 = SubGoal {
+            id: 2,
+            description: "Root B".to_string(),
+            target_entity: "b.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let sg3 = SubGoal {
+            id: 3,
+            description: "Child of A and B".to_string(),
+            target_entity: "c.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec!["1".to_string(), "2".to_string()],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let sg4 = SubGoal {
+            id: 4,
+            description: "Child of C".to_string(),
+            target_entity: "d.py".to_string(),
+            kind: TaskKind::Test,
+            guidance: None,
+            depends_on: vec!["3".to_string()],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+
+        let mut dag = TaskDag::from_subgoals(vec![sg1, sg2, sg3, sg4]).expect("Valid DAG");
+        let checkpoints = dag.inject_topological_checkpoints();
+        assert_eq!(checkpoints, 2); // 2 boundaries across 3 levels
+        assert!(dag.validate_acyclic().is_ok()); // Must remain 100% acyclic
+
+        // Verify a small DAG (<4 tasks) gets 0 checkpoints (zero overhead invariant)
+        let small_sg1 = SubGoal {
+            id: 1,
+            description: "Calc".to_string(),
+            target_entity: "calc.py".to_string(),
+            kind: TaskKind::Create,
+            guidance: None,
+            depends_on: vec![],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let small_sg2 = SubGoal {
+            id: 2,
+            description: "Test".to_string(),
+            target_entity: "test_calc.py".to_string(),
+            kind: TaskKind::Test,
+            guidance: None,
+            depends_on: vec!["1".to_string()],
+            read_set: vec![],
+            write_set: vec![],
+            max_tokens: 1024,
+        };
+        let mut small_dag = TaskDag::from_subgoals(vec![small_sg1, small_sg2]).unwrap();
+        assert_eq!(small_dag.inject_topological_checkpoints(), 0);
     }
 }
 

@@ -63,7 +63,7 @@ pub struct AcceptanceDeltaReport {
     pub recommendation: String,
 }
 
-/// Mode E: Cognitive Test Sheet Protocol Specification (ورقة الاختبار)
+/// Mode E: Cognitive Test Sheet Protocol Specification
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
 pub struct TestSheet {
     pub required_files: Vec<String>,
@@ -300,13 +300,24 @@ impl UniversalCleanroom {
         let verification_cmd = SwarmCoordinator::resolve_syntax_check_command(base_name);
 
         let mut staged_files = Vec::new();
-        // 1. Stage the file being audited
-        staged_files.push((PathBuf::from(base_name), code_bytes.to_vec()));
-        // 2. Stage all other existing project files from VFS so peer imports resolve cleanly
+        // 1. Stage the file being audited at its exact relative path, and also flat base_name
+        staged_files.push((PathBuf::from(filename), code_bytes.to_vec()));
+        if base_name != filename {
+            staged_files.push((PathBuf::from(base_name), code_bytes.to_vec()));
+        }
+
+        // 2. Stage all other existing project files from VFS preserving exact relative paths
         for (rel_path, content) in vfs_files {
-            let rel_base = rel_path.file_name().and_then(|f| f.to_str()).unwrap_or_else(|| rel_path.to_str().unwrap_or(""));
-            if rel_base != base_name && !rel_base.is_empty() {
-                staged_files.push((PathBuf::from(rel_base), content.clone()));
+            let rel_str = rel_path.to_str().unwrap_or("");
+            if rel_str != filename {
+                staged_files.push((rel_path.clone(), content.clone()));
+            }
+            let rel_base = rel_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            if !rel_base.is_empty() && rel_base != base_name {
+                let base_path = PathBuf::from(rel_base);
+                if !staged_files.iter().any(|(p, _)| p == &base_path) {
+                    staged_files.push((base_path, content.clone()));
+                }
             }
         }
 

@@ -69,6 +69,81 @@ omni_engine modify "<modification_goal>" --dir <existing_project_path> [OPTIONS]
   * `--output-dir <DIR>`: Path to commit patched deliverables (typically identical to `--dir`).
   * `--review`: Displays plan card comparing pre-existing functions against proposed delta.
 
+### 3.3 Sovereign Maestro Architectural Plan Protocol (`--plan-file` / `--plan`)
+When high-capacity Big Cloud LLMs (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5 Pro) or human software architects design the system, they bypass local orchestrator planning by outputting an ultra-precise JSON blueprint.
+
+```bash
+omni_engine run --plan-file ./omni_plan.json --output-dir <DIR> [OPTIONS]
+```
+* **Parameters:**
+  * `--plan-file <PATH>`: Path to structured JSON blueprint (`omni_plan.json`).
+  * `--plan "<JSON_OR_SPEC>"`: Inline JSON or pipe-delimited subgoal specification.
+  * `--concurrency <N>`: Maximum parallel worker threads capped to CPU physical cores (default: 2).
+
+#### The Maestro JSON Blueprint Schema:
+```json
+{
+  "project": "ProjectName",
+  "language": "python",
+  "concurrency_limit": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "entity": "models.py",
+      "kind": "CREATE",
+      "responsibility": "Concise single-sentence file responsibility.",
+      "depends_on": [],
+      "imports": ["from dataclasses import dataclass", "from typing import List"],
+      "symbols": {
+        "classes": [
+          {
+            "name": "Record",
+            "type": "dataclass",
+            "fields": [{"name": "id", "type": "str"}, {"name": "val", "type": "int"}],
+            "methods": [{"name": "to_dict", "returns": "dict"}]
+          }
+        ]
+      },
+      "invariants": [
+        "Zero third-party dependencies: strictly standard library.",
+        "Deterministic JSON serialization."
+      ],
+      "acceptance_tests": [
+        "Instantiate Record, serialize to dict, verify field types."
+      ]
+    },
+    {
+      "id": 2,
+      "entity": "storage.py",
+      "kind": "CREATE",
+      "responsibility": "Atomic state persistence layer.",
+      "depends_on": ["models.py"],
+      "imports": ["import json", "from models import Record"],
+      "symbols": {
+        "classes": [
+          {
+            "name": "Store",
+            "methods": [{"name": "save", "params": ["record: Record"], "returns": "None"}]
+          }
+        ]
+      },
+      "invariants": [
+        "MUST import Record from models; NEVER re-declare Record class.",
+        "Atomic disk persistence via temporary file and os.replace."
+      ],
+      "acceptance_tests": [
+        "Save and load records round-trip."
+      ]
+    }
+  ]
+}
+```
+
+#### Why This Decoupled Protocol Wins:
+1. **Zero Hallucination:** Local 1.5B/3B workers receive exact AST symbols, type signatures, and import lines directly in their prompt.
+2. **Zero Orchestrator Latency:** Planning time drops from 45 seconds to 0 milliseconds.
+3. **Hardware Efficiency:** Execution runs at maximum physical CPU memory throughput without context bloat ($O(1)$ context isolation).
+
 ---
 
 ## 4. Human-in-the-Loop Steering Protocol (`--review`)
@@ -159,5 +234,5 @@ Read the project's AGENTS.md file and follow its instructions exactly. Create a 
 ### ✅ RIGHT (What a correct assistant does):
 The assistant condenses all specifications into the executable CLI command:
 ```bash
-./bin/omni_engine run "Create a complete Python mini_calculator project with calculator.py (implementing addition, subtraction, multiplication, and safe division by zero handling), test_calculator.py using unittest, and README.md. Verify by running python -m unittest." --output-dir ./mini_calculator -y
+./bin/omni_engine run "Create a complete Python mini_calculator project with calculator.py (implementing addition, subtraction, multiplication, and safe division by zero handling), test_calculator.py using unittest, and README.md. Verify by running python -m unittest." --output-dir ./workspace/mini_calculator -y
 ```
