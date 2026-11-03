@@ -718,7 +718,7 @@ mod tests {
 # OMNI SOVEREIGN MODEL MANIFEST (.omni)
 # ==============================================================================
 {
-    "engine_version": "2.1.0",
+    "engine_version": "2.1.2",
     "model_family": "Phi-4",
     "chamber_verified": true,
     "eos_token": 32000,

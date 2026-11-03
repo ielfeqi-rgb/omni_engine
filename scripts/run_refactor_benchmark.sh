@@ -5,11 +5,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SCRIPT_DIR}"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${PROJECT_ROOT}"
 
-LOG_FILE="${SCRIPT_DIR}/refactor_run.log"
-TELEMETRY_CSV="${SCRIPT_DIR}/telemetry_refactor.csv"
-MODEL_PATH="${1:-${SCRIPT_DIR}/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}"
+LOG_FILE="${PROJECT_ROOT}/refactor_run.log"
+TELEMETRY_CSV="${PROJECT_ROOT}/telemetry_refactor.csv"
+MODEL_PATH="${1:-${PROJECT_ROOT}/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}"
 
 if [ ! -f "${MODEL_PATH}" ]; then
     echo "[-] Model not found at ${MODEL_PATH}. Run './bin/omni_engine download --qwen' first."
@@ -19,11 +20,11 @@ fi
 GOAL_TEXT="In refactor_enterprise_challenge, perform cross-cutting multi-tenant organization isolation: in models.py add org_id: int = 1 to Task, in repository.py update TaskRepository to filter by org_id and accept org_id in create, in service.py update TaskService to require valid org_id > 0, in test_suite.py add new test_multi_tenant_isolation test and keep all existing tests passing."
 
 echo "[*] Launching Omni Engine v2.1.2 in modify mode..."
-export LD_LIBRARY_PATH="${SCRIPT_DIR}/bin:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${PROJECT_ROOT}/bin:${LD_LIBRARY_PATH}"
 
-ENGINE_BIN="${SCRIPT_DIR}/target/release/omni_engine"
+ENGINE_BIN="${PROJECT_ROOT}/target/release/omni_engine"
 if [ ! -f "${ENGINE_BIN}" ]; then
-    ENGINE_BIN="${SCRIPT_DIR}/bin/omni_engine"
+    ENGINE_BIN="${PROJECT_ROOT}/bin/omni_engine"
 fi
 
 # Launch omni_engine in background

@@ -19,9 +19,10 @@ GameLoop.py
 *.bin
 *.omni
 *.omni.json
-bin/*.so*
-bin/llama-server
-bin/omni_engine
+bin/
+SHA256SUMS.txt
+omni_plan.json
+fission_test_plan.json
 
 # Internal agent workdirs
 .agents/

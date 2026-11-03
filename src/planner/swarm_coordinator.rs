@@ -5082,6 +5082,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             }
         }
 
+        let mut fission_base_code: Option<String> = None;
+        let mut satisfied_contract_symbols: Vec<String> = Vec::new();
+        let mut missing_contract_symbols: Vec<String> = Vec::new();
+
         while attempt <= max_attempts {
             let vfs_scoped_snapshot = self.vfs.take_scoped_snapshot(&worker_write_scope);
             // CHECKPOINT 1: Start of worker step attempt
@@ -5269,29 +5273,37 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
                                 subgoal.target_entity, subgoal.target_entity
                             )
-                        } else if subgoal.kind == TaskKind::Modify {
+                        } else if subgoal.kind == TaskKind::Modify || fission_base_code.is_some() {
                             let target_buf = PathBuf::from(&subgoal.target_entity);
                             let code_snippet = self.vfs.read_file(&target_buf)
                                 .map(|b| String::from_utf8_lossy(&b).to_string())
                                 .unwrap_or_else(|| {
-                                    if let Some(real_p) = self.resolve_existing_file(&target_buf) {
+                                    if let Some(ref base) = fission_base_code {
+                                        base.clone()
+                                    } else if let Some(real_p) = self.resolve_existing_file(&target_buf) {
                                         std::fs::read_to_string(&real_p).unwrap_or_default()
                                     } else {
                                         String::new()
                                     }
                                 });
+                            let header_badge = if fission_base_code.is_some() {
+                                "[CONTINUOUS SWARM DIRECTIVE - ADAPTIVE BLOCK FISSION & ATTENTION MASK]"
+                            } else {
+                                "[CONTINUOUS SWARM DIRECTIVE - INCREMENTAL EXTENSION]"
+                            };
                             format!(
-                                "[CONTINUOUS SWARM DIRECTIVE - INCREMENTAL EXTENSION]:\n\
+                                "{}:\n\
                                 Task #{}: {}\n\
                                 Target File: {}\n\
                                 Thinker Directive: {}\n\n\
-                                [EXISTING WORKING CODE IN VFS FOR '{}']:\n```\n{}\n```\n\n\
+                                [EXISTING VERIFIED CODE IN VFS FOR '{}']:\n```\n{}\n```\n\n\
                                 [MANDATORY PRESERVATION INVARIANT]:\n\
                                 - Keep and preserve all existing functions, classes, and logic in '{}'.\n\
-                                - Incrementally add or update the implementation to satisfy the directive without deleting previous capabilities.\n\
-                                - Output EXCLUSIVELY the complete updated code inside a single markdown code block.\n\
+                                - Incrementally add or complete the implementation to satisfy the directive without deleting previous capabilities.\n\
+                                - Output the missing definition(s) (or the complete updated file) inside a single markdown code block.\n\
                                 - ZERO conversational text outside the code block.\n\
-                                Output the complete updated '{}' now:",
+                                Output code for '{}' now:",
+                                header_badge,
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
                                 subgoal.target_entity, code_snippet,
                                 subgoal.target_entity, subgoal.target_entity
@@ -5760,8 +5772,21 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 self.vfs.write_file(&path, content.as_bytes());
                             }
                         } else {
-                            println!("  [EXECUTION] Direct code write: '{}' ({} bytes)...", actual_filename, content.len());
-                            self.vfs.write_file(&path, content.as_bytes());
+                            let mut write_content = content.clone();
+                            if let Some(ref base) = fission_base_code {
+                                let content_has_base_symbols = satisfied_contract_symbols.iter().any(|s| content.contains(s));
+                                let content_has_missing = missing_contract_symbols.iter().any(|s| content.contains(s));
+
+                                if !content_has_base_symbols && content_has_missing {
+                                    println!(
+                                        "  [AST FUSION] Stitching missing block ({} bytes) onto verified base AST ({} bytes)...",
+                                        content.len(), base.len()
+                                    );
+                                    write_content = format!("{}\n\n{}", base.trim_end(), content.trim_start());
+                                }
+                            }
+                            println!("  [EXECUTION] Direct code write: '{}' ({} bytes)...", actual_filename, write_content.len());
+                            self.vfs.write_file(&path, write_content.as_bytes());
                         }
                         (true, format!("Wrote {} bytes to {}", content.len(), actual_filename))
                     }
@@ -5991,16 +6016,54 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         if let Some(marker_pos) = guidance_text.find("MANDATORY REQUIRED DEFINITIONS") {
                             let marker_section = &guidance_text[marker_pos..];
                             let section_end = marker_section.find("\n\n").unwrap_or(marker_section.len());
+                            let mut missing_symbols = Vec::new();
+                            let mut present_symbols = Vec::new();
                             for line in marker_section[..section_end].lines() {
                                 let item = line.trim().trim_start_matches('-').trim();
-                                if (item.starts_with("class ") || item.starts_with("def ")) && !code_str.contains(item) {
-                                    let err = format!(
-                                        "ERR_MISSING_CONTRACT_SYMBOL: Target file '{}' is missing required definition '{}'. You MUST implement '{}' in this file.",
-                                        subgoal.target_entity, item, item
+                                if item.starts_with("class ") || item.starts_with("def ") {
+                                    if code_str.contains(item) {
+                                        present_symbols.push(item.to_string());
+                                    } else {
+                                        missing_symbols.push(item.to_string());
+                                    }
+                                }
+                            }
+                            if let Some(missing_item) = missing_symbols.first() {
+                                let err = format!(
+                                    "ERR_MISSING_CONTRACT_SYMBOL: Target file '{}' is missing required definition '{}'. You MUST implement '{}' in this file.",
+                                    subgoal.target_entity, missing_item, missing_item
+                                );
+                                println!(
+                                    "  [CONTRACT GATE] Violation: '{}' missing mandatory symbol '{}' (present: {}/{})",
+                                    subgoal.target_entity.bright_red(),
+                                    missing_item.bright_yellow(),
+                                    present_symbols.len(),
+                                    present_symbols.len() + missing_symbols.len()
+                                );
+                                syntax_error = Some(err);
+
+                                // ADAPTIVE FISSION & ATTENTION MASK ACTIVATION:
+                                // If the staged code has verified syntax for existing symbols and no placeholders,
+                                // capture it as the verified base foundation block.
+                                if !present_symbols.is_empty() && !placeholder_found {
+                                    let vfs_files = self.vfs.all_files();
+                                    let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
+                                        &subgoal.target_entity,
+                                        bytes,
+                                        &vfs_files,
                                     );
-                                    println!("  [CONTRACT GATE] Violation: '{}' missing mandatory symbol '{}'", subgoal.target_entity.bright_red(), item.bright_yellow());
-                                    syntax_error = Some(err);
-                                    break;
+                                    if report.is_valid {
+                                        println!(
+                                            "  [ADAPTIVE FISSION] Partial AST Convergence in '{}': {} of {} symbols verified. Engaging Block Fission & Attention Masking for missing: {:?}",
+                                            subgoal.target_entity.bright_cyan(),
+                                            present_symbols.len(),
+                                            present_symbols.len() + missing_symbols.len(),
+                                            missing_symbols
+                                        );
+                                        fission_base_code = Some(code_str.to_string());
+                                        satisfied_contract_symbols = present_symbols;
+                                        missing_contract_symbols = missing_symbols;
+                                    }
                                 }
                             }
                         }
@@ -6319,6 +6382,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             // Strict mathematical isolation: Restores ONLY this worker's write scope (W_i).
             // Concurrently written files by other workers remain 100% intact in VFS.
             self.vfs.restore_scoped_snapshot(vfs_scoped_snapshot);
+            if let Some(ref base) = fission_base_code {
+                self.vfs.write_file(&target_path, base.as_bytes());
+                println!("  [ADAPTIVE FISSION] Preserved verified base AST for '{}' ({} bytes) in VFS across rollback.", subgoal.target_entity.bright_cyan(), base.len());
+            }
             let tokens_before = tokens_at_attempt_end;
             let _ = worker_ctx.rollback_to(checkpoint);
             let tokens_after = worker_ctx.current_cursor();
@@ -6434,14 +6501,41 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
             match decision {
                 ThinkerDecision::Nudge(hint) => {
-                    pending_nudge = Some(hint);
+                    if let Some(ref _base) = fission_base_code {
+                        let missing_str = missing_contract_symbols.join(", ");
+                        pending_nudge = Some(format!(
+                            "ADAPTIVE FISSION: The base module is already verified in VFS. Implement ONLY the missing symbol(s): [{}]. Output the implementation to complete the file.",
+                            missing_str
+                        ));
+                    } else {
+                        pending_nudge = Some(hint);
+                    }
                     if !is_premature_token_misfire {
                         attempt += 1;
                     }
                 }
                 ThinkerDecision::Reset(new_directive) => {
                     let cleaned_directive = new_directive.trim();
-                    if let Some(ref maestro_guidance) = subgoal.guidance {
+                    if let Some(ref _base) = fission_base_code {
+                        let missing_str = missing_contract_symbols.join(", ");
+                        let satisfied_str = satisfied_contract_symbols.join(", ");
+                        current_directive = format!(
+                            "[ADAPTIVE BLOCK FISSION - ATTENTION MASK ACTIVATED]:\n\
+                            Task #{}: {}\n\
+                            Target File: {}\n\n\
+                            [VERIFIED FOUNDATION CODE IN VFS]:\n\
+                            The following definitions are already successfully compiled and verified in '{}':\n\
+                            - {}\n\n\
+                            [ATTENTION MASK - PENDING MISSING DEFINITION(S)]:\n\
+                            You MUST implement ONLY the missing definition(s):\n\
+                            - {}\n\n\
+                            Output the implementation of [{}] inside a single code block to complete the file.\n\
+                            DO NOT remove or rewrite the existing working definitions.",
+                            subgoal.id, subgoal.description, subgoal.target_entity,
+                            subgoal.target_entity, satisfied_str,
+                            missing_str, missing_str
+                        );
+                    } else if let Some(ref maestro_guidance) = subgoal.guidance {
                         current_directive = format!(
                             "{}\n\n[SELF-HEALING CORRECTION FOR PREVIOUS ATTEMPT - DO NOT COPY THIS TEXT INTO CODE]:\n# Note: {}\n",
                             maestro_guidance, cleaned_directive
