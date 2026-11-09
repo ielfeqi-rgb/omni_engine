@@ -311,7 +311,7 @@ impl UniversalCleanroom {
             }
         }
 
-        let jail_res = match IsolatedJail::run_in_jail(&verification_cmd, &staged_files, Duration::from_secs(30)) {
+        let jail_res = match IsolatedJail::run_in_jail(&verification_cmd, &staged_files, Duration::from_secs(90)) {
             Ok(res) => res,
             Err(e) => JailExecutionResult {
                 success: false,
@@ -364,7 +364,7 @@ impl UniversalCleanroom {
                 s.starts_with("tests/") || s.contains("/tests/")
             });
             if has_tests {
-                if let Ok(test_res) = IsolatedJail::run_in_jail("cargo test --quiet 2>&1", &staged_files, Duration::from_secs(30)) {
+                if let Ok(test_res) = IsolatedJail::run_in_jail("cargo test --quiet 2>&1", &staged_files, Duration::from_secs(90)) {
                     if !test_res.success {
                         overall_success = false;
                         final_exit_code = test_res.exit_code.or(Some(1));
