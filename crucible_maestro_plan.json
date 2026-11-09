@@ -1,0 +1,45 @@
+{
+  "project": "ProductionCrucible",
+  "language": "rust",
+  "concurrency_limit": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "entity": "src/ledger.rs",
+      "kind": "MODIFY",
+      "responsibility": "Fix the high-concurrency race condition in FinancialLedger so that 50 concurrent requests with the same idempotency key result in exactly 1 transfer execution, with remaining requests returning the completed transaction.",
+      "depends_on": ["src/models.rs", "src/audit.rs", "src/outbox.rs"],
+      "symbols": {
+        "enums": [
+          {
+            "name": "IdempotencyRecord",
+            "variants": ["InProgress(Instant)", "Completed(Transaction)"]
+          }
+        ],
+        "structs": [
+          {
+            "name": "FinancialLedger",
+            "fields": [
+              {"name": "idempotency_store", "type": "Arc<RwLock<HashMap<String, IdempotencyRecord>>>"}
+            ],
+            "methods": [
+              {"name": "transfer", "params": ["&self", "idempotency_key: &str", "from_id: &str", "to_id: &str", "amount: u64"], "returns": "Result<Transaction, LedgerError>"}
+            ]
+          }
+        ]
+      },
+      "invariants": [
+        "Do not use Condvar inside Mutex to avoid Rust borrow checker errors (E0502 and E0499).",
+        "Use IdempotencyRecord with InProgress(Instant) and Completed(Transaction) in idempotency_store.",
+        "When a transfer arrives: check idempotency_store with write lock. If InProgress, wait/loop with brief sleep. If Completed(tx), return Ok(tx). If not present, insert InProgress(Instant::now()) and proceed.",
+        "Perform account balance deduction and deposit inside accounts write lock.",
+        "Update idempotency_store to IdempotencyRecord::Completed(tx) upon successful transfer.",
+        "Do not modify or delete existing methods in src/models.rs or src/audit.rs."
+      ],
+      "acceptance_tests": [
+        "cargo test --test stress_test passes with 0 race condition failures under 50 concurrent threads.",
+        "test_zero_wipe_preservation passes."
+      ]
+    }
+  ]
+}

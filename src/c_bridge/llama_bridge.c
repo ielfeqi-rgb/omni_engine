@@ -459,6 +459,32 @@ void omni_llama_sampler_add_greedy(struct omni_llama_sampler * chain) {
     llama_sampler_chain_add(chain->chain, smpl);
 }
 
+bool omni_llama_sampler_add_grammar(
+    struct omni_llama_sampler * chain,
+    const void * raw_model,
+    const char * grammar_str,
+    const char * grammar_root
+) {
+    if (!chain || !chain->chain || !raw_model || !grammar_str || grammar_str[0] == '\0') {
+        return false;
+    }
+
+    const struct llama_model * model = (const struct llama_model *)raw_model;
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
+    if (!vocab) {
+        return false;
+    }
+
+    const char * root = (grammar_root && grammar_root[0] != '\0') ? grammar_root : "root";
+    struct llama_sampler * smpl = llama_sampler_init_grammar(vocab, grammar_str, root);
+    if (!smpl) {
+        return false;
+    }
+
+    llama_sampler_chain_add(chain->chain, smpl);
+    return true;
+}
+
 int32_t omni_llama_sampler_sample(
     struct omni_llama_sampler * chain,
     struct llama_context * ctx,

@@ -374,6 +374,65 @@ impl MemoryVfs {
         active.insert(path_buf, content.to_vec());
     }
 
+    /// Recursively scans a workspace directory on host and preloads all project deliverables
+    /// into the RAM VFS, preserving relative directory hierarchies (e.g. src/lib.rs, models/user.py).
+    /// Skips VCS, build caches, and node_modules (.git, target, node_modules, trash, .omni).
+    pub fn preload_workspace_recursive<P: AsRef<Path>>(&self, root_dir: P) -> usize {
+        let root = root_dir.as_ref();
+        if !root.exists() || !root.is_dir() {
+            return 0;
+        }
+
+        let mut count = 0;
+        let mut stack = vec![root.to_path_buf()];
+
+        while let Some(current_dir) = stack.pop() {
+            if let Ok(entries) = std::fs::read_dir(&current_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Ok(ft) = entry.file_type() {
+                        if ft.is_symlink() {
+                            // Security: Skip symlinks to prevent host breakout / credential leaks
+                            continue;
+                        }
+                        if ft.is_dir() {
+                            let dirname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                            if dirname.starts_with('.')
+                                || dirname == "target"
+                                || dirname == "node_modules"
+                                || dirname == "trash"
+                                || dirname == "__pycache__"
+                                || dirname == "venv"
+                                || dirname == ".venv"
+                            {
+                                continue;
+                            }
+                            stack.push(path);
+                        } else if ft.is_file() {
+                            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                            if fname.starts_with('.')
+                                || fname.ends_with(".log")
+                                || fname.ends_with(".tmp")
+                                || (fname.ends_with(".lock") && fname != "Cargo.lock")
+                            {
+                                continue;
+                            }
+                            if let Ok(rel) = path.strip_prefix(root) {
+                                if !self.exists(rel) {
+                                    if let Ok(bytes) = std::fs::read(&path) {
+                                        self.preload_file(rel, &bytes);
+                                        count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        count
+    }
+
     /// Model writes or edits a file inside the isolated RAM VFS
     pub fn write_file<P: AsRef<Path>>(&self, path: P, content: &[u8]) {
         let path_buf = Self::normalize_path(path);

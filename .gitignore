@@ -44,6 +44,8 @@ MiniVault/
 OmniLite/
 OmniAudio/
 run_minivault_*.sh
+arena_*/
+production_crucible/
 
 # Local AI assistant instructions
 CLAUDE.md

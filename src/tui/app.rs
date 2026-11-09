@@ -397,6 +397,8 @@ pub async fn run_tui() -> Result<(), Box<dyn Error>> {
                         repetition_penalty: 1.1,
                         penalty_last_n: 64,
                         seed: 42,
+                        grammar: None,
+                        grammar_root: None,
                     },
                     model.n_vocab(),
                 ) {

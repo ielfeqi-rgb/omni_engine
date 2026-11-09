@@ -104,6 +104,12 @@ extern "C" {
     fn omni_llama_sampler_add_temp(chain: *mut c_void, temp: f32);
     fn omni_llama_sampler_add_dist(chain: *mut c_void, seed: u32);
     fn omni_llama_sampler_add_greedy(chain: *mut c_void);
+    fn omni_llama_sampler_add_grammar(
+        chain: *mut c_void,
+        raw_model: *const c_void,
+        grammar_str: *const c_char,
+        grammar_root: *const c_char,
+    ) -> bool;
     fn omni_llama_sampler_sample(chain: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
     fn omni_llama_sampler_accept(chain: *mut c_void, token: i32);
     fn omni_llama_sampler_reset(chain: *mut c_void);
@@ -406,6 +412,14 @@ pub struct SamplingConfig {
     /// Default: 0.
     #[serde(default)]
     pub seed: u32,
+
+    /// Optional GBNF grammar string for strict structured output generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grammar: Option<String>,
+
+    /// Optional root rule name for GBNF grammar (defaults to "root").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grammar_root: Option<String>,
 }
 
 fn default_temperature() -> f32 { 0.7 }
@@ -423,6 +437,8 @@ impl Default for SamplingConfig {
             repetition_penalty: 1.1,
             penalty_last_n: 64,
             seed: 1337,
+            grammar: None,
+            grammar_root: None,
         }
     }
 }
@@ -437,6 +453,8 @@ impl SamplingConfig {
             repetition_penalty: 1.0,
             penalty_last_n: 0,
             seed: 0,
+            grammar: None,
+            grammar_root: None,
         }
     }
 
@@ -449,6 +467,8 @@ impl SamplingConfig {
             repetition_penalty: 1.1,
             penalty_last_n: 64,
             seed,
+            grammar: None,
+            grammar_root: None,
         }
     }
 
@@ -527,6 +547,70 @@ impl NativeLlamaSampler {
             }
 
             // 4. Temperature & Distribution vs Greedy
+            if config.temperature <= 0.0 {
+                omni_llama_sampler_add_greedy(chain);
+            } else {
+                omni_llama_sampler_add_temp(chain, config.temperature);
+                let seed = if config.seed == 0 { 1337 } else { config.seed };
+                omni_llama_sampler_add_dist(chain, seed);
+            }
+        }
+
+        Ok(Self { raw_sampler: chain })
+    }
+
+    /// Build a new sampler chain with model reference, enabling GBNF grammar constraints.
+    pub fn with_model(config: &SamplingConfig, model: &NativeLlamaModel) -> Result<Self, String> {
+        let chain = unsafe { omni_llama_sampler_init_chain() };
+        if chain.is_null() {
+            return Err("Failed to allocate native llama_sampler_chain (returned null)".to_string());
+        }
+
+        unsafe {
+            // 1. Repetition penalties
+            if config.repetition_penalty != 1.0 || config.penalty_last_n > 0 {
+                let last_n = if config.penalty_last_n > 0 { config.penalty_last_n } else { 64 };
+                omni_llama_sampler_add_penalties(
+                    chain,
+                    model.n_vocab() as i32,
+                    last_n,
+                    config.repetition_penalty,
+                    0.0,
+                    0.0,
+                );
+            }
+
+            // 2. Top-K filtering
+            if config.top_k > 0 {
+                omni_llama_sampler_add_top_k(chain, config.top_k);
+            }
+
+            // 3. Top-P (nucleus) filtering
+            if config.top_p > 0.0 && config.top_p < 1.0 {
+                omni_llama_sampler_add_top_p(chain, config.top_p, 1);
+            }
+
+            // 4. GBNF Grammar Sampler (constrains logits before temperature/sampling)
+            if let Some(ref grammar_str) = config.grammar {
+                let c_grammar = CString::new(grammar_str.as_bytes())
+                    .map_err(|e| format!("Invalid grammar CString: {}", e))?;
+                let root_str = config.grammar_root.as_deref().unwrap_or("root");
+                let c_root = CString::new(root_str.as_bytes())
+                    .map_err(|e| format!("Invalid grammar root CString: {}", e))?;
+
+                let success = omni_llama_sampler_add_grammar(
+                    chain,
+                    model.raw_model,
+                    c_grammar.as_ptr(),
+                    c_root.as_ptr(),
+                );
+                if !success {
+                    omni_llama_sampler_free(chain);
+                    return Err(format!("Failed to parse or initialize GBNF grammar (root='{}')", root_str));
+                }
+            }
+
+            // 5. Temperature & Distribution vs Greedy
             if config.temperature <= 0.0 {
                 omni_llama_sampler_add_greedy(chain);
             } else {

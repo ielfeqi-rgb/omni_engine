@@ -60,6 +60,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/keys", get(handle_list_keys))
         .route("/api/keys/generate", post(handle_create_key))
         .route("/api/keys/revoke/:id", delete(handle_revoke_key))
+        // Market Store Sovereign SQL Endpoints
+        .route("/api/market/products", get(handle_market_products))
+        .route("/api/market/orders", get(handle_market_orders))
+        .route("/api/market/tool", post(handle_market_tool))
         // OpenAI Public Spec Endpoints with API Key authentication
         .route("/v1/models", get(handle_v1_models))
         .route("/v1/chat/completions", post(handle_v1_chat_completions))
@@ -67,8 +71,17 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn serve_index() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+async fn serve_index() -> impl IntoResponse {
+    let content = std::fs::read_to_string("static/index.html")
+        .unwrap_or_else(|_| include_str!("../static/index.html").to_string());
+    (
+        [
+            (axum::http::header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+            (axum::http::header::PRAGMA, "no-cache"),
+            (axum::http::header::EXPIRES, "0"),
+        ],
+        Html(content),
+    )
 }
 
 async fn handle_status(State(state): State<AppState>) -> impl IntoResponse {
@@ -289,11 +302,37 @@ async fn handle_v1_chat_completions(
     Json(payload): Json<ChatCompletionRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     check_auth(&headers, &state.key_manager)?;
-    state.log_buffer.push(format!("OpenAI API Request: /v1/chat/completions (messages={})", payload.messages.len()));
     
-    let model_opt = {
+    let user_msg_preview = payload.messages.last()
+        .and_then(|m| m.content.as_deref())
+        .unwrap_or("");
+    
+    state.log_buffer.push(format!(
+        "OpenAI API Request: /v1/chat/completions (messages={}, text=\"{}\")",
+        payload.messages.len(),
+        user_msg_preview
+    ));
+    tracing::info!("Received Chat API request ({} messages): \"{}\"", payload.messages.len(), user_msg_preview);
+    
+    let model_opt = if let Some(ref req_model) = payload.model {
+        state.llama_manager.get_or_load_native_model(req_model)
+    } else {
         let lock = state.llama_manager.native_model.lock().unwrap();
-        lock.clone()
+        if lock.is_some() {
+            lock.clone()
+        } else {
+            let available = state.llama_manager.list_available_models();
+            let preferred = available.iter()
+                .find(|m| m.to_lowercase().contains("qwen2.5-coder"))
+                .or_else(|| available.iter().find(|m| m.to_lowercase().contains("qwen")))
+                .or_else(|| available.first());
+            
+            if let Some(first) = preferred {
+                state.llama_manager.get_or_load_native_model(first)
+            } else {
+                None
+            }
+        }
     };
     
     if let Some(model) = model_opt {
@@ -303,10 +342,33 @@ async fn handle_v1_chat_completions(
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
                 "error": {
-                    "message": "No model loaded. Call /api/engine/start first.",
+                    "message": "No model loaded. Call /api/engine/start first, or specify a valid model in 'models/' directory.",
                     "type": "model_not_loaded"
                 }
             }))
         ))
+    }
+}
+
+async fn handle_market_products() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    match crate::market_db::MarketDb::list_products() {
+        Ok(products) => Ok(Json(serde_json::to_value(products).unwrap_or_default())),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e})))),
+    }
+}
+
+async fn handle_market_orders() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    match crate::market_db::MarketDb::list_orders() {
+        Ok(orders) => Ok(Json(serde_json::to_value(orders).unwrap_or_default())),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e})))),
+    }
+}
+
+async fn handle_market_tool(
+    Json(payload): Json<crate::market_db::ExecuteToolRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    match crate::market_db::MarketDb::execute_tool(&payload.tool_name, &payload.arguments) {
+        Ok(val) => Ok(Json(val)),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(json!({"error": e})))),
     }
 }

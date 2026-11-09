@@ -36,6 +36,9 @@ fn test_live_acceptance_feedback_swarm() {
         auto_approve_deps: None,
         is_modify_mode: false,
         review_plan: false,
+        plan_file: None,
+        plan_spec: None,
+        max_parallel_workers: 1,
     };
 
     let coordinator = SwarmCoordinator::new(config)

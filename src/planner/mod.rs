@@ -13,15 +13,25 @@ pub mod executive_hands;
 pub mod pre_pass_triage;
 pub mod supervisor;
 pub mod system_profile;
+pub mod memory_gate;
+pub mod action_parser;
 pub mod swarm_coordinator;
+pub mod dossier;
 
 pub use executive_hands::{ExecutiveHands, ExecutiveAction};
 pub use pre_pass_triage::{ExecutionIntent, PrePassTriage, DualSystemPlan, SpeculativeTarget};
 pub use supervisor::{InternalSupervisorProbe, AncestralTestament};
 pub use system_profile::{GroundedSystemProfile, ToolCapability};
-pub use swarm_coordinator::{SwarmCoordinator, SwarmConfig, SwarmAction, SwarmResult, SubGoal, WorkerFinding};
+pub use memory_gate::{MemoryGate, MemoryGateError};
+pub use action_parser::{
+    SwarmAction, DiagnosticCode, ThinkerDecision, DependencyChoice, HostPackageManager,
+    strip_thought, strip_command_prefix, parse_action, parse_thinker_decision, extract_missing_dependency,
+};
+pub use swarm_coordinator::{SwarmCoordinator, SwarmConfig, SwarmResult, SubGoal, WorkerFinding};
+pub use dossier::{CustomerDossier, PlannerDistiller, DistillationDelta, PurchaseRecord};
+pub use fixer::{CodeFixer, Diagnostic};
 
-pub mod surgeon;
+pub mod fixer;
 pub mod analyzer;
 pub mod oracle;
 pub mod refinement_loop;

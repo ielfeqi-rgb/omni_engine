@@ -138,20 +138,19 @@ impl IsolatedJail {
         let allow_unsandboxed = std::env::var("OMNI_ALLOW_UNSANDBOXED")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let use_bwrap = bwrap_present && !allow_unsandboxed;
 
         println!("{}", "  ┌── [ISOLATED SANDBOX EXECUTION] ────────────────────────────────────".bright_cyan());
         println!("  │ Command   : {}", cmd.bright_yellow().bold());
-        println!("  │ Sandbox   : {}", if bwrap_present { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs, new-session)" } else { "Host tempdir fallback [UNISOLATED]" });
-        if !bwrap_present {
-            if !allow_unsandboxed {
-                eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: Linux Bubblewrap ('bwrap') is missing or namespace creation is blocked.".bright_red().bold());
-                eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host system.".bright_yellow());
-                eprintln!("{}", "  │     To explicitly permit unisolated host execution at your own risk, pass --allow-unsandboxed or set OMNI_ALLOW_UNSANDBOXED=1.".dimmed());
-                return Err("SECURITY VIOLATION [Fail-Closed]: Bubblewrap sandbox unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
-            }
-            eprintln!("{}", "  │ [!] SECURITY WARNING: Linux Bubblewrap ('bwrap') was not found in PATH.".bright_red().bold());
-            eprintln!("{}", "  │     Execution is running unisolated in host tempdir because --allow-unsandboxed is active:".bright_yellow());
-            eprintln!("{}", "  │     -> sudo apt install bubblewrap (or dnf install bubblewrap)".dimmed());
+        println!("  │ Sandbox   : {}", if use_bwrap { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs, new-session)" } else { "Host tempdir fallback [UNISOLATED]" });
+        if !bwrap_present && !allow_unsandboxed {
+            eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: Linux Bubblewrap ('bwrap') is missing or namespace creation is blocked.".bright_red().bold());
+            eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host system.".bright_yellow());
+            eprintln!("{}", "  │     To explicitly permit unisolated host execution at your own risk, pass --allow-unsandboxed or set OMNI_ALLOW_UNSANDBOXED=1.".dimmed());
+            return Err("SECURITY VIOLATION [Fail-Closed]: Bubblewrap sandbox unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
+        }
+        if allow_unsandboxed {
+            eprintln!("{}", "  │ [!] SECURITY NOTICE: Execution is running unisolated in host tempdir because --allow-unsandboxed is active:".bright_yellow());
         }
         println!("  │ Staged    : {} file(s) materialized in RAM VFS", vfs_files.len());
         for (rel, content) in vfs_files {
@@ -159,7 +158,7 @@ impl IsolatedJail {
         }
 
         let start_time = Instant::now();
-        let (exit_code, stdout, stderr, actually_bwrap) = if bwrap_present {
+        let (exit_code, stdout, stderr, actually_bwrap) = if use_bwrap {
             match Self::run_with_bwrap(cmd, temp_path, timeout, stdin_input) {
                 Ok((code, out, err)) => {
                     if err.contains("Operation not permitted") || err.contains("Failed RTM_NEWADDR") {
@@ -281,7 +280,8 @@ impl IsolatedJail {
             bwrap.args(["--ro-bind-try", "/lib64", "/lib64"]);
         }
 
-        // Read-only user local packages (~/.local/lib and ~/.local/lib64) so user-installed packages are accessible in sandbox
+        // Read-only user local packages (~/.local/lib and ~/.local/lib64) and toolchains (~/.cargo, ~/.rustup, ~/.local/bin)
+        // so compilers, runtimes (Rust, Python, Node), and user packages are accessible in sandbox
         if let Ok(home) = std::env::var("HOME") {
             bwrap.args(["--setenv", "HOME", &home]);
             let user_local_lib = Path::new(&home).join(".local").join("lib");
@@ -294,6 +294,24 @@ impl IsolatedJail {
             if user_local_lib64.exists() {
                 if let Some(user_local_str) = user_local_lib64.to_str() {
                     bwrap.args(["--ro-bind-try", user_local_str, user_local_str]);
+                }
+            }
+            let user_cargo = Path::new(&home).join(".cargo");
+            if user_cargo.exists() {
+                if let Some(s) = user_cargo.to_str() {
+                    bwrap.args(["--ro-bind-try", s, s]);
+                }
+            }
+            let user_rustup = Path::new(&home).join(".rustup");
+            if user_rustup.exists() {
+                if let Some(s) = user_rustup.to_str() {
+                    bwrap.args(["--ro-bind-try", s, s]);
+                }
+            }
+            let user_local_bin = Path::new(&home).join(".local").join("bin");
+            if user_local_bin.exists() {
+                if let Some(s) = user_local_bin.to_str() {
+                    bwrap.args(["--ro-bind-try", s, s]);
                 }
             }
         }
@@ -316,7 +334,13 @@ impl IsolatedJail {
         bwrap.args(["--setenv", "DISPLAY", ":99"]);
         bwrap.args(["--setenv", "PYTHONUNBUFFERED", "1"]);
         bwrap.args(["--setenv", "PYTHONPATH", "/workspace:."]);
-        bwrap.args(["--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin"]);
+        let host_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
+        let sandbox_path = if let Ok(home) = std::env::var("HOME") {
+            format!("{}/.cargo/bin:{}/.local/bin:{}:/usr/local/bin:/usr/bin:/bin", home, home, host_path)
+        } else {
+            format!("{}:/usr/local/bin:/usr/bin:/bin", host_path)
+        };
+        bwrap.args(["--setenv", "PATH", &sandbox_path]);
 
         #[cfg(unix)]
         {
@@ -376,6 +400,13 @@ impl IsolatedJail {
         process.env("DISPLAY", ":99");
         process.env("PYTHONUNBUFFERED", "1");
         process.env("PYTHONPATH", format!("{}:.", workspace.display()));
+        let host_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
+        let fallback_path = if let Ok(home) = std::env::var("HOME") {
+            format!("{}/.cargo/bin:{}/.local/bin:{}:/usr/local/bin:/usr/bin:/bin", home, home, host_path)
+        } else {
+            format!("{}:/usr/local/bin:/usr/bin:/bin", host_path)
+        };
+        process.env("PATH", fallback_path);
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
 

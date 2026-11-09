@@ -11,7 +11,7 @@
 
 use crate::native_llama::{NativeLlamaModel, NativeLlamaContext};
 use crate::planner::analyzer::{StaticAnalyzer, AnalyzerResult, Chunk};
-use crate::planner::surgeon::{MicroSurgeon, Diagnostic};
+use crate::planner::fixer::{CodeFixer, Diagnostic};
 use crate::planner::oracle::TerminalOracle;
 use std::sync::{Arc, Mutex};
 use tracing::{warn, error};
@@ -46,7 +46,7 @@ pub enum RefinementState {
 
 pub struct RefinementPipeline {
     analyzer: StaticAnalyzer,
-    surgeon: MicroSurgeon,
+    fixer: CodeFixer,
     oracle: TerminalOracle,
     pub current_vfs_code: String,
     pub filename: String,
@@ -66,7 +66,7 @@ impl RefinementPipeline {
     ) -> Self {
         Self {
             analyzer: StaticAnalyzer::new(model.clone(), ctx.clone()),
-            surgeon: MicroSurgeon::new(model.clone(), ctx.clone()),
+            fixer: CodeFixer::new(model.clone(), ctx.clone()),
             oracle: TerminalOracle::new(model.clone(), ctx.clone()),
             current_vfs_code: initial_code,
             filename,
@@ -148,13 +148,13 @@ impl RefinementPipeline {
                     // Extract context for the surgeon (simple 3-line extraction logic mock)
                     let context_lines = &self.current_vfs_code;
 
-                    match self.surgeon.perform_surgery(self.source_seq_id, self.ephemeral_seq_id, context_lines, &diagnostic) {
+                    match self.fixer.perform_surgery(self.source_seq_id, self.ephemeral_seq_id, context_lines, &diagnostic) {
                         Ok(fixed_line) => {
                             self.patch_line(diagnostic.line_number, &fixed_line);
                             state = RefinementState::StaticAnalysis; // Go back to check
                         }
                         Err(e) => {
-                            error!("Surgeon failed: {}", e);
+                            error!("Fixer failed: {}", e);
                             state = RefinementState::FatalError(e);
                         }
                     }

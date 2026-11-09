@@ -670,13 +670,14 @@ pub async fn handle_ask(args: &[String], base_dir: &PathBuf) {
 
     let req = ChatCompletionRequest {
         model: status.active_model.clone(),
-        messages: vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt,
-        }],
+        messages: vec![ChatMessage::new("user", prompt)],
         temperature: Some(temperature),
         stream: Some(false),
         max_tokens: Some(max_tokens),
+        tools: None,
+        tool_choice: None,
+        grammar: None,
+        grammar_root: None,
     };
 
     print!("[*] Thinking... ");
@@ -1527,6 +1528,7 @@ struct InteractiveSession {
     max_subgoals: usize,
     max_steps_per_worker: usize,
     output_dir: PathBuf,
+    vector_memory: crate::vector_memory::VectorMemoryController,
 }
 
 fn print_session_header(session: &InteractiveSession) {
@@ -1589,6 +1591,10 @@ fn print_console_help() {
     println!("  {:<32} {}", "models".bright_white().bold(), "Interactively switch between Unified RAM Model and Dual-Model Split");
     println!("  {:<32} {}", "download <preset|URL>".bright_white().bold(), "Download GGUF model directly into models/ with progress bar");
     println!("  {:<32} {}", "config".bright_white().bold(), "Tune planning depth (subgoals), worker retry budget, and workspace dir");
+
+    println!("\n  {}", "HNSW SEMANTIC CODEBASE ATLAS (v2.2.0):".bright_white().bold());
+    println!("  {:<32} {}", "index [dir]".bright_green().bold(), "Index codebase into in-memory HNSW vector memory (e.g. 'index src')");
+    println!("  {:<32} {}", "search <query>".bright_green().bold(), "Instant O(log N) semantic proximity search over indexed code");
 
     println!("\n  {}", "INTERACTIVE DIALOGUE & HARDWARE DIAGNOSTICS:".bright_white().bold());
     println!("  {:<32} {}", "chat".bright_white().bold(), "Direct native C-FFI conversational dialogue with active model in RAM");
@@ -1925,7 +1931,21 @@ fn handle_interactive_chat(session: &InteractiveSession) {
             break;
         }
 
-        let formatted_prompt = model.format_chat(None, trimmed);
+        let rag_context = match session.vector_memory.search(trimmed, 2) {
+            Ok(results) if !results.is_empty() && results[0].score > 0.35 => {
+                println!("{}", format!("  [+] Injected {} codebase chunk(s) from HNSW Atlas", results.len()).bright_cyan().dimmed());
+                session.vector_memory.format_rag_context(&results)
+            }
+            _ => String::new(),
+        };
+
+        let system_prompt = if !rag_context.is_empty() {
+            Some(format!("You are Omni Engine sovereign coding assistant. Use this verified codebase context when answering:\n{}", rag_context))
+        } else {
+            None
+        };
+
+        let formatted_prompt = model.format_chat(system_prompt.as_deref(), trimmed);
         print!("");
         let _ = io::stdout().flush();
 
@@ -1985,6 +2005,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
         max_subgoals: 3,
         max_steps_per_worker: 5,
         output_dir: PathBuf::from("./workspace"),
+        vector_memory: crate::vector_memory::VectorMemoryController::default(),
     };
 
     print_session_header(&session);
@@ -2019,7 +2040,7 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
             let mut parts = trimmed_line.splitn(2, ' ');
             let first = parts.next().unwrap_or("").to_lowercase();
             match first.as_str() {
-                "modify" | "refactor" | "patch" | "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "download" | "pull" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" | "tui" | "dashboard" => {
+                "modify" | "refactor" | "patch" | "run" | "goal" | "swarm" | "config" | "cfg" | "c" | "models" | "model" | "m" | "download" | "pull" | "status" | "info" | "kv-test" | "clear" | "cls" | "help" | "h" | "?" | "exit" | "quit" | "q" | "chat" | "tui" | "dashboard" | "index" | "idx" | "search" | "find" => {
                     (first, parts.next().unwrap_or("").trim())
                 }
                 _ => {
@@ -2046,6 +2067,53 @@ pub async fn run_interactive_console(base_dir: &PathBuf) -> Result<(), Box<dyn s
                 let _ = tokio::task::spawn_blocking(move || {
                     handle_interactive_chat(&session_clone);
                 }).await;
+            }
+            "index" | "idx" => {
+                let target = if rest_args.is_empty() { "." } else { rest_args };
+                let target_path = if target.starts_with('/') {
+                    PathBuf::from(target)
+                } else {
+                    base_dir.join(target)
+                };
+                println!("[*] Indexing codebase at {:?} into HNSW Vector Atlas...", target_path);
+                let t0 = std::time::Instant::now();
+                match session.vector_memory.index_directory(&target_path, &["rs", "py", "c", "cpp", "h", "md", "toml", "json"]) {
+                    Ok(count) => {
+                        let elapsed = t0.elapsed();
+                        println!("[+] Successfully indexed {} semantic chunks in {:.2?}! (Total in HNSW Atlas: {})",
+                            count, elapsed, session.vector_memory.total_chunks());
+                    }
+                    Err(e) => {
+                        eprintln!("[-] Indexing error: {}", e);
+                    }
+                }
+            }
+            "search" | "find" => {
+                if rest_args.is_empty() {
+                    println!("[-] Usage: search <semantic code query>");
+                } else {
+                    let t0 = std::time::Instant::now();
+                    match session.vector_memory.search(rest_args, 3) {
+                        Ok(results) => {
+                            let elapsed = t0.elapsed();
+                            println!("[+] Found {} matching code chunks in {:.2?}:", results.len(), elapsed);
+                            for (i, res) in results.iter().enumerate() {
+                                println!("\n  [{}] {} (Lines {}-{}) | Score: {:.3}",
+                                    i + 1, res.file_path.bright_cyan(), res.line_start, res.line_end, res.score);
+                                println!("  {}", "─".repeat(60).dimmed());
+                                for line in res.chunk_text.lines().take(6) {
+                                    println!("    {}", line.dimmed());
+                                }
+                                if res.chunk_text.lines().count() > 6 {
+                                    println!("    {}", "... (truncated)".italic().dimmed());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[-] Search error: {}", e);
+                        }
+                    }
+                }
             }
             "models" | "model" | "m" => {
                 handle_interactive_models(&mut session, base_dir);

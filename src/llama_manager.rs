@@ -9,8 +9,9 @@
 // ============================================================================
 #![deny(unused_must_use)]
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -35,6 +36,7 @@ pub struct LlamaManager {
     pub process: Arc<Mutex<Option<Child>>>,
     pub active_model: Arc<Mutex<Option<String>>>,
     pub native_model: Arc<std::sync::Mutex<Option<std::sync::Arc<crate::native_llama::NativeLlamaModel>>>>,
+    pub model_registry: Arc<RwLock<HashMap<String, std::sync::Arc<crate::native_llama::NativeLlamaModel>>>>,
 }
 
 impl LlamaManager {
@@ -50,6 +52,7 @@ impl LlamaManager {
             process: Arc::new(Mutex::new(None)),
             active_model: Arc::new(Mutex::new(None)),
             native_model: Arc::new(std::sync::Mutex::new(None)),
+            model_registry: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -184,6 +187,64 @@ impl LlamaManager {
         }
     }
 
+    pub fn get_or_load_native_model(&self, requested_name: &str) -> Option<std::sync::Arc<crate::native_llama::NativeLlamaModel>> {
+        let clean_name = requested_name.trim();
+        if clean_name.is_empty() {
+            return self.native_model.lock().ok()?.clone();
+        }
+
+        // 1. Check in-memory model_registry
+        {
+            let reg = self.model_registry.read();
+            if let Some(m) = reg.get(clean_name) {
+                return Some(m.clone());
+            }
+            for (k, v) in reg.iter() {
+                if k.eq_ignore_ascii_case(clean_name)
+                    || k.trim_end_matches(".gguf").eq_ignore_ascii_case(clean_name.trim_end_matches(".gguf"))
+                {
+                    return Some(v.clone());
+                }
+            }
+        }
+
+        // 2. Check if file exists on disk in models_dir
+        let mut candidates = vec![
+            self.models_dir.join(clean_name),
+            self.models_dir.join(format!("{}.gguf", clean_name)),
+            self.base_dir.join(clean_name),
+        ];
+
+        if let Ok(entries) = fs::read_dir(&self.models_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.eq_ignore_ascii_case(clean_name)
+                    || name.trim_end_matches(".gguf").eq_ignore_ascii_case(clean_name.trim_end_matches(".gguf"))
+                {
+                    candidates.insert(0, entry.path());
+                    break;
+                }
+            }
+        }
+
+        for path in candidates {
+            if path.exists() && path.is_file() {
+                info!("[MODEL ROUTER] Loading requested model on-demand: {:?}", path);
+                if let Ok(loaded) = crate::native_llama::NativeLlamaModel::load(&path, 0) {
+                    let mut reg = self.model_registry.write();
+                    reg.insert(clean_name.to_string(), loaded.clone());
+                    if let Some(fname) = path.file_name() {
+                        reg.insert(fname.to_string_lossy().to_string(), loaded.clone());
+                    }
+                    return Some(loaded);
+                }
+            }
+        }
+
+        // 3. Fallback to default active native_model if any
+        self.native_model.lock().ok()?.clone()
+    }
+
     pub fn start(&self, model_name: String, _port: u16, threads: usize, _ctx_size: usize) -> Result<u32, String> {
         let proc_guard = self.process.lock();
         if proc_guard.is_some() {
@@ -208,8 +269,9 @@ impl LlamaManager {
         let _ = fs::write(config_dir.join("active_model.txt"), &model_name);
         
         if let Ok(mut lock) = self.native_model.lock() {
-            *lock = Some(loaded_model);
+            *lock = Some(loaded_model.clone());
         }
+        self.model_registry.write().insert(model_name.clone(), loaded_model);
 
         *self.active_model.lock() = Some(model_name.clone());
         info!("Started NativeLlamaModel with model {}", model_name);
@@ -240,6 +302,7 @@ impl LlamaManager {
         if let Ok(mut lock) = self.native_model.lock() {
             *lock = None;
         }
+        self.model_registry.write().clear();
         Ok(())
     }
 }

@@ -299,6 +299,94 @@
             gap: 12px;
         }
 
+        /* Market Live Store Styles */
+        .market-grid {
+            display: grid;
+            grid-template-columns: 1.15fr 1fr;
+            gap: 20px;
+            height: 100%;
+            overflow: hidden;
+        }
+        @media (max-width: 1050px) {
+            .market-grid {
+                grid-template-columns: 1fr;
+                overflow-y: auto;
+            }
+        }
+        .market-data-col {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+        .market-chat-col {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            min-height: 520px;
+        }
+        .badge-sku {
+            background: #4f46e5;
+            color: #ffffff;
+            font-family: 'Fira Code', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            display: inline-block;
+        }
+        .badge-sku.economy {
+            background: #d97706;
+        }
+        .badge-price {
+            color: #10b981;
+            font-weight: 700;
+            font-size: 13px;
+        }
+        .badge-stock {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .sql-badge {
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #10b981;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-family: 'Fira Code', monospace;
+            font-size: 11px;
+            color: #34d399;
+            margin: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
+        }
+        .chip-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .chip {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            padding: 5px 10px;
+            border-radius: 14px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .chip:hover {
+            border-color: var(--accent);
+            color: var(--text-primary);
+            background: rgba(99, 102, 241, 0.15);
+        }
+
         /* Code box */
         pre {
             background: #090d16;
@@ -417,7 +505,8 @@
         </div>
 
         <div class="nav-menu">
-            <div class="nav-item active" id="nav-chat" onclick="switchTab('chat')">💬 <span data-i18n="navChat">المحادثة الذكية</span></div>
+            <div class="nav-item active" id="nav-market" onclick="switchTab('market')">🛍️ <span data-i18n="navMarket">متجر ماركت (SQL Live)</span></div>
+            <div class="nav-item" id="nav-chat" onclick="switchTab('chat')">💬 <span data-i18n="navChat">المحادثة الذكية</span></div>
             <div class="nav-item" id="nav-downloader" onclick="switchTab('downloader')">📥 <span data-i18n="navDownloader">تنزيل الموديلات (GGUF)</span></div>
             <div class="nav-item" id="nav-engine" onclick="switchTab('engine')">⚙️ <span data-i18n="navEngine">إدارة الخادم (Llama Engine)</span></div>
             <div class="nav-item" id="nav-keys" onclick="switchTab('keys')">🔑 <span data-i18n="navKeys">مفاتيح الـ API (API Keys)</span></div>
@@ -446,8 +535,112 @@
         </div>
 
         <div class="content-body">
+            <!-- TAB 0: MARKET LIVE STORE (SQL INTERACTIVE) -->
+            <div class="panel active" id="panel-market">
+                <div class="market-grid">
+                    <!-- Left: SQL Live Database & Orders Table -->
+                    <div class="market-data-col">
+                        <div class="card" style="margin-bottom: 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div class="card-title" style="margin: 0;">📦 <span>قاعدة بيانات المنتجات (SQLite: data/market.db)</span></div>
+                                <button class="btn" style="padding: 4px 10px; font-size: 12px;" onclick="fetchMarketData()">تحديث 🔄</button>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table class="table" style="font-size: 13px;">
+                                    <thead>
+                                        <tr>
+                                            <th>الكود (SKU)</th>
+                                            <th>اسم المنتج</th>
+                                            <th>السعر</th>
+                                            <th>الخامة</th>
+                                            <th>المقاسات</th>
+                                            <th>المخزن</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="marketProductsBody">
+                                        <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">جاري تحميل المنتجات من SQL...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card" style="margin-bottom: 0;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div class="card-title" style="margin: 0;">📋 <span>سجل الطلبات الحية (Live SQL Orders)</span></div>
+                                <span style="font-size: 12px; color: var(--text-secondary);" id="ordersCountBadge">0 طلبات</span>
+                            </div>
+                            <div style="overflow-x: auto; max-height: 220px;">
+                                <table class="table" style="font-size: 12px;">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>العميل</th>
+                                            <th>المنتج</th>
+                                            <th>الكمية</th>
+                                            <th>الإجمالي</th>
+                                            <th>العنوان</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="marketOrdersBody">
+                                        <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">لا توجد طلبات مسجلة بعد</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Customer Chat Panel -->
+                    <div class="market-chat-col">
+                        <div class="card" style="flex: 1; display: flex; flex-direction: column; height: 100%; padding: 16px;">
+                            <!-- Customer Profile Header -->
+                            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 12px; background: rgba(15, 23, 42, 0.6); padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);">
+                                <span style="font-size: 20px;">👤</span>
+                                <div style="flex: 1;">
+                                    <div style="font-size: 12px; color: var(--text-secondary);">بيانات العميل (أنت العميل الآن):</div>
+                                    <div style="display: flex; gap: 10px; margin-top: 4px;">
+                                        <input type="text" id="custName" class="input-field" value="أحمد محمود" style="padding: 4px 8px; font-size: 12px; height: 28px;" placeholder="اسم العميل">
+                                        <input type="text" id="custPhone" class="input-field" value="01012345678" style="padding: 4px 8px; font-size: 12px; height: 28px;" placeholder="رقم الهاتف">
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 11px; color: var(--text-secondary);">الموديل النشط:</div>
+                                    <select id="marketModelSelect" class="input-field" style="padding: 2px 6px; font-size: 12px; height: 28px; min-width: 150px; margin-top: 4px;">
+                                        <option value="gemma-2b.gguf" selected>Gemma 2B 🧠</option>
+                                        <option value="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf">Qwen2.5 Coder 1.5B ⚡</option>
+                                        <option value="Phi-4-mini-instruct-Q6_K.gguf">Phi-4 Mini 🔬</option>
+                                    </select>
+                                </div>
+                                <button class="btn" style="padding: 4px 10px; font-size: 11px; background: #334155; margin-top: 14px;" onclick="clearMarketChat()">جلسة جديدة 🧹</button>
+                            </div>
+
+                            <!-- Chat Messages Area -->
+                            <div class="chat-messages" id="marketChatMessages" style="flex: 1; min-height: 260px; margin-bottom: 10px;">
+                                <div class="message assistant">
+                                    مرحباً بك في متجر **ماركت**! أنا بائعك الذكي المرتبط مباشرة بقاعدة بيانات المتجر (SQLite).<br>
+                                    أقدر أقولك أسعار المنتجات وخاماتها ومخزونها بدقة الكود، وأسجلك طلب شراء فوري! اسألني عن أي حاجة.
+                                </div>
+                            </div>
+
+                            <!-- Quick Suggestion Chips -->
+                            <div class="chip-container">
+                                <span class="chip" onclick="askMarketChip('التيشيرت الأسود cX23 الفاخر ده بكام؟ ومقاس L متاح؟')">👕 التيشيرت cX23 الفاخر بكام؟</span>
+                                <span class="chip" onclick="askMarketChip('طب وتيشيرت cx23 بكام وإيه الفرق في الخامة؟')">🔍 إيه الفرق بين cX23 و cx23؟</span>
+                                <span class="chip" onclick="askMarketChip('عندكم قميص بولو كحلي مقاس L؟')">👔 قميص بولو كحلي</span>
+                                <span class="chip" onclick="askMarketChip('ابعتلي اتنين من التيشيرت الفاخر cX23 على المعادي')">🛒 اطلب 2 من cX23 على المعادي</span>
+                            </div>
+
+                            <!-- Input Bar -->
+                            <div class="chat-input-bar">
+                                <input type="text" id="marketChatInput" class="input-field" placeholder="اكتب سؤالك كعميل هنا (مثلاً: تيشيرت cX23 بكام؟)..." onkeypress="handleMarketKeyPress(event)">
+                                <button class="btn" onclick="sendMarketMessage()"><span data-i18n="btnSend">إرسال 🚀</span></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- TAB 1: CHAT -->
-            <div class="panel active" id="panel-chat">
+            <div class="panel" id="panel-chat">
                 <div class="chat-container">
                     <div class="chat-messages" id="chatMessages">
                         <div class="message assistant" data-i18n="chatWelcome">
@@ -893,8 +1086,10 @@ print(response.choices[0].message.content)</pre>
 
             const navEl = document.getElementById('nav-' + tabId);
             if(navEl) navEl.classList.add('active');
-            document.getElementById('panel-' + tabId).classList.add('active');
+            const panelEl = document.getElementById('panel-' + tabId);
+            if(panelEl) panelEl.classList.add('active');
 
+            if(tabId === 'market') fetchMarketData();
             if(tabId === 'keys') fetchKeys();
             if(tabId === 'logs') { fetchSpecs(); fetchLogs(); }
             if(tabId === 'engine' || tabId === 'downloader') fetchStatus();
@@ -932,14 +1127,13 @@ print(response.choices[0].message.content)</pre>
                 const modelText = document.getElementById('activeModelName');
                 const dataLang = i18n[currentLang] || i18n.ar;
 
+                dot.classList.add('active');
                 if(data.is_running) {
-                    dot.classList.add('active');
                     text.innerText = (dataLang.statusRunning || 'Server Running').replace('{pid}', data.pid);
                     modelText.innerText = (dataLang.activeModel || 'Active Model:') + ' ' + (data.active_model || '');
                 } else {
-                    dot.classList.remove('active');
-                    text.innerText = dataLang.statusStopped || 'Server Stopped';
-                    modelText.innerText = dataLang.noActiveModel || 'No active model';
+                    text.innerText = currentLang === 'en' ? 'Sovereign Engine Ready (Native C-FFI)' : 'المحرك السيادي جاهز (In-Process C-FFI)';
+                    modelText.innerText = (currentLang === 'en' ? 'Models loaded on demand: ' : 'جاهز لتحميل الموديلات فورياً: ') + (data.available_models.length) + ' موديل';
                 }
 
                 // Populate model select
@@ -1082,6 +1276,7 @@ print(response.choices[0].message.content)</pre>
             if(e.key === 'Enter') sendMessage();
         }
 
+        let chatHistory = [];
         async function sendMessage() {
             const input = document.getElementById('chatInput');
             const text = input.value.trim();
@@ -1101,15 +1296,26 @@ print(response.choices[0].message.content)</pre>
             // Assistant placeholder
             const assistantDiv = document.createElement('div');
             assistantDiv.className = 'message assistant';
-            assistantDiv.innerText = currentLang === 'en' ? 'Thinking & generating...' : (currentLang === 'fr' ? 'Génération...' : 'جاري التفكير والتوليد...');
+            assistantDiv.innerText = currentLang === 'en' ? 'Thinking & generating...' : (currentLang === 'fr' ? 'Génération...' : 'جاري التفكير واستعلام قاعدة البيانات...');
             chatMessages.appendChild(assistantDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            if(chatHistory.length === 0) {
+                chatHistory.push({
+                    role: 'system',
+                    content: 'أنت موظف مبيعات ذكي ومحترف لمتجر ماركت. مهمتك خدمة العملاء باللغة العربية. عند سؤال العميل عن أي منتج أو خامة أو سعر، استخدم الأدوات دائماً للبحث في قاعدة البيانات أولاً ولا تتحدث أو تخترع بيانات من خيالك.'
+                });
+            }
+
+            chatHistory.push({ role: 'user', content: text });
 
             try {
                 // Fetch active keys to pass token if needed
                 const keysRes = await fetch('/api/keys');
                 const keys = await keysRes.json();
                 const token = keys.length > 0 ? keys[0].key : '';
+
+                const model = document.getElementById('marketModelSelect')?.value || document.getElementById('modelSelect')?.value || 'qwen2.5-coder-1.5b-instruct-q4_k_m.gguf';
 
                 const res = await fetch('/v1/chat/completions', {
                     method: 'POST',
@@ -1118,15 +1324,71 @@ print(response.choices[0].message.content)</pre>
                         'Authorization': 'Bearer ' + token
                     },
                     body: JSON.stringify({
-                        messages: [{role: 'user', content: text}]
+                        model: model,
+                        messages: chatHistory,
+                        tools: marketTools,
+                        temperature: 0.2,
+                        max_tokens: 256
                     })
                 });
 
                 const data = await res.json();
-                if(res.ok && data.choices && data.choices[0]) {
-                    assistantDiv.innerText = data.choices[0].message.content;
-                } else {
+                if(!res.ok || !data.choices || !data.choices[0]) {
                     assistantDiv.innerText = '⚠️ ' + (data.error?.message || (currentLang === 'en' ? 'Ensure engine is started and model is selected' : 'تأكد من تشغيل المحرك واختيار الموديل'));
+                    return;
+                }
+
+                const msg = data.choices[0].message;
+                const toolCalls = msg.tool_calls || [];
+
+                if(toolCalls.length > 0) {
+                    const call = toolCalls[0];
+                    const fnName = call.function.name;
+                    let fnArgs = {};
+                    try { fnArgs = JSON.parse(call.function.arguments); } catch(e) {}
+
+                    // Execute tool via Market API
+                    const toolExecRes = await fetch('/api/market/tool', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tool_name: fnName, arguments: fnArgs })
+                    });
+                    const toolResult = await toolExecRes.json();
+
+                    // Turn 2: Feed back to model
+                    chatHistory.push(msg);
+                    chatHistory.push({
+                        role: 'tool',
+                        tool_call_id: call.id,
+                        content: JSON.stringify(toolResult)
+                    });
+
+                    const res2 = await fetch('/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + token
+                        },
+                        body: JSON.stringify({
+                            model: model,
+                            messages: chatHistory,
+                            temperature: 0.3,
+                            max_tokens: 256
+                        })
+                    });
+
+                    const data2 = await res2.json();
+                    if(res2.ok && data2.choices && data2.choices[0]) {
+                        const finalContent = data2.choices[0].message.content || 'تم استرجاع البيانات بنجاح!';
+                        assistantDiv.innerHTML = finalContent.replace(/\n/g, '<br>');
+                        chatHistory.push(data2.choices[0].message);
+                    } else {
+                        assistantDiv.innerText = '⚠️ خطأ في تكملة الرد';
+                    }
+                } else {
+                    const reply = msg.content || '';
+                    assistantDiv.innerHTML = reply.replace(/\n/g, '<br>');
+                    chatHistory.push(msg);
                 }
             } catch(e) {
                 assistantDiv.innerText = '⚠️ ' + (currentLang === 'en' ? 'Failed to connect: ' : 'تعذر الاتصال: ') + e.message;
@@ -1134,10 +1396,275 @@ print(response.choices[0].message.content)</pre>
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
+        let marketChatHistory = [];
+        const marketTools = [
+            {
+                type: "function",
+                function: {
+                    name: "search_products",
+                    description: "البحث في المنتجات بالكلمات المفتاحية أو الوصف أو الخامة أو التصنيف (مثال: ووتربروف، شتوي، قطن، جاكيت، بولو، بنطلون)",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: { type: "string", description: "وصف أو ميزة أو اسم المنتج المطلوب البحث عنه" }
+                        },
+                        required: ["query"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "get_product_price",
+                    description: "استرجاع سعر ومواصفات وخامة المنتج ومخزونه بالكود الصارم للـ SKU (مثل jk99, cX23, cx23, pl10, sh05)",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            sku: { type: "string", description: "كود المنتج مثل jk99 أو cX23 أو cx23 أو pl10 أو sh05" }
+                        },
+                        required: ["sku"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "create_order",
+                    description: "تسجيل وحفظ طلب شراء للعميل بالاسم والعنوان ورقم الهاتف في قاعدة بيانات SQL",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            sku: { type: "string", description: "كود المنتج المطلوب شراءه" },
+                            quantity: { type: "integer", description: "الكمية المطلوبة (افتراضي 1)" },
+                            customer_name: { type: "string", description: "اسم العميل" },
+                            phone: { type: "string", description: "رقم هاتف العميل" },
+                            address: { type: "string", description: "عنوان الشحن والتوصيل" }
+                        },
+                        required: ["sku", "quantity", "customer_name", "phone", "address"]
+                    }
+                }
+            }
+        ];
+
+        async function fetchMarketData() {
+            try {
+                const res = await fetch('/api/market/products');
+                if(!res.ok) return;
+                const products = await res.json();
+                const tbody = document.getElementById('marketProductsBody');
+                if(!products || products.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">لا توجد منتجات</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = products.map(p => {
+                    const badgeClass = p.sku === 'cx23' ? 'badge-sku economy' : 'badge-sku';
+                    return `
+                        <tr>
+                            <td><span class="${badgeClass}">${p.sku}</span></td>
+                            <td style="font-weight: 600;">${p.name}</td>
+                            <td><span class="badge-price">${p.price} ${p.currency}</span></td>
+                            <td style="color: var(--text-secondary); font-size: 12px;">${p.material}</td>
+                            <td>${p.sizes}</td>
+                            <td><span class="badge-stock">${p.stock_quantity} قطعة</span></td>
+                        </tr>
+                    `;
+                }).join('');
+
+                // Fetch orders
+                const oRes = await fetch('/api/market/orders');
+                if(oRes.ok) {
+                    const orders = await oRes.json();
+                    document.getElementById('ordersCountBadge').innerText = `${orders.length} طلبات`;
+                    const oBody = document.getElementById('marketOrdersBody');
+                    if(orders.length === 0) {
+                        oBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">لا توجد طلبات مسجلة بعد</td></tr>';
+                    } else {
+                        oBody.innerHTML = orders.map(o => `
+                            <tr>
+                                <td><b>#${o.order_id}</b></td>
+                                <td>${o.customer_name} <br><span style="font-size: 10px; color: var(--text-secondary);">${o.customer_phone}</span></td>
+                                <td><span class="badge-sku">${o.sku}</span> ${o.item_name}</td>
+                                <td>${o.quantity}</td>
+                                <td><span class="badge-price">${o.total_price} EGP</span></td>
+                                <td style="font-size: 11px;">${o.address}</td>
+                            </tr>
+                        `).join('');
+                    }
+                }
+            } catch(e) {
+                console.error("fetchMarketData error:", e);
+            }
+        }
+
+        function askMarketChip(text) {
+            document.getElementById('marketChatInput').value = text;
+            sendMarketMessage();
+        }
+
+        function handleMarketKeyPress(e) {
+            if(e.key === 'Enter') sendMarketMessage();
+        }
+
+        function clearMarketChat() {
+            marketChatHistory = [];
+            document.getElementById('marketChatMessages').innerHTML = `
+                <div class="message assistant">
+                    تم بدء جلسة جديدة ونظيفة ومسح الـ KV-Cache! كيف يمكنني مساعدتك اليوم في متجر ماركت؟
+                </div>
+            `;
+        }
+
+        async function sendMarketMessage() {
+            const input = document.getElementById('marketChatInput');
+            const text = input.value.trim();
+            if(!text) return;
+
+            const custName = document.getElementById('custName').value.trim() || 'أحمد محمود';
+            const custPhone = document.getElementById('custPhone').value.trim() || '01012345678';
+
+            const chatMessages = document.getElementById('marketChatMessages');
+
+            // User message bubble
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            userDiv.innerText = text;
+            chatMessages.appendChild(userDiv);
+
+            input.value = '';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            // Assistant placeholder
+            const assistantDiv = document.createElement('div');
+            assistantDiv.className = 'message assistant';
+            assistantDiv.innerHTML = '<span style="color: var(--text-secondary);">جاري معالجة الطلب والتوليد... ⏳</span>';
+            chatMessages.appendChild(assistantDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            if(marketChatHistory.length === 0) {
+                marketChatHistory.push({
+                    role: 'system',
+                    content: `أنت موظف مبيعات ذكي ومحترف في متجر ماركت. العميل الحالي: ${custName} (${custPhone}).
+قواعد صارمة:
+1. عند سؤال العميل عن أي منتج أو خامة أو نوع (مثل ووتربروف، شتوي، قطن، جاكيت، بولو، بنطلون)، استخدم دائماً أداة search_products للبحث في قاعدة البيانات أولاً.
+2. عند معرفة كود المنتج (SKU)، استخدم get_product_price لجلب السعر والمخزون المؤكد.
+3. لا تخمن أو تخترع أسعاراً من عندك أبداً واعتمد كلياً على بيانات الأدوات.
+4. بعد استلام نتيجة البحث (Tool Result)، اعرض مواصفات وسعر المنتج المتاح بلباقة باللغة العربية للعميل.
+5. تذكر دائماً سياق المحادثة والمنتج الذي يسأل عنه العميل عندما يسأل أسئلة تابعة مثل 'السعر؟' أو 'المقاس؟'.`
+                });
+            }
+
+            marketChatHistory.push({ role: 'user', content: text });
+
+            try {
+                // Get API token
+                const keysRes = await fetch('/api/keys');
+                const keys = await keysRes.json();
+                const token = keys.length > 0 ? keys[0].key : '';
+
+                const model = document.getElementById('marketModelSelect')?.value || document.getElementById('modelSelect')?.value || 'gemma-2b.gguf';
+
+                // Turn 1: Send to Omni Engine
+                const res = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: marketChatHistory,
+                        tools: marketTools,
+                        temperature: 0.3,
+                        max_tokens: 256
+                    })
+                });
+
+                const data = await res.json();
+                if(!res.ok || !data.choices || !data.choices[0]) {
+                    assistantDiv.innerText = '⚠️ ' + (data.error?.message || 'فشل الاتصال بالمحرك');
+                    return;
+                }
+
+                const msg = data.choices[0].message;
+                const toolCalls = msg.tool_calls || [];
+
+                if(toolCalls.length > 0) {
+                    const call = toolCalls[0];
+                    const fnName = call.function.name;
+                    let fnArgs = {};
+                    try { fnArgs = JSON.parse(call.function.arguments); } catch(e) {}
+
+                    // Show SQL badge inside chat
+                    const sqlBadge = document.createElement('div');
+                    sqlBadge.className = 'sql-badge';
+                    if(fnName.includes('search') || fnName.includes('find')) {
+                        sqlBadge.innerHTML = `⚡ <span>[استعلام SQL]: SELECT * FROM products WHERE name/material/desc LIKE '<b>%${fnArgs.query || fnArgs.keyword || ''}%</b>'</span>`;
+                    } else if(fnName.includes('price') || fnName.includes('stock')) {
+                        sqlBadge.innerHTML = `⚡ <span>[استعلام SQL]: SELECT * FROM products WHERE sku = '<b>${fnArgs.sku || ''}</b>'</span>`;
+                    } else if(fnName.includes('order')) {
+                        sqlBadge.innerHTML = `⚡ <span>[إدراج SQL]: INSERT INTO orders (sku: <b>${fnArgs.sku || ''}</b>, qty: <b>${fnArgs.quantity || 1}</b>)</span>`;
+                    } else {
+                        sqlBadge.innerHTML = `⚡ <span>[أداة المحرك]: ${fnName}</span>`;
+                    }
+                    chatMessages.insertBefore(sqlBadge, assistantDiv);
+
+                    // Execute tool via Market API
+                    const toolExecRes = await fetch('/api/market/tool', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tool_name: fnName, arguments: fnArgs })
+                    });
+                    const toolResult = await toolExecRes.json();
+
+                    // Refresh table data immediately
+                    fetchMarketData();
+
+                    // Turn 2: Feed back to model
+                    marketChatHistory.push(msg);
+                    marketChatHistory.push({
+                        role: 'tool',
+                        tool_call_id: call.id,
+                        content: JSON.stringify(toolResult)
+                    });
+
+                    const res2 = await fetch('/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + token
+                        },
+                        body: JSON.stringify({
+                            model: model,
+                            messages: marketChatHistory,
+                            temperature: 0.3,
+                            max_tokens: 256
+                        })
+                    });
+
+                    const data2 = await res2.json();
+                    if(res2.ok && data2.choices && data2.choices[0]) {
+                        const finalContent = data2.choices[0].message.content || 'تم تنفيذ العملية بنجاح!';
+                        assistantDiv.innerHTML = finalContent.replace(/\n/g, '<br>');
+                        marketChatHistory.push(data2.choices[0].message);
+                    } else {
+                        assistantDiv.innerText = '⚠️ خطأ في تكملة الرد';
+                    }
+                } else {
+                    assistantDiv.innerHTML = (msg.content || '').replace(/\n/g, '<br>');
+                    marketChatHistory.push(msg);
+                }
+            } catch(e) {
+                assistantDiv.innerText = '⚠️ تعذر الاتصال: ' + e.message;
+            }
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
         // Init
         fetchStatus();
+        fetchMarketData();
         setInterval(fetchDownloads, 2000);
         setInterval(fetchLogs, 3000);
+        setInterval(fetchMarketData, 5000);
     </script>
 </body>
 </html>

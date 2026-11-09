@@ -24,10 +24,7 @@ use tracing::{info, warn};
 use crate::native_llama::{NativeLlamaContext, NativeLlamaModel};
 use crate::sandbox::{MemoryVfs, WebLens, IsolatedJail};
 
-/// Convenience module-level forwarder for stripping thoughts across Omni Engine
-pub fn strip_thought(text: &str) -> String {
-    SwarmCoordinator::strip_thought(text)
-}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
@@ -63,203 +60,10 @@ impl TaskKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SwarmAction {
-    Search { query: String },
-    Fetch { url: String },
-    WriteFile { filename: String, content: String },
-    PatchFile { filename: String, target: String, replacement: String },
-    DeleteFile { filename: String },
-    RunTerminal { command: String },
-    TestRun { command: String, inputs: Vec<String> },
-    Verdict { status: bool, proof_or_missing: String },
-    Consult { question: String },
-    Report { finding: String },
-    Done,
-    None,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DiagnosticCode {
-    VfsFileNotWritten,
-    PlaceholderOrEmpty,
-    NoCodeBlock,
-    RepeatedAttractor,
-    MissingDependency(String),
-    PatchFailed(String),
-    FileNotDeleted,
-    DiffEmpty,
-    TestFailed,
-    OutOfBoundsWrite,
-    AcceptanceCriteriaFailed(String),
-}
-
-impl DiagnosticCode {
-    pub fn name(&self) -> &'static str {
-        match self {
-            DiagnosticCode::VfsFileNotWritten => "ERR_VFS_FILE_NOT_WRITTEN",
-            DiagnosticCode::PlaceholderOrEmpty => "ERR_PLACEHOLDER_OR_EMPTY",
-            DiagnosticCode::NoCodeBlock => "ERR_NO_CODE_BLOCK",
-            DiagnosticCode::RepeatedAttractor => "ERR_REPEATED_ATTRACTOR",
-            DiagnosticCode::MissingDependency(_) => "ERR_MISSING_DEPENDENCY",
-            DiagnosticCode::PatchFailed(_) => "ERR_PATCH_FAILED",
-            DiagnosticCode::FileNotDeleted => "ERR_FILE_NOT_DELETED",
-            DiagnosticCode::DiffEmpty => "ERR_DIFF_EMPTY",
-            DiagnosticCode::TestFailed => "ERR_TEST_FAILED",
-            DiagnosticCode::OutOfBoundsWrite => "ERR_OUT_OF_BOUNDS_WRITE",
-            DiagnosticCode::AcceptanceCriteriaFailed(_) => "ERR_ACCEPTANCE_CRITERIA_FAILED",
-        }
-    }
-
-    pub fn default_prescription(&self, target_entity: &str) -> String {
-        match self {
-            DiagnosticCode::VfsFileNotWritten => {
-                format!(
-                    "Provide the complete implementation for '{}' inside a code block (e.g. ```python ... ```).",
-                    target_entity
-                )
-            }
-            DiagnosticCode::PlaceholderOrEmpty => {
-                format!(
-                    "Write complete, working implementation for {}. NEVER output placeholders like TODO, pass, or empty comments.",
-                    target_entity
-                )
-            }
-            DiagnosticCode::NoCodeBlock => {
-                format!("Output your code strictly inside a markdown code block for {}.", target_entity)
-            }
-            DiagnosticCode::RepeatedAttractor => {
-                format!(
-                    "Break repetition attractor. Do not repeat failed patterns. Write complete, fresh code directly for '{}'.",
-                    target_entity
-                )
-            }
-            DiagnosticCode::MissingDependency(ref dep) => {
-                format!(
-                    "Required dependency or CLI tool '{}' is missing on host. Consult user or use standard library built-ins.",
-                    dep
-                )
-            }
-            DiagnosticCode::PatchFailed(ref err) => {
-                format!("Patch failed for '{}': {}. Ensure the exact target snippet exists in the file before patching.", target_entity, err)
-            }
-            DiagnosticCode::FileNotDeleted => {
-                format!("File '{}' was not deleted. Use `os.remove(\"{}\")` in Python or execute `rm {}` via terminal.", target_entity, target_entity, target_entity)
-            }
-            DiagnosticCode::DiffEmpty => {
-                format!("Modification on '{}' produced zero diff. Ensure the target lines are actually changed.", target_entity)
-            }
-            DiagnosticCode::TestFailed => {
-                format!("Execution test for '{}' failed. Review error output and fix the root cause.", target_entity)
-            }
-            DiagnosticCode::OutOfBoundsWrite => {
-                format!(
-                    "Security boundary violation: Unauthorized modification attempted outside write_set for '{}'. All file modifications must strictly target declared entities in the write_set.",
-                    target_entity
-                )
-            }
-            DiagnosticCode::AcceptanceCriteriaFailed(ref missing) => {
-                format!(
-                    "Deliverables failed acceptance criteria: {}. Complete all required files and features in '{}'.",
-                    missing, target_entity
-                )
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DependencyChoice {
-    InstallAndRetry,
-    UseAlternative,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostPackageManager {
-    Dnf,
-    Apt,
-    Pacman,
-    Zypper,
-    Apk,
-    Brew,
-    Winget,
-    Pip,
-}
-
-impl HostPackageManager {
-    /// Detect the primary package manager available on the host system dynamically.
-    pub fn detect() -> Self {
-        #[cfg(target_os = "windows")]
-        {
-            if std::path::Path::new("C:\\Program Files\\WindowsApps").exists() {
-                return HostPackageManager::Winget;
-            }
-            return HostPackageManager::Pip;
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            if std::path::Path::new("/opt/homebrew/bin/brew").exists()
-                || std::path::Path::new("/usr/local/bin/brew").exists()
-            {
-                return HostPackageManager::Brew;
-            }
-            return HostPackageManager::Pip;
-        }
-
-        #[cfg(unix)]
-        {
-            if std::path::Path::new("/usr/bin/dnf").exists() || std::path::Path::new("/bin/dnf").exists() {
-                HostPackageManager::Dnf
-            } else if std::path::Path::new("/usr/bin/apt-get").exists() || std::path::Path::new("/bin/apt-get").exists() {
-                HostPackageManager::Apt
-            } else if std::path::Path::new("/usr/bin/pacman").exists() || std::path::Path::new("/bin/pacman").exists() {
-                HostPackageManager::Pacman
-            } else if std::path::Path::new("/usr/bin/zypper").exists() || std::path::Path::new("/bin/zypper").exists() {
-                HostPackageManager::Zypper
-            } else if std::path::Path::new("/sbin/apk").exists() || std::path::Path::new("/bin/apk").exists() {
-                HostPackageManager::Apk
-            } else {
-                HostPackageManager::Pip
-            }
-        }
-    }
-
-    /// Build the idiomatic non-root installation command for the detected package manager
-    pub fn build_install_command(&self, dep: &str) -> String {
-        // Safe, non-root user installation: Never execute sudo in autonomous background actions!
-        match self {
-            HostPackageManager::Brew => {
-                format!(
-                    "brew install {} || python3 -m pip install --user {}",
-                    dep, dep
-                )
-            }
-            HostPackageManager::Winget => {
-                format!(
-                    "python -m pip install --user {} || pip install --user {}",
-                    dep, dep
-                )
-            }
-            _ => {
-                format!(
-                    "python3 -m pip install --user {} || pip install --user {} || pip install {}",
-                    dep, dep, dep
-                )
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ThinkerDecision {
-    Nudge(String),
-    Reset(String),
-    ConsultDependency {
-        dependency: String,
-        question: String,
-    },
-}
+pub use crate::planner::action_parser::{
+    SwarmAction, DiagnosticCode, DependencyChoice, HostPackageManager, ThinkerDecision,
+    strip_thought, strip_command_prefix, parse_action, parse_thinker_decision, extract_missing_dependency,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubGoal {
@@ -340,6 +144,20 @@ impl PlanBlueprintNode {
         let mut required = Vec::new();
         if let Some(ref sym) = self.symbols {
             if let Some(obj) = sym.as_object() {
+                if let Some(enums) = obj.get("enums").and_then(|e| e.as_array()) {
+                    for e in enums {
+                        if let Some(name) = e.get("name").and_then(|n| n.as_str()) {
+                            required.push(format!("enum {}", name));
+                        }
+                    }
+                }
+                if let Some(structs) = obj.get("structs").and_then(|s| s.as_array()) {
+                    for s in structs {
+                        if let Some(name) = s.get("name").and_then(|n| n.as_str()) {
+                            required.push(format!("struct {}", name));
+                        }
+                    }
+                }
                 if let Some(classes) = obj.get("classes").and_then(|c| c.as_array()) {
                     for c in classes {
                         if let Some(name) = c.get("name").and_then(|n| n.as_str()) {
@@ -357,7 +175,17 @@ impl PlanBlueprintNode {
             } else if let Some(s) = sym.as_str() {
                 for line in s.lines() {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("class ") {
+                    if trimmed.starts_with("enum ") {
+                        let name = trimmed.trim_start_matches("enum ").split(&['{', ' ', '<'][..]).next().unwrap_or("");
+                        if !name.is_empty() {
+                            required.push(format!("enum {}", name));
+                        }
+                    } else if trimmed.starts_with("struct ") {
+                        let name = trimmed.trim_start_matches("struct ").split(&['{', ' ', '<', '('][..]).next().unwrap_or("");
+                        if !name.is_empty() {
+                            required.push(format!("struct {}", name));
+                        }
+                    } else if trimmed.starts_with("class ") {
                         let name = trimmed.trim_start_matches("class ").split(&['(', ':', ' '][..]).next().unwrap_or("");
                         if !name.is_empty() {
                             required.push(format!("class {}", name));
@@ -366,6 +194,11 @@ impl PlanBlueprintNode {
                         let name = trimmed.trim_start_matches("def ").split(&['(', ':', ' '][..]).next().unwrap_or("");
                         if !name.is_empty() {
                             required.push(format!("def {}", name));
+                        }
+                    } else if trimmed.starts_with("fn ") {
+                        let name = trimmed.trim_start_matches("fn ").split(&['(', ' ', '<'][..]).next().unwrap_or("");
+                        if !name.is_empty() {
+                            required.push(format!("fn {}", name));
                         }
                     }
                 }
@@ -563,120 +396,7 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MemoryGateError {
-    OverCapacity { requested: usize, k_max: usize },
-    InsufficientCapacity { requested: usize, remaining: usize, k_max: usize },
-}
-
-#[derive(Debug, Clone)]
-pub struct MemoryGate {
-    pub k_max: usize,
-    pub active_tokens: usize,
-    pub bytes_per_token: usize,
-}
-
-impl MemoryGate {
-    pub fn new(k_max: usize) -> Self {
-        Self::with_bytes_per_token(k_max, 28_672)
-    }
-
-    pub fn with_bytes_per_token(k_max: usize, bytes_per_token: usize) -> Self {
-        Self {
-            k_max,
-            active_tokens: 0,
-            bytes_per_token,
-        }
-    }
-
-    #[inline]
-    pub fn can_admit(&self, requested: usize) -> bool {
-        if self.is_over_capacity(requested) {
-            return false;
-        }
-        self.active_tokens.saturating_add(requested) <= self.k_max
-    }
-
-    #[inline]
-    pub fn is_over_capacity(&self, requested: usize) -> bool {
-        requested > self.k_max
-    }
-
-    pub fn allocate(&mut self, tokens: usize) -> Result<(), ()> {
-        if self.can_admit(tokens) {
-            self.active_tokens = self.active_tokens.saturating_add(tokens);
-            Ok(())
-        } else {
-            Err(())
-        }
-    }
-
-    pub fn try_allocate(&mut self, tokens: usize) -> Result<(), MemoryGateError> {
-        if self.is_over_capacity(tokens) {
-            return Err(MemoryGateError::OverCapacity {
-                requested: tokens,
-                k_max: self.k_max,
-            });
-        }
-        if self.active_tokens.saturating_add(tokens) > self.k_max {
-            return Err(MemoryGateError::InsufficientCapacity {
-                requested: tokens,
-                remaining: self.remaining(),
-                k_max: self.k_max,
-            });
-        }
-        self.active_tokens = self.active_tokens.saturating_add(tokens);
-        Ok(())
-    }
-
-    pub fn release(&mut self, tokens: usize) {
-        self.active_tokens = self.active_tokens.saturating_sub(tokens);
-    }
-
-    #[inline]
-    pub fn remaining(&self) -> usize {
-        self.k_max.saturating_sub(self.active_tokens)
-    }
-
-    #[inline]
-    pub fn active_bytes(&self) -> usize {
-        self.active_tokens * self.bytes_per_token
-    }
-
-    #[inline]
-    pub fn max_bytes(&self) -> usize {
-        self.k_max * self.bytes_per_token
-    }
-
-    #[inline]
-    pub fn utilization(&self) -> f64 {
-        if self.k_max == 0 {
-            0.0
-        } else {
-            (self.active_tokens as f64 / self.k_max as f64).clamp(0.0, 1.0)
-        }
-    }
-
-    /// Analytical calculation of bytes per token for FP16 KV-Cache:
-    /// 4 * L * H_kv * (D / H_q)
-    #[inline]
-    pub fn analytical_bytes_per_token(l: usize, h_kv: usize, d: usize, h_q: usize) -> usize {
-        let d_head = if h_q > 0 { d / h_q } else { 0 };
-        4 * l * h_kv * d_head
-    }
-
-    /// Global Token Capacity Ceiling:
-    /// min(n_ctx_train, floor(m_budget / bytes_per_token))
-    #[inline]
-    pub fn calculate_k_max(n_ctx_train: usize, m_budget_bytes: usize, bytes_per_token: usize) -> usize {
-        let k_mem = if bytes_per_token > 0 {
-            m_budget_bytes / bytes_per_token
-        } else {
-            n_ctx_train
-        };
-        n_ctx_train.min(k_mem)
-    }
-}
+pub use crate::planner::memory_gate::{MemoryGate, MemoryGateError};
 
 /// Maximum line count threshold before a deliverable is distilled into an interface contract for downstream tasks.
 pub const AUTO_INJECT_MAX_LINES: usize = 40;
@@ -2186,32 +1906,7 @@ impl SwarmCoordinator {
         let mut loaded = 0;
         for dir_opt in dirs_to_scan {
             if let Some(dir) = dir_opt {
-                if dir.is_dir() {
-                    if let Ok(entries) = std::fs::read_dir(dir) {
-                        for entry in entries.flatten() {
-                            if let Ok(ft) = entry.file_type() {
-                                if ft.is_symlink() {
-                                    // Security: Skip symlinks to prevent credential/arbitrary file leakage into VFS
-                                    continue;
-                                }
-                                if ft.is_file() {
-                                    let path = entry.path();
-                                    let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                    if fname.starts_with('.') || fname.ends_with(".log") || fname == "README.md" {
-                                        continue;
-                                    }
-                                    let relative = PathBuf::from(&fname);
-                                    if !self.vfs.exists(&relative) {
-                                        if let Ok(bytes) = std::fs::read(&path) {
-                                            self.vfs.preload_file(&relative, &bytes);
-                                            loaded += 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                loaded += self.vfs.preload_workspace_recursive(dir);
             }
         }
         if loaded > 0 {
@@ -2279,14 +1974,22 @@ impl SwarmCoordinator {
         model.is_stop_piece(piece)
     }
 
-    /// Checks if an executable command exists in system PATH in a platform-agnostic way
+    /// Checks if an executable command exists in system PATH or user toolchains in a platform-agnostic way
     pub fn is_command_available(cmd: &str) -> bool {
+        let mut path_dirs = Vec::new();
         if let Ok(path_var) = std::env::var("PATH") {
             for dir in path_var.split(':') {
-                let bin_path = std::path::Path::new(dir).join(cmd);
-                if bin_path.is_file() {
-                    return true;
-                }
+                path_dirs.push(std::path::PathBuf::from(dir));
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            path_dirs.push(std::path::Path::new(&home).join(".cargo").join("bin"));
+            path_dirs.push(std::path::Path::new(&home).join(".local").join("bin"));
+        }
+        for dir in path_dirs {
+            let bin_path = dir.join(cmd);
+            if bin_path.is_file() {
+                return true;
             }
         }
         false
@@ -2294,86 +1997,9 @@ impl SwarmCoordinator {
 
     /// Resolves the optimal host syntax check command for any artifact to perform fast AST/syntax
     /// validation during file generation without executing runtime side-effects or waiting on user input loops.
+    #[inline]
     pub fn resolve_syntax_check_command(target: &str) -> String {
-        let p = std::path::Path::new(target);
-        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-        match ext {
-            "py" => {
-                if Self::is_command_available("python3") {
-                    format!("python3 -m py_compile {} 2>&1", target)
-                } else if Self::is_command_available("python") {
-                    format!("python -m py_compile {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "c" => {
-                if Self::is_command_available("gcc") {
-                    format!("gcc -Wall -O2 -fsyntax-only {} 2>&1", target)
-                } else if Self::is_command_available("clang") {
-                    format!("clang -fsyntax-only {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "cpp" | "cc" | "cxx" => {
-                if Self::is_command_available("g++") {
-                    format!("g++ -Wall -O2 -fsyntax-only {} 2>&1", target)
-                } else if Self::is_command_available("clang++") {
-                    format!("clang++ -fsyntax-only {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "rs" => {
-                if Self::is_command_available("rustc") {
-                    format!("rustc --emit=metadata {} -o /tmp/omni_rs_target.rmeta 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "js" => {
-                if Self::is_command_available("node") {
-                    format!("node --check {} 2>&1", target)
-                } else if Self::is_command_available("deno") {
-                    format!("deno check {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "ts" => {
-                if Self::is_command_available("tsc") {
-                    format!("tsc --noEmit {} 2>&1", target)
-                } else if Self::is_command_available("deno") {
-                    format!("deno check {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "sh" | "bash" => {
-                if Self::is_command_available("bash") {
-                    format!("bash -n {} 2>&1", target)
-                } else {
-                    format!("sh -n {} 2>&1", target)
-                }
-            }
-            "go" => {
-                if Self::is_command_available("go") {
-                    format!("go vet {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            "zig" => {
-                if Self::is_command_available("zig") {
-                    format!("zig ast-check {} 2>&1", target)
-                } else {
-                    format!("test -f {}", target)
-                }
-            }
-            _ => format!("test -f {}", target),
-        }
+        Self::resolve_verification_command(target)
     }
 
     /// Resolves the optimal host verification command for any artifact in a language-agnostic,
@@ -2428,7 +2054,9 @@ impl SwarmCoordinator {
                 }
             }
             "rs" => {
-                if Self::is_command_available("rustc") {
+                if Self::is_command_available("cargo") && (std::path::Path::new("Cargo.toml").exists() || std::path::Path::new("../Cargo.toml").exists()) {
+                    "cargo check --quiet 2>&1".to_string()
+                } else if Self::is_command_available("rustc") {
                     format!("rustc --emit=metadata {} -o /tmp/omni_rs_target.rmeta 2>&1", target)
                 } else {
                     format!("test -f {}", target)
@@ -2491,6 +2119,32 @@ impl SwarmCoordinator {
             .and_then(|f| f.to_str())
             .unwrap_or(target_filename);
 
+        // Pass 1: Prioritize lines belonging to actual ERRORS or panics (ignoring warnings/notes)
+        let mut in_error_block = false;
+        for line in err_text.lines() {
+            let tr = line.trim();
+            if tr.starts_with("error:") || tr.starts_with("error[") || tr.starts_with("FAILED") || tr.starts_with("panicked at") {
+                in_error_block = true;
+            } else if tr.starts_with("warning:") || tr.starts_with("note:") || tr.starts_with("help:") {
+                in_error_block = false;
+            }
+
+            if in_error_block && line.contains(base_name) {
+                if let Some(pos) = line.find(base_name) {
+                    let rest = &line[pos + base_name.len()..];
+                    if rest.starts_with(':') {
+                        let num_str: String = rest[1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+                        if let Ok(num) = num_str.parse::<usize>() {
+                            if num > 0 {
+                                return Some(num);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Fall back to standard extraction if no error-specific line found
         for line in err_text.lines() {
             // Pattern 1: target.ext:14: error or target.ext:14:5: error
             if line.contains(base_name) {
@@ -2536,6 +2190,200 @@ impl SwarmCoordinator {
             }
         }
 
+        None
+    }
+
+    /// Traces a test panic / failure back to the causal method defined in the target file.
+    /// Completely dynamic and language-agnostic: reads the test file that panicked, checks which
+    /// methods/functions defined in `target_entity` are invoked by that test, and returns its line number.
+    /// Uses a Backwards Causal Trace from the panic assertion line upwards, skipping read-only getters
+    /// to locate the state-mutating operational method under test.
+    pub fn resolve_causal_test_line(
+        vfs: &crate::sandbox::MemoryVfs,
+        target_entity: &str,
+        raw_output: &str,
+        read_set: &[PathBuf],
+    ) -> Option<usize> {
+        let target_path = PathBuf::from(target_entity);
+        let target_bytes = vfs.read_file(&target_path)?;
+        let code_str = String::from_utf8_lossy(&target_bytes);
+
+        // 1. Collect all defined functions and methods in the target file: (fn_name, line_num)
+        let mut target_fns: Vec<(String, usize)> = Vec::new();
+        for (idx, line) in code_str.lines().enumerate() {
+            let trimmed = line.trim();
+            if let Some(fn_idx) = trimmed.find("fn ") {
+                let after_fn = trimmed[fn_idx + 3..].trim();
+                if let Some(raw_name) = after_fn.split(|c: char| c == '(' || c == '<' || c.is_whitespace()).next() {
+                    let clean_fn = raw_name.trim();
+                    if !clean_fn.is_empty() && clean_fn != "new" && clean_fn != "default" {
+                        target_fns.push((clean_fn.to_string(), idx + 1));
+                    }
+                }
+            } else if let Some(def_idx) = trimmed.find("def ") {
+                let after_def = trimmed[def_idx + 4..].trim();
+                if let Some(raw_name) = after_def.split(|c: char| c == '(' || c.is_whitespace()).next() {
+                    let clean_fn = raw_name.trim();
+                    if !clean_fn.is_empty() && clean_fn != "__init__" {
+                        target_fns.push((clean_fn.to_string(), idx + 1));
+                    }
+                }
+            }
+        }
+
+        if target_fns.is_empty() {
+            return None;
+        }
+
+        // 2. Locate the test file that failed or panicked:
+        let mut candidate_test_paths: Vec<(PathBuf, Option<usize>)> = Vec::new();
+
+        for line in raw_output.lines() {
+            // Rust test panic: thread '...' panicked at tests/stress_test.rs:51:5:
+            if let Some(pos) = line.find("panicked at ") {
+                let rest = line[pos + 12..].trim();
+                let parts: Vec<&str> = rest.split(':').collect();
+                if parts.len() >= 2 {
+                    let fpath = parts[0].trim().trim_matches('\'').trim_matches('"');
+                    let lnum = parts[1].trim().parse::<usize>().ok();
+                    let pb = PathBuf::from(fpath);
+                    if vfs.exists(&pb) || vfs.read_file(&pb).is_some() {
+                        candidate_test_paths.push((pb, lnum));
+                    }
+                }
+            }
+            // Python traceback: File "tests/test_stress.py", line 51, in ...
+            if let Some(pos) = line.find("File \"") {
+                let rest = &line[pos + 6..];
+                if let Some(quote_idx) = rest.find('"') {
+                    let fpath = &rest[..quote_idx];
+                    let after = &rest[quote_idx + 1..];
+                    let mut lnum = None;
+                    if let Some(l_idx) = after.find("line ") {
+                        let l_rest = &after[l_idx + 5..];
+                        let num_str: String = l_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        lnum = num_str.parse::<usize>().ok();
+                    }
+                    let pb = PathBuf::from(fpath);
+                    if vfs.exists(&pb) || vfs.read_file(&pb).is_some() {
+                        candidate_test_paths.push((pb, lnum));
+                    }
+                }
+            }
+        }
+
+        // Priority B: Scan all files currently materialized in VFS that look like test files
+        if candidate_test_paths.is_empty() {
+            for vfs_path in vfs.list_files() {
+                let p_str = vfs_path.to_string_lossy();
+                let is_test = p_str.contains("test") || p_str.starts_with("tests/");
+                let fname = vfs_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                if is_test && !fname.is_empty() && raw_output.contains(fname) {
+                    let lnum = Self::extract_error_line_number(raw_output, fname);
+                    candidate_test_paths.push((vfs_path, lnum));
+                }
+            }
+        }
+
+        // Priority C: Fall back to read_set if any file in read_set is explicitly a test file
+        if candidate_test_paths.is_empty() {
+            for test_path in read_set {
+                let p_str = test_path.to_string_lossy();
+                if p_str.contains("test") {
+                    let fname = test_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                    if !fname.is_empty() && raw_output.contains(fname) {
+                        let lnum = Self::extract_error_line_number(raw_output, fname);
+                        candidate_test_paths.push((test_path.clone(), lnum));
+                    }
+                }
+            }
+        }
+
+        // 3. Scan BACKWARDS from the panic line in each test candidate
+        for (test_path, panic_line_opt) in candidate_test_paths {
+            let test_bytes = match vfs.read_file(&test_path) {
+                Some(b) => b,
+                None => continue,
+            };
+            let test_str = String::from_utf8_lossy(&test_bytes);
+            let test_lines: Vec<&str> = test_str.lines().collect();
+
+            // Extract the exact line where test panicked/failed (e.g. stress_test.rs:51:5 -> 51)
+            let panic_line = panic_line_opt
+                .or_else(|| {
+                    let fname = test_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                    Self::extract_error_line_number(raw_output, fname)
+                })
+                .unwrap_or(test_lines.len());
+
+            let scan_end = panic_line.min(test_lines.len());
+            let mut getter_candidate: Option<usize> = None;
+            let mut mutating_candidate: Option<usize> = None;
+
+            // Scan BACKWARDS from the panic line towards the start of the test function
+            for line_idx in (0..scan_end).rev() {
+                let test_line = test_lines[line_idx].trim();
+
+                // Skip comments to avoid matching English words like "transfers" or "verify" in comments
+                if test_line.starts_with("//") || test_line.starts_with('#') || test_line.starts_with("/*") || test_line.starts_with('*') {
+                    continue;
+                }
+
+                for (fn_name, target_line) in &target_fns {
+                    // Method invocation patterns: .transfer(, transfer(, transfer (
+                    let pat1 = format!(".{}(", fn_name);
+                    let pat2 = format!("{}(", fn_name);
+                    let pat3 = format!("{} (", fn_name);
+
+                    if test_line.contains(&pat1) || test_line.contains(&pat2) || test_line.contains(&pat3) {
+                        let is_getter = fn_name.starts_with("get_")
+                            || fn_name.starts_with("is_")
+                            || fn_name.starts_with("has_")
+                            || fn_name.starts_with("read_")
+                            || fn_name.starts_with("peek_")
+                            || fn_name.starts_with("check_")
+                            || fn_name.starts_with("verify_");
+
+                        // If called in a thread or concurrent block, it is the primary causal candidate
+                        let in_concurrent_context = test_line.contains("thread::spawn")
+                            || test_line.contains("spawn")
+                            || test_line.contains("tokio::spawn")
+                            || (line_idx > 0 && (test_lines[line_idx - 1].contains("spawn") || test_lines[line_idx - 1].contains("thread")));
+
+                        if in_concurrent_context && !is_getter {
+                            println!(
+                                "  [CAUSAL TRACE] Detected concurrent mutating invocation of '{}' at test line {}. Linking to target line {}.",
+                                fn_name, line_idx + 1, target_line
+                            );
+                            return Some(*target_line);
+                        }
+
+                        if !is_getter && mutating_candidate.is_none() {
+                            mutating_candidate = Some(*target_line);
+                        } else if is_getter && getter_candidate.is_none() {
+                            getter_candidate = Some(*target_line);
+                        }
+                    }
+                }
+
+                if let Some(m_line) = mutating_candidate {
+                    println!(
+                        "  [CAUSAL TRACE] Detected mutating method invocation in test line {}. Linking to target line {}.",
+                        line_idx + 1, m_line
+                    );
+                    return Some(m_line);
+                }
+            }
+
+            // Fallback: if test only asserted getters, return the getter
+            if let Some(g_line) = getter_candidate {
+                println!(
+                    "  [CAUSAL TRACE] Falling back to asserted getter method. Linking to target line {}.",
+                    g_line
+                );
+                return Some(g_line);
+            }
+        }
         None
     }
 
@@ -3728,111 +3576,9 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         Ok((decision, ledger_entry))
     }
 
+    #[inline]
     pub fn extract_missing_dependency(text: &str) -> Option<String> {
-        const ENGINE_INTERNAL_KEYWORDS: &[&str] = &[
-            // System & engine internals
-            "vfs", "sandbox", "cleanroom", "bwrap", "omni", "omni_engine", "workspace", "stdout", "stderr", "sys", "os",
-            // Python standard library modules (never external packages to install!)
-            "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "builtins", "bz2",
-            "calendar", "cmath", "collections", "colorsys", "compileall", "concurrent", "configparser",
-            "contextlib", "copy", "csv", "ctypes", "dataclasses", "datetime", "dbm", "difflib",
-            "dis", "doctest", "email", "encodings", "enum", "errno", "faulthandler", "fcntl",
-            "filecmp", "fileinput", "fnmatch", "fractions", "functools", "gc", "getopt", "getpass",
-            "gettext", "glob", "graphlib", "gzip", "hashlib", "heapq", "hmac", "html", "http",
-            "idlelib", "imaplib", "imghdr", "importlib", "inspect", "io", "ipaddress", "itertools",
-            "json", "keyword", "linecache", "locale", "logging", "lzma", "mailbox", "mailcap",
-            "marshal", "math", "mimetypes", "mmap", "modulefinder", "multiprocessing", "netrc",
-            "nntplib", "numbers", "operator", "optparse", "pathlib", "pdb", "pickle",
-            "pickletools", "pipes", "pkgutil", "platform", "plistlib", "poplib", "posix",
-            "posixpath", "pprint", "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
-            "pydoc", "queue", "quopri", "random", "re", "reprlib", "resource", "rlcompleter",
-            "runpy", "sched", "secrets", "select", "selectors", "shelve", "shlex", "shutil",
-            "signal", "site", "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "spwd",
-            "sqlite3", "sre_compile", "sre_constants", "sre_parse", "ssl", "stat", "statistics",
-            "string", "stringprep", "struct", "subprocess", "sunau", "symbol", "symtable",
-            "sysconfig", "syslog", "tabnanny", "tarfile", "telnetlib", "tempfile",
-            "termios", "test", "tests", "textwrap", "threading", "time", "timeit",
-            "token", "tokenize", "tomllib", "trace", "traceback", "tracemalloc", "tty",
-            "turtle", "turtledemo", "types", "typing", "unicodedata", "unittest", "urllib",
-            "uu", "uuid", "venv", "warnings", "wave", "weakref", "webbrowser", "wsgiref",
-            "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo",
-            // Common local package / workspace subfolder names
-            "src", "app", "lib", "pkg", "core", "models", "utils", "views", "controllers",
-            "routes", "services", "helpers", "database", "cli", "library", "client", "server",
-            "fixtures", "common", "shared", "internal", "config", "constants",
-        ];
-
-        // 1. Python ModuleNotFoundError: No module named 'openpyxl' or "openpyxl"
-        if let Some(idx) = text.find("No module named ") {
-            let sub = &text[idx + "No module named ".len()..];
-            let sub = sub.trim_start();
-            let mut quote = None;
-            let first_char = sub.chars().next()?;
-            let dep = if first_char == '\'' || first_char == '"' {
-                quote = Some(first_char);
-                &sub[1..]
-            } else {
-                sub
-            };
-            let end_idx = if let Some(q) = quote {
-                dep.find(q).unwrap_or_else(|| dep.split_whitespace().next().map(|s| s.len()).unwrap_or(dep.len()))
-            } else {
-                dep.find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-').unwrap_or(dep.len())
-            };
-            let candidate = dep[..end_idx].trim().to_string();
-            if !candidate.is_empty() && !ENGINE_INTERNAL_KEYWORDS.contains(&candidate.to_lowercase().as_str()) {
-                return Some(candidate);
-            }
-        }
-
-        // 2. Python ImportError: cannot import name ... from 'xxx'
-        if text.contains("ImportError") {
-            if let Some(from_idx) = text.find("from '") {
-                let sub = &text[from_idx + 6..];
-                if let Some(end) = sub.find('\'') {
-                    let dep = sub[..end].trim().to_string();
-                    if !dep.is_empty() && !ENGINE_INTERNAL_KEYWORDS.contains(&dep.to_lowercase().as_str()) {
-                        return Some(dep);
-                    }
-                }
-            }
-        }
-
-        // 3. Shell / Linux command not found:
-        // "command not found: jq" or "jq: command not found" or "sh: line 1: jq: not found"
-        if text.contains("command not found") || text.contains(": not found") {
-            const IGNORED_COMMANDS: &[&str] = &[
-                "run", "exec", "terminal", "sh", "bash", "cmd", "action", "command",
-                "python", "python3", "pytest", "sudo", "exit", "test", "true", "false",
-            ];
-            for line in text.lines() {
-                let candidate = if let Some(idx) = line.find("command not found:") {
-                    let sub = line[idx + "command not found:".len()..].trim();
-                    sub.split_whitespace().next()
-                } else if let Some(idx) = line.find(": command not found") {
-                    let prefix = line[..idx].trim();
-                    prefix.split_whitespace().last()
-                } else if let Some(idx) = line.find(": not found") {
-                    let prefix = line[..idx].trim();
-                    prefix.split_whitespace().last()
-                } else {
-                    None
-                };
-
-                if let Some(word) = candidate {
-                    let clean = word.trim_matches(|c| c == '\'' || c == '"' || c == ':').to_string();
-                    let clean_lower = clean.to_lowercase();
-                    if !clean.is_empty() 
-                        && !IGNORED_COMMANDS.contains(&clean_lower.as_str())
-                        && !ENGINE_INTERNAL_KEYWORDS.contains(&clean_lower.as_str())
-                    {
-                        return Some(clean);
-                    }
-                }
-            }
-        }
-
-        None
+        crate::planner::action_parser::extract_missing_dependency(text)
     }
 
     pub fn classify_failure(
@@ -4032,28 +3778,9 @@ DECISION: RESET | REASON: <new simplified directive for fresh restart>";
         }
     }
 
+    #[inline]
     pub fn parse_thinker_decision(text: &str, subgoal: &SubGoal) -> ThinkerDecision {
-        let clean = Self::strip_thought(text);
-        let upper = clean.to_uppercase();
-        if upper.contains("DECISION: RESET") || upper.contains("DECISION:RESET") {
-            let reason = if let Some(idx) = clean.find("REASON:") {
-                clean[idx + 7..].lines().next().unwrap_or("").trim().to_string()
-            } else if let Some(idx) = clean.find('|') {
-                clean[idx + 1..].lines().next().unwrap_or("").trim().to_string()
-            } else {
-                format!("Rewrite complete implementation for {}", subgoal.target_entity)
-            };
-            ThinkerDecision::Reset(reason)
-        } else {
-            let reason = if let Some(idx) = clean.find("REASON:") {
-                clean[idx + 7..].lines().next().unwrap_or("").trim().to_string()
-            } else if let Some(idx) = clean.find('|') {
-                clean[idx + 1..].lines().next().unwrap_or("").trim().to_string()
-            } else {
-                format!("Fix syntax error and ensure {} is written to VFS", subgoal.target_entity)
-            };
-            ThinkerDecision::Nudge(reason)
-        }
+        crate::planner::action_parser::parse_thinker_decision(text, &subgoal.target_entity)
     }
 
     pub fn is_explicit_single_file(goal: &str) -> bool {
@@ -5040,7 +4767,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             || Self::is_build_task(user_goal);
 
         let mut attempt = 1;
-            let mut last_error_desc: Option<String> = None;
+        let mut last_error_desc: Option<String> = None;
+        let mut last_error_line: Option<usize> = None;
+        let mut last_raw_compiler_output: Option<String> = None;
         let max_attempts = self.config.max_steps_per_worker.max(3);
         let mut current_directive = subgoal.guidance.clone().unwrap_or_else(|| subgoal.description.clone());
         let mut declined_dependencies: Vec<String> = Vec::new();
@@ -5176,12 +4905,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             format!(
                                 "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
                                 [EXISTING WORKING CODE IN VFS FOR '{}']:\n```\n{}\n```\n\n\
-                                [MANDATORY PRESERVATION INVARIANT]:\n\
-                                - Keep and preserve all existing working functions, routes, and logic in '{}'.\n\
-                                - Incrementally extend or update the implementation to add the requested new features without deleting previous capabilities.\n\
-                                - Output EXCLUSIVELY the complete updated code inside a single markdown code block.\n\
-                                - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
-                                - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.{}\n\
+                                [OUTPUT CONTRACT]:\n\
+                                - Preserve all existing working functions, routes, and signatures in '{}'.\n\
+                                - Incrementally implement requested changes completely without placeholders (NO TODO, NO pass).\n\
+                                - Return ONLY the full updated code inside a single markdown code block with zero external commentary.{}\n\
                                 Output the complete updated '{}' now:",
                                 user_goal, subgoal.description, subgoal.target_entity, current_directive,
                                 subgoal.target_entity, code_snippet,
@@ -5190,11 +4917,10 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         } else {
                             format!(
                                 "Goal: {}\nTask: {}\nTarget File: {}\nThinker Directive: {}\n\n\
-                                [ENGINE DIRECTIVE INJECTION - STRICT CONSTRAINTS]:\n\
-                                - Output EXCLUSIVELY the complete, working code inside a single markdown code block.\n\
-                                - ZERO discussion. ZERO apologies. ZERO introduction. ZERO text outside the code block.\n\
-                                - Complete implementation only: NO 'TODO', NO 'pass', NO placeholders.{}\n\
-                                - Generate the code for '{}' now:",
+                                [OUTPUT CONTRACT]:\n\
+                                - Output ONLY the complete, production-ready code inside a single markdown code block.\n\
+                                - Zero commentary, explanations, or placeholders (NO TODO, NO pass).{}\n\
+                                Generate the complete code for '{}' now:",
                                 user_goal, subgoal.description, subgoal.target_entity, current_directive,
                                 java_mandate, subgoal.target_entity
                             )
@@ -5291,22 +5017,48 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             } else {
                                 "[CONTINUOUS SWARM DIRECTIVE - INCREMENTAL EXTENSION]"
                             };
+                            let block_essentials = crate::sandbox::diagnostics::TopologicalDiagnostic::extract_block_essentials(&code_snippet);
+                            let sealed_contract_section = if !block_essentials.is_empty() {
+                                format!(
+                                    "\n[SEALED IMMUTABLE CONTRACT BLOCKS - ALREADY INHERENT IN FILE, DO NOT REDECLARE]:\n{}\n",
+                                    block_essentials.iter().map(|e| format!("- {}", e)).collect::<Vec<_>>().join("\n")
+                                )
+                            } else {
+                                String::new()
+                            };
+
+                            let display_code = if code_snippet.lines().count() > 30 {
+                                let lines: Vec<&str> = code_snippet.lines().collect();
+                                let imports: Vec<&str> = lines.iter().take(20).filter(|l| {
+                                    let tr = l.trim();
+                                    tr.starts_with("use ") || tr.starts_with("import ") || tr.starts_with("from ")
+                                }).copied().collect();
+                                let bottom_snippet: Vec<&str> = lines.iter().rev().take(15).rev().copied().collect();
+                                format!("{}\n// ... [{} lines sealed in DAG contract] ...\n{}", imports.join("\n"), lines.len().saturating_sub(35), bottom_snippet.join("\n"))
+                            } else {
+                                code_snippet.clone()
+                            };
+
+                            let guidance_extra = subgoal.guidance.as_deref().map(|g| {
+                                format!("\n[ARCHITECTURAL MANDATES & REQUIRED DEFINITIONS]:\n{}\n", g)
+                            }).unwrap_or_default();
                             format!(
                                 "{}:\n\
                                 Task #{}: {}\n\
                                 Target File: {}\n\
-                                Thinker Directive: {}\n\n\
-                                [EXISTING VERIFIED CODE IN VFS FOR '{}']:\n```\n{}\n```\n\n\
+                                Thinker Directive: {}\n\
+                                {}{}\n\
+                                [EXISTING VERIFIED CONTEXT IN VFS FOR '{}']:\n```\n{}\n```\n\n\
                                 [MANDATORY PRESERVATION INVARIANT]:\n\
-                                - Keep and preserve all existing functions, classes, and logic in '{}'.\n\
-                                - Incrementally add or complete the implementation to satisfy the directive without deleting previous capabilities.\n\
-                                - Output the missing definition(s) (or the complete updated file) inside a single markdown code block.\n\
+                                - All SEALED contract blocks above already exist. NEVER repeat or redeclare them.\n\
+                                - Only output NEW missing definition(s) or targeted implementation block inside a single markdown code block.\n\
                                 - ZERO conversational text outside the code block.\n\
                                 Output code for '{}' now:",
                                 header_badge,
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
-                                subgoal.target_entity, code_snippet,
-                                subgoal.target_entity, subgoal.target_entity
+                                guidance_extra, sealed_contract_section,
+                                subgoal.target_entity, display_code,
+                                subgoal.target_entity
                             )
                         } else {
                             let mut read_context = String::new();
@@ -5411,10 +5163,23 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     subgoal.target_entity.clone()
                 };
 
-                let mut target_line = 0;
-                if let Some(ref err_text) = last_error_desc {
-                    if let Some(num) = Self::extract_error_line_number(err_text, &target_file) {
-                        target_line = num;
+                let is_test_failure = last_raw_compiler_output.as_ref().map(|o| {
+                    o.contains("panicked at") || o.contains("test failed") || o.contains("assertion `left == right` failed")
+                }).unwrap_or(false);
+
+                let mut target_line = if is_test_failure {
+                    last_raw_compiler_output.as_ref().and_then(|raw| {
+                        Self::resolve_causal_test_line(&self.vfs, &target_file, raw, &subgoal.read_set)
+                    }).unwrap_or_else(|| last_error_line.unwrap_or(0))
+                } else {
+                    last_error_line.unwrap_or(0)
+                };
+
+                if target_line == 0 {
+                    if let Some(ref err_text) = last_raw_compiler_output.as_ref().or(last_error_desc.as_ref()) {
+                        if let Some(num) = Self::extract_error_line_number(err_text, &target_file) {
+                            target_line = num;
+                        }
                     }
                 }
 
@@ -5439,27 +5204,58 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     .and_then(|e| e.to_str())
                     .unwrap_or("text");
 
-                let (nudge_content, msg_type) = if let Some(ref slice) = surgery_slice {
+                let is_missing_symbol = last_error_desc.as_ref().map(|d| d.contains("ERR_MISSING_CONTRACT_SYMBOL")).unwrap_or(false);
+
+                let (nudge_content, msg_type) = if is_missing_symbol {
+                    println!("  [BLOCK-LEVEL AST DISCOVERY] Directing worker to synthesize missing definition block for '{}'", target_file.bright_cyan());
+                    (
+                        format!(
+                            "[BLOCK-LEVEL DIRECTIVE - MISSING CONTRACT DEFINITION]:\n\
+                            Target File: '{}'\n\
+                            Thinker Directive: {}\n\n\
+                            MANDATE:\n\
+                            - Output ONLY the missing definition block inside ```{} ``` code fences.\n\
+                            - Do NOT output the entire file. The engine will automatically splice this block into '{}'.\n\
+                            Output the definition block now:",
+                            target_file, nudge, fence_lang, target_file
+                        ),
+                        "Missing Definition Block Nudge"
+                    )
+                } else if let Some(ref slice) = surgery_slice {
                     println!("  [TOPOLOGICAL MACRO-SURGERY] Extracted broken block in '{}' lines {}-{}", target_file, slice.start_line, slice.end_line);
+                    let compiler_diag = if let Some(ref raw) = last_raw_compiler_output {
+                        let lines: Vec<&str> = raw.lines().take(15).collect();
+                        format!("\nCompiler / Runtime Diagnostic:\n```\n{}\n```", lines.join("\n"))
+                    } else {
+                        String::new()
+                    };
                     (
                         format!(
                             "[TOPOLOGICAL MACRO-SURGERY - AST ISOLATION]:\n\
-                            Diagnostic: Defect localized on line {} in '{}'\n\
-                            Runtime/Compiler Error: {}\n\
+                            Diagnostic: Defect localized on line {} in '{}'{}\n\
+                            Notice from Thinker: {}\n\
                             Target Block (Lines {}-{}):\n```{}\n{}\n```\n\
                             MANDATE: Output ONLY the corrected block of code within ```{} ``` fences. Do not output the entire file.",
-                            target_line, target_file, nudge, slice.start_line, slice.end_line, fence_lang, slice.content, fence_lang
+                            target_line, target_file, compiler_diag, nudge, slice.start_line, slice.end_line, fence_lang, slice.content, fence_lang
                         ),
                         "Macro-Surgery AST Nudge"
                     )
                 } else {
+                    let error_attachment = if let Some(ref raw_err) = last_raw_compiler_output {
+                        let lines: Vec<&str> = raw_err.lines().take(25).collect();
+                        format!("\n\n[COMPILER / RUNTIME DIAGNOSTIC ATTACHMENT]:\n```\n{}\n```", lines.join("\n"))
+                    } else if let Some(ref err_desc) = last_error_desc {
+                        format!("\n\n[ERROR DIAGNOSTIC]:\n{}", err_desc.trim())
+                    } else {
+                        String::new()
+                    };
                     (
                         format!(
                             "[ENGINE DIRECTIVE INJECTION - CORRECTION]:\n\
-                            Notice from Thinker: {}\n\
+                            Notice from Thinker: {}{}\n\
                             Target File: {}\n\
                             MANDATE: Output ONLY the corrected, complete code block now without any commentary or explanations:",
-                            nudge, subgoal.target_entity
+                            nudge, error_attachment, subgoal.target_entity
                         ),
                         "Standard Thinker Nudge"
                     )
@@ -5489,6 +5285,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 repetition_penalty: 1.1,
                 penalty_last_n: 64,
                 seed: 42,
+                grammar: None,
+                grammar_root: None,
             }, self.worker_model.n_vocab()).map_err(|e| e.to_string())?;
             let mut recent_tokens: std::collections::VecDeque<i32> = std::collections::VecDeque::with_capacity(32);
 
@@ -5784,6 +5582,105 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                     );
                                     write_content = format!("{}\n\n{}", base.trim_end(), content.trim_start());
                                 }
+                            } else if subgoal.kind == TaskKind::Modify {
+                                // Smart In-Situ Block Splicing for Modify tasks
+                                if let Some(existing_bytes) = self.vfs.read_file(&path) {
+                                    let existing_str = String::from_utf8_lossy(&existing_bytes).to_string();
+                                    
+                                    // Block-Level Intake Guard: Excise any re-emitted sealed contract blocks
+                                    let sealed_names = crate::sandbox::diagnostics::TopologicalDiagnostic::extract_defined_symbol_names(&existing_str);
+                                    let cleaned_content = crate::sandbox::diagnostics::TopologicalDiagnostic::excise_duplicate_sealed_blocks(
+                                        actual_filename,
+                                        content,
+                                        &sealed_names,
+                                    );
+                                    let content = if cleaned_content.trim().is_empty() { content } else { &cleaned_content };
+
+                                    // Case A: Model output an explicit PATCH conflict block
+                                    if content.contains("<<<<<<< TARGET") {
+                                        if let Ok(patched) = self.vfs.patch_file_checked(&path, content, &subgoal.write_set) {
+                                            println!("  [BLOCK SPLICING] Successfully applied targeted PATCH block to '{}'", actual_filename);
+                                            write_content = patched;
+                                        }
+                                    } 
+                                    // Case B: Model output ONLY an enum / struct definition block
+                                    else if (content.trim_start().starts_with("enum ") || content.trim_start().starts_with("pub enum ")
+                                        || content.trim_start().starts_with("struct ") || content.trim_start().starts_with("pub struct "))
+                                        && !content.contains("pub fn ") && existing_str.lines().count() > 10
+                                    {
+                                        let trimmed_content = content.trim_start();
+                                        let type_name = trimmed_content.split_whitespace()
+                                            .nth(if trimmed_content.starts_with("pub ") { 2 } else { 1 })
+                                            .and_then(|s| s.split(&['{', '(', '<', ':', ';'][..]).next())
+                                            .map(|s| s.trim())
+                                            .unwrap_or("");
+
+                                        let existing_line_opt = if !type_name.is_empty() {
+                                            crate::sandbox::diagnostics::TopologicalDiagnostic::find_symbol_line(&existing_str, type_name)
+                                        } else {
+                                            None
+                                        };
+
+                                        if let Some(existing_line) = existing_line_opt {
+                                            // Symbol already exists in file: REPLACE the existing AST slice instead of creating a duplicate!
+                                            if let Ok(slice) = crate::sandbox::diagnostics::TopologicalDiagnostic::extract_from_source(actual_filename, &existing_str, existing_line) {
+                                                let lines: Vec<&str> = existing_str.split('\n').collect();
+                                                let start_idx = slice.start_line.saturating_sub(1);
+                                                let end_idx = slice.end_line.min(lines.len());
+                                                let mut updated = lines[..start_idx].join("\n");
+                                                if !updated.is_empty() { updated.push('\n'); }
+                                                updated.push_str(content.trim());
+                                                if end_idx < lines.len() {
+                                                    updated.push('\n');
+                                                    updated.push_str(&lines[end_idx..].join("\n"));
+                                                }
+                                                write_content = updated;
+                                                println!("  [BLOCK SPLICING] Replaced existing definition '{}' (lines {}-{}) in '{}'", type_name, slice.start_line, slice.end_line, actual_filename);
+                                            }
+                                        } else {
+                                            // Brand new symbol: splice at insert_pos
+                                            let lines: Vec<&str> = existing_str.lines().collect();
+                                            let insert_pos = lines.iter()
+                                                .position(|l| l.trim().starts_with("pub struct ") || l.trim().starts_with("struct ") || l.trim().starts_with("impl "))
+                                                .unwrap_or(lines.len());
+                                            let mut updated_lines = lines[..insert_pos].to_vec();
+                                            updated_lines.push(content.trim());
+                                            updated_lines.push("");
+                                            updated_lines.extend_from_slice(&lines[insert_pos..]);
+                                            write_content = updated_lines.join("\n");
+                                            println!("  [BLOCK SPLICING] Spliced new definition block ({} bytes) into '{}' at line {}", content.len(), actual_filename, insert_pos + 1);
+                                        }
+                                    }
+                                    // Case C: Model output a single function replacement
+                                    else if (content.trim_start().starts_with("pub fn ") || content.trim_start().starts_with("fn ") || content.trim_start().starts_with("def "))
+                                        && existing_str.lines().count() > 15
+                                    {
+                                        if let Some(fn_name) = content.trim_start().split_whitespace().nth(1).and_then(|s| s.split('(').next()) {
+                                            if let Some(target_line) = crate::sandbox::diagnostics::TopologicalDiagnostic::find_symbol_line(&existing_str, fn_name) {
+                                                if let Ok(slice) = crate::sandbox::diagnostics::TopologicalDiagnostic::extract_from_source(actual_filename, &existing_str, target_line) {
+                                                    let lines: Vec<&str> = existing_str.split('\n').collect();
+                                                    let start_idx = slice.start_line.saturating_sub(1);
+                                                    let end_idx = slice.end_line.min(lines.len());
+                                                    let mut new_content = String::new();
+                                                    for i in 0..start_idx {
+                                                        new_content.push_str(lines[i]);
+                                                        new_content.push('\n');
+                                                    }
+                                                    new_content.push_str(content.trim());
+                                                    new_content.push('\n');
+                                                    for i in end_idx..lines.len() {
+                                                        new_content.push_str(lines[i]);
+                                                        if i < lines.len() - 1 {
+                                                            new_content.push('\n');
+                                                        }
+                                                    }
+                                                    write_content = new_content;
+                                                    println!("  [BLOCK SPLICING] Spliced replacement function '{}' into '{}' (lines {}-{})", fn_name, actual_filename, slice.start_line, slice.end_line);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             println!("  [EXECUTION] Direct code write: '{}' ({} bytes)...", actual_filename, write_content.len());
                             self.vfs.write_file(&path, write_content.as_bytes());
@@ -5953,11 +5850,11 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             };
 
             // GROUND TRUTH CHECK & THINKER VERIFICATION GATE
-            let vfs_bytes = self.vfs.read_file(&target_path);
+            let mut vfs_bytes = self.vfs.read_file(&target_path);
             let vfs_target_exists = self.vfs.exists(&target_path);
-            let vfs_target_size = vfs_bytes.as_ref().map(|c| c.len()).unwrap_or(0);
-            let vfs_str = vfs_bytes.as_ref().and_then(|b| std::str::from_utf8(b).ok());
-            let line_diff = self.vfs.diff_file(&target_path);
+            let mut vfs_target_size = vfs_bytes.as_ref().map(|c| c.len()).unwrap_or(0);
+            let mut vfs_str = vfs_bytes.as_ref().and_then(|b| std::str::from_utf8(b).ok()).map(|s| s.to_string());
+            let mut line_diff = self.vfs.diff_file(&target_path);
 
             // Line-by-Line Diff Perception Telemetry
             if let Some(ref diff) = line_diff {
@@ -5982,7 +5879,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
             let mut placeholder_found = false;
             let mut placeholder_reason = String::new();
-            if let Some(code) = vfs_str {
+            if let Some(ref code) = vfs_str {
                 let trimmed = code.trim();
                 if code.contains("TODO") || code.contains("FIXME") {
                     placeholder_found = true;
@@ -6008,8 +5905,8 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             if (is_build || subgoal.kind == TaskKind::Create || subgoal.kind == TaskKind::Modify)
                 && vfs_target_exists && vfs_target_size > 0 && !placeholder_found
             {
-                if let Some(bytes) = vfs_bytes.as_ref() {
-                    let code_str = String::from_utf8_lossy(bytes);
+                if let Some(bytes) = vfs_bytes.clone() {
+                    let code_str = String::from_utf8_lossy(&bytes).to_string();
 
                     // Contract Gate 1: Verify all mandatory symbols are present BEFORE running sandbox
                     if let Some(ref guidance_text) = subgoal.guidance {
@@ -6020,8 +5917,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             let mut present_symbols = Vec::new();
                             for line in marker_section[..section_end].lines() {
                                 let item = line.trim().trim_start_matches('-').trim();
-                                if item.starts_with("class ") || item.starts_with("def ") {
-                                    if code_str.contains(item) {
+                                let is_symbol_def = item.starts_with("class ")
+                                    || item.starts_with("def ")
+                                    || item.starts_with("enum ")
+                                    || item.starts_with("struct ")
+                                    || item.starts_with("fn ");
+                                if is_symbol_def {
+                                    let sym_name = item.split_whitespace().nth(1).unwrap_or(item);
+                                    if code_str.contains(sym_name) {
                                         present_symbols.push(item.to_string());
                                     } else {
                                         missing_symbols.push(item.to_string());
@@ -6049,7 +5952,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                     let vfs_files = self.vfs.all_files();
                                     let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
                                         &subgoal.target_entity,
-                                        bytes,
+                                        &bytes,
                                         &vfs_files,
                                     );
                                     if report.is_valid {
@@ -6120,18 +6023,227 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         let vfs_files = self.vfs.all_files();
                         let report = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
                             &subgoal.target_entity,
-                            bytes,
+                            &bytes,
                             &vfs_files,
                         );
                         if !report.is_valid {
                             syntax_error = report.error_message.clone();
+                            last_error_line = report.error_line;
+                            last_raw_compiler_output = Some(report.raw_output.clone());
                             cleanroom_missing_dep = Self::extract_missing_dependency(&report.raw_output)
                                 .or_else(|| report.error_message.as_ref().and_then(|m| Self::extract_missing_dependency(m)));
-                            if let Some(ref dep) = cleanroom_missing_dep {
-                                println!("  [DEPENDENCY INTERCEPTOR] Detected missing external package: '{}' in '{}'", dep.bright_yellow().bold(), subgoal.target_entity);
-                            } else if let Some(line) = report.error_line {
-                                println!("  [UNIVERSAL CLEANROOM] Detected error at line {} in '{}': {:?}", line, subgoal.target_entity, report.error_message);
+                        }
+                    }
+
+                    let is_contract_missing = syntax_error.as_ref()
+                        .map(|s| s.contains("ERR_MISSING_CONTRACT_SYMBOL") || s.contains("ERR_FORBIDDEN_REDECLARATION"))
+                        .unwrap_or(false);
+
+                    if let Some(ref dep) = cleanroom_missing_dep {
+                        println!("  [DEPENDENCY INTERCEPTOR] Detected missing external package: '{}' in '{}'", dep.bright_yellow().bold(), subgoal.target_entity);
+                    } else if syntax_error.is_some() && !is_contract_missing {
+                        if let Some(line) = last_error_line {
+                            println!("  [UNIVERSAL CLEANROOM] Detected error at line {} in '{}': {:?}", line, subgoal.target_entity, syntax_error);
+                        }
+
+                        // =========================================================================
+                        // [SOVEREIGN CODE FIXER - BLOCK-LEVEL IN-SITU COGNITIVE REPAIR]
+                        // Max 3 targeted repair attempts before falling back to full rollback.
+                        // Elevate the Fixer to equal cognitive priority as the Thinker.
+                        // =========================================================================
+                        println!(
+                            "  [FIXER ENGAGED] Activating Sovereign CodeFixer (Max 3 attempts) for '{}' at line {:?}",
+                            subgoal.target_entity.bright_cyan().bold(),
+                            last_error_line
+                        );
+
+                        let mut cur_error_msg = syntax_error.clone().unwrap_or_else(|| "Syntax or compiler error".to_string());
+                        let mut cur_raw_output = last_raw_compiler_output.clone().unwrap_or_default();
+                        let mut cur_error_line = last_error_line;
+                        let is_test_failure = cur_raw_output.contains("panicked at")
+                            || cur_raw_output.contains("test failed")
+                            || cur_raw_output.contains("assertion `left == right` failed");
+
+                        // If it's a test failure, do NOT trust compiler warning lines from rustc!
+                        if is_test_failure {
+                            cur_error_line = Self::resolve_causal_test_line(&self.vfs, &subgoal.target_entity, &cur_raw_output, &subgoal.read_set);
+                            if let Some(l) = cur_error_line {
+                                println!("  [CAUSAL TRACE] Linked test failure to causal method at line {} in '{}'", l, subgoal.target_entity);
                             }
+                        }
+
+                        if cur_error_line.is_none() {
+                            if let Some(target_bytes) = self.vfs.read_file(&target_path) {
+                                let code_str = String::from_utf8_lossy(&target_bytes);
+                                
+                                // 1. Try to extract directly from raw compiler output for this target file
+                                if !is_test_failure {
+                                    if let Some(num) = Self::extract_error_line_number(&cur_raw_output, &subgoal.target_entity) {
+                                        cur_error_line = Some(num);
+                                    }
+                                }
+                                // 3. Dynamically locate symbols defined in the subgoal guidance / DAG plan
+                                if cur_error_line.is_none() {
+                                    if let Some(ref guidance_text) = subgoal.guidance {
+                                        if let Some(marker_pos) = guidance_text.find("MANDATORY REQUIRED DEFINITIONS") {
+                                            let marker_section = &guidance_text[marker_pos..];
+                                            let section_end = marker_section.find("\n\n").unwrap_or(marker_section.len());
+                                            for line in marker_section[..section_end].lines() {
+                                                let item = line.trim().trim_start_matches('-').trim();
+                                                if let Some(sym_name) = item.split_whitespace().nth(1) {
+                                                    if let Some(l) = crate::sandbox::diagnostics::TopologicalDiagnostic::find_symbol_line(&code_str, sym_name) {
+                                                        cur_error_line = Some(l);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // 4. Dynamically scan test panic output for any function or method defined in target code
+                                if cur_error_line.is_none() {
+                                    for line in code_str.lines() {
+                                        let trimmed = line.trim();
+                                        if trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ") || trimmed.starts_with("def ") {
+                                            if let Some(fn_name) = trimmed.split_whitespace().nth(1).and_then(|s| s.split('(').next()) {
+                                                if !fn_name.is_empty() && cur_raw_output.contains(fn_name) {
+                                                    if let Some(l) = crate::sandbox::diagnostics::TopologicalDiagnostic::find_symbol_line(&code_str, fn_name) {
+                                                        cur_error_line = Some(l);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut fixer_succeeded = false;
+
+                        // Snapshot current target in VFS before Fixer attempts, so we can restore if all 3 attempts fail
+                        let pre_fixer_code = self.vfs.read_file(&target_path);
+
+                        if let Ok(mut fixer_ctx) = self.worker_model.create_context(4096, 512, 4) {
+                            for fixer_attempt in 1..=3 {
+                                println!(
+                                    "  [FIXER ATTEMPT {}/3] Analyzing AST block around line {:?} in '{}'...",
+                                    fixer_attempt, cur_error_line, subgoal.target_entity.bright_cyan()
+                                );
+
+                                let fix_res = crate::planner::fixer::CodeFixer::repair_in_situ_direct(
+                                    &self.worker_model,
+                                    &mut fixer_ctx,
+                                    &self.vfs,
+                                    &subgoal.target_entity,
+                                    cur_error_line,
+                                    &cur_error_msg,
+                                    &cur_raw_output,
+                                    subgoal.guidance.as_deref(),
+                                    &subgoal.write_set,
+                                    0,
+                                    fixer_attempt,
+                                );
+
+                                match fix_res {
+                                    Ok(rep) if rep.patch_applied => {
+                                        println!("  [FIXER PATCH APPLIED] {}", rep.summary.bright_green());
+                                        // Re-audit patched code with Cleanroom AND Contract Symbol Gates
+                                        if let Some(patched_bytes) = self.vfs.read_file(&target_path) {
+                                            let re_audit = crate::sandbox::cleanroom::UniversalCleanroom::audit_code_syntax_with_vfs(
+                                                &subgoal.target_entity,
+                                                &patched_bytes,
+                                                &self.vfs.all_files(),
+                                            );
+
+                                            let mut symbols_ok = true;
+                                            if let Some(ref guidance_text) = subgoal.guidance {
+                                                if let Some(marker_pos) = guidance_text.find("MANDATORY REQUIRED DEFINITIONS") {
+                                                    let marker_section = &guidance_text[marker_pos..];
+                                                    let section_end = marker_section.find("\n\n").unwrap_or(marker_section.len());
+                                                    let patched_str = String::from_utf8_lossy(&patched_bytes);
+                                                    for line in marker_section[..section_end].lines() {
+                                                        let item = line.trim().trim_start_matches('-').trim();
+                                                        let is_symbol_def = item.starts_with("class ") || item.starts_with("def ") || item.starts_with("enum ") || item.starts_with("struct ") || item.starts_with("fn ");
+                                                        if is_symbol_def {
+                                                            let sym_name = item.split_whitespace().nth(1).unwrap_or(item);
+                                                            if !patched_str.contains(sym_name) {
+                                                                symbols_ok = false;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if re_audit.is_valid && symbols_ok {
+                                                println!(
+                                                    "  {} Sovereign CodeFixer fully resolved all errors in '{}' on attempt {}!",
+                                                    "[FIXER SUCCESS]".bright_green().bold(),
+                                                    subgoal.target_entity.bright_cyan().bold(),
+                                                    fixer_attempt
+                                                );
+                                                syntax_error = None;
+                                                last_error_line = None;
+                                                last_raw_compiler_output = None;
+                                                let patched_str = String::from_utf8_lossy(&patched_bytes).to_string();
+                                                vfs_target_size = patched_bytes.len();
+                                                vfs_str = Some(patched_str);
+                                                line_diff = self.vfs.diff_file(&target_path);
+                                                vfs_bytes = Some(patched_bytes);
+                                                fixer_succeeded = true;
+                                                break;
+                                            } else {
+                                                println!(
+                                                    "  [FIXER AUDIT] Attempt {} still had errors: {:?} (symbols_ok: {})",
+                                                    fixer_attempt, re_audit.error_message, symbols_ok
+                                                );
+                                                cur_raw_output = re_audit.raw_output;
+                                                cur_error_msg = if !symbols_ok {
+                                                    format!("ERR_MISSING_CONTRACT_SYMBOL: Target file '{}' is still missing required contract definitions.", subgoal.target_entity)
+                                                } else {
+                                                    re_audit.error_message.unwrap_or_default()
+                                                };
+
+                                                let re_test_failure = cur_raw_output.contains("panicked at")
+                                                    || cur_raw_output.contains("test failed")
+                                                    || cur_raw_output.contains("assertion `left == right` failed");
+
+                                                if re_test_failure {
+                                                    cur_error_line = Self::resolve_causal_test_line(&self.vfs, &subgoal.target_entity, &cur_raw_output, &subgoal.read_set);
+                                                    if let Some(l) = cur_error_line {
+                                                        println!("  [CAUSAL TRACE] Re-linked test failure to causal method at line {} in '{}'", l, subgoal.target_entity);
+                                                    }
+                                                } else {
+                                                    cur_error_line = re_audit.error_line;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Ok(rep) => {
+                                        println!("  [FIXER NO PATCH] Attempt {} did not apply patch: {}", fixer_attempt, rep.summary.bright_yellow());
+                                    }
+                                    Err(e) => {
+                                        println!("  [FIXER ERROR] Attempt {} error: {}", fixer_attempt, e.bright_red());
+                                    }
+                                }
+                            }
+                        }
+
+                        if !fixer_succeeded {
+                            println!(
+                                "  [FIXER EXHAUSTED] All 3 attempts exhausted for '{}'. Reverting to pre-fixer baseline for thinker rollback.",
+                                subgoal.target_entity.bright_yellow()
+                            );
+                            if let Some(ref pre_bytes) = pre_fixer_code {
+                                self.vfs.write_file(&target_path, pre_bytes);
+                            }
+                            let fixer_audit = format!(
+                                "CodeFixer Causal Audit: Synthesized structures and syntax are valid in '{}'. Functional execution failed test assertion:\n{}\nPRESCRIPTION: Implement the operational logic in '{}' (around line {:?}) to satisfy this assertion.",
+                                subgoal.target_entity, cur_error_msg, subgoal.target_entity, cur_error_line
+                            );
+                            println!("  [FIXER CAUSAL AUDIT] {}", fixer_audit.bright_yellow());
+                            pending_nudge = Some(fixer_audit);
                         }
                     }
                 }
@@ -6411,7 +6523,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                     &exec_output,
                     vfs_target_exists,
                     vfs_target_size,
-                    vfs_str,
+                    vfs_str.as_deref(),
                     &generated_text,
                     last_diagnostic.as_ref(),
                     Some(&subgoal.kind),
@@ -6478,11 +6590,17 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             println!("  │ Error Summary : {}", error_desc.trim().bright_red());
             println!("{}", "  └────────────────────────────────────────────────────────────────────".bright_red());
 
+            let diag_input = if let Some(ref raw) = last_raw_compiler_output {
+                raw.as_str()
+            } else {
+                &error_desc
+            };
+
             let (decision, ledger_entry) = self.thinker_evaluate_failure(
                 subgoal,
                 attempt,
                 &generated_text,
-                &error_desc,
+                diag_input,
                 &diagnostic,
             )?;
 
@@ -6507,7 +6625,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             "ADAPTIVE FISSION: The base module is already verified in VFS. Implement ONLY the missing symbol(s): [{}]. Output the implementation to complete the file.",
                             missing_str
                         ));
-                    } else {
+                    } else if pending_nudge.is_none() {
                         pending_nudge = Some(hint);
                     }
                     if !is_premature_token_misfire {
@@ -6780,373 +6898,27 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
     }
 
     /// Strip prefixes like RUN:, EXEC:, TERMINAL:, $, #, -, etc. from an execution command
+    #[inline]
     pub fn strip_command_prefix(raw: &str) -> String {
-        let mut s = raw.trim();
-        loop {
-            let mut changed = false;
-            if let Some(rest) = s.strip_prefix("Assistant:") {
-                s = rest.trim();
-                changed = true;
-            }
-            if let Some(rest) = s.strip_prefix("- ")
-                .or_else(|| s.strip_prefix("* "))
-                .or_else(|| s.strip_prefix("1. "))
-                .or_else(|| s.strip_prefix("2. "))
-                .or_else(|| s.strip_prefix("$ "))
-                .or_else(|| s.strip_prefix("# "))
-            {
-                s = rest.trim();
-                changed = true;
-            }
-            let upper = s.to_uppercase();
-            if upper.starts_with("RUN:") {
-                s = s[4..].trim();
-                changed = true;
-            } else if upper.starts_with("EXEC:") {
-                s = s[5..].trim();
-                changed = true;
-            } else if upper.starts_with("TERMINAL:") {
-                s = s[9..].trim();
-                changed = true;
-            } else if upper.starts_with("ACTION:") {
-                s = s[7..].trim();
-                changed = true;
-            } else if upper.starts_with("COMMAND:") {
-                s = s[8..].trim();
-                changed = true;
-            }
-            if !changed {
-                break;
-            }
-        }
-        s.trim_matches('"').trim_matches('\'').trim().to_string()
+        crate::planner::action_parser::strip_command_prefix(raw)
     }
 
     /// Extracts internal reasoning/thought monologue enclosed in <think>...</think> or <thought>...</thought> if present.
+    #[inline]
     pub fn extract_thought(text: &str) -> Option<String> {
-        let mut thoughts = Vec::new();
-        if let Some(start) = text.find("<think>") {
-            let after = &text[start + 7..];
-            if let Some(end) = after.find("</think>") {
-                let thought = after[..end].trim();
-                if !thought.is_empty() {
-                    thoughts.push(thought.to_string());
-                }
-            } else {
-                let thought = after.trim();
-                if !thought.is_empty() {
-                    thoughts.push(thought.to_string());
-                }
-            }
-        } else if let Some(end) = text.find("</think>") {
-            let thought = text[..end].trim();
-            if !thought.is_empty() {
-                thoughts.push(thought.to_string());
-            }
-        }
-
-        if let Some(start) = text.find("<thought>") {
-            let after = &text[start + 9..];
-            if let Some(end) = after.find("</thought>") {
-                let thought = after[..end].trim();
-                if !thought.is_empty() {
-                    thoughts.push(thought.to_string());
-                }
-            } else {
-                let thought = after.trim();
-                if !thought.is_empty() {
-                    thoughts.push(thought.to_string());
-                }
-            }
-        } else if let Some(end) = text.find("</thought>") {
-            let thought = text[..end].trim();
-            if !thought.is_empty() {
-                thoughts.push(thought.to_string());
-            }
-        }
-
-        let combined = thoughts.join("\n").trim().to_string();
-        if combined.is_empty() {
-            None
-        } else {
-            Some(combined)
-        }
+        crate::planner::action_parser::extract_thought(text)
     }
 
     /// Strips out internal thought blocks (<think>...</think> or <thought>...</thought>) to ensure pure actionable deliverable.
+    #[inline]
     pub fn strip_thought(text: &str) -> String {
-        let mut s = text.to_string();
-        while let Some(start) = s.find("<think>") {
-            if let Some(end) = s[start..].find("</think>") {
-                let close_pos = start + end + 8;
-                s.replace_range(start..close_pos, "\n");
-            } else {
-                s.truncate(start);
-                break;
-            }
-        }
-        while let Some(start) = s.find("<thought>") {
-            if let Some(end) = s[start..].find("</thought>") {
-                let close_pos = start + end + 10;
-                s.replace_range(start..close_pos, "\n");
-            } else {
-                s.truncate(start);
-                break;
-            }
-        }
-        if let Some(end) = s.find("</think>") {
-            s = s[end + 8..].to_string();
-        }
-        if let Some(end) = s.find("</thought>") {
-            s = s[end + 10..].to_string();
-        }
-        s.trim().to_string()
+        crate::planner::action_parser::strip_thought(text)
     }
 
     /// Parse raw text generated by the worker model into typed SwarmAction
+    #[inline]
     pub fn parse_action(text: &str) -> SwarmAction {
-        // Isolate internal thought blocks before analyzing actionable deliverables
-        let stripped = Self::strip_thought(text);
-        let mut cleaned = stripped.as_str();
-        if let Some(rest) = cleaned.strip_prefix("Assistant:") {
-            cleaned = rest.trim();
-        }
-
-        // 1. Check for unified diff / patch markers: <<<<<<< TARGET ... ======= ... >>>>>>>
-        if let Some(target_start) = cleaned.find("<<<<<<< TARGET") {
-            let after_target = &cleaned[target_start + 14..];
-            if let Some(sep) = after_target.find("=======") {
-                let target_snippet = after_target[..sep].trim_matches('\n');
-                let after_sep = &after_target[sep + 7..];
-                if let Some(end) = after_sep.find(">>>>>>>") {
-                    let replacement_snippet = after_sep[..end].trim_matches('\n');
-                    let filename = if let Some(pos) = cleaned.find("PATCH:") {
-                        let line = cleaned[pos..].lines().next().unwrap_or("");
-                        line.trim_start_matches("PATCH:").trim().to_string()
-                    } else if let Some(pos) = cleaned.find("FILE:") {
-                        let line = cleaned[pos..].lines().next().unwrap_or("");
-                        line.trim_start_matches("FILE:").trim().to_string()
-                    } else {
-                        String::new()
-                    };
-                    return SwarmAction::PatchFile {
-                        filename,
-                        target: target_snippet.to_string(),
-                        replacement: replacement_snippet.to_string(),
-                    };
-                }
-            }
-        }
-
-        // 2. Check for general code block ``` ... ```
-        if let Some(start) = cleaned.find("```") {
-            let after = &cleaned[start + 3..];
-            // Extract optional language header line
-            let first_nl = after.find('\n').unwrap_or(after.len());
-            let header = after[..first_nl].trim();
-            let is_ident = !header.is_empty() && !header.contains(' ') && header.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-            let body_start = if is_ident { first_nl + 1 } else { 0 };
-            let body = if body_start < after.len() { &after[body_start..] } else { after };
-            let block = if let Some(end) = body.find("```") {
-                &body[..end]
-            } else {
-                body
-            }.trim();
-
-            let upper_header = header.to_uppercase();
-            if upper_header == "TEST_RUN" || upper_header == "TERMINAL_TEST" || upper_header == "TEST" {
-                let mut cmd = String::new();
-                let mut inputs = Vec::new();
-                let mut in_inputs = false;
-                for line in block.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    if let Some(rest) = trimmed.strip_prefix("command:")
-                        .or_else(|| trimmed.strip_prefix("cmd:"))
-                        .or_else(|| trimmed.strip_prefix("COMMAND:"))
-                    {
-                        cmd = rest.trim().to_string();
-                        in_inputs = false;
-                    } else if trimmed.eq_ignore_ascii_case("inputs:") || trimmed.eq_ignore_ascii_case("stdin:") {
-                        in_inputs = true;
-                    } else if in_inputs {
-                        let clean_inp = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim();
-                        inputs.push(clean_inp.to_string());
-                    } else if cmd.is_empty() && (trimmed.starts_with("python") || trimmed.starts_with("bash") || trimmed.starts_with("sh ") || trimmed.starts_with("cargo ") || trimmed.starts_with("node ")) {
-                        cmd = trimmed.to_string();
-                    } else {
-                        inputs.push(trimmed.to_string());
-                    }
-                }
-                return SwarmAction::TestRun { command: cmd, inputs };
-            }
-
-            if upper_header == "VERDICT" {
-                let mut status = false;
-                let mut missing = Vec::new();
-                let mut proof = Vec::new();
-                let mut in_missing = false;
-                let mut in_proof = false;
-                for line in block.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    let upper = trimmed.to_uppercase();
-                    if upper.starts_with("STATUS:") {
-                        let val = trimmed[7..].trim().to_uppercase();
-                        status = val == "YES" || val == "ACCEPT" || val == "PASS" || val == "PASSED" || val == "TRUE";
-                        in_missing = false;
-                        in_proof = false;
-                    } else if upper.starts_with("DECISION:") {
-                        let val = trimmed[9..].trim().to_uppercase();
-                        status = val == "YES" || val == "ACCEPT" || val == "PASS" || val == "PASSED" || val == "TRUE";
-                        in_missing = false;
-                        in_proof = false;
-                    } else if upper.starts_with("MISSING:") {
-                        in_missing = true;
-                        in_proof = false;
-                        let rest = trimmed[8..].trim();
-                        if !rest.is_empty() {
-                            missing.push(rest.to_string());
-                        }
-                    } else if upper.starts_with("PROOF:") || upper.starts_with("EVIDENCE:") {
-                        in_proof = true;
-                        in_missing = false;
-                        let rest = trimmed[6..].trim();
-                        if !rest.is_empty() {
-                            proof.push(rest.to_string());
-                        }
-                    } else if upper.starts_with("WHY:") || upper.starts_with("REASON:") {
-                        let rest = trimmed.splitn(2, ':').nth(1).unwrap_or("").trim();
-                        if !rest.is_empty() {
-                            if status {
-                                proof.push(rest.to_string());
-                            } else {
-                                missing.push(rest.to_string());
-                            }
-                        }
-                    } else if in_missing {
-                        let clean = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim();
-                        missing.push(clean.to_string());
-                    } else if in_proof {
-                        let clean = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim();
-                        proof.push(clean.to_string());
-                    }
-                }
-                let proof_or_missing = if status {
-                    if proof.is_empty() { "Verified against all user requirements".to_string() } else { proof.join("; ") }
-                } else {
-                    if missing.is_empty() { "Missing user requirements or unexpected behavior".to_string() } else { missing.join("; ") }
-                };
-                return SwarmAction::Verdict { status, proof_or_missing };
-            }
-
-            let upper_block = block.to_uppercase();
-            if header.eq_ignore_ascii_case("bash") || header.eq_ignore_ascii_case("sh")
-                || upper_block.starts_with("RUN:")
-                || upper_block.starts_with("EXEC:")
-                || upper_block.starts_with("TERMINAL:")
-            {
-                let clean = Self::strip_command_prefix(block);
-                return SwarmAction::RunTerminal { command: clean };
-            } else if !block.is_empty() {
-                return SwarmAction::WriteFile { filename: String::new(), content: block.to_string() };
-            }
-        }
-
-        // 5. Raw code starting without markdown fences
-        if cleaned.starts_with("#!/")
-            || cleaned.starts_with("import ")
-            || cleaned.starts_with("from ")
-            || cleaned.starts_with("def ")
-            || cleaned.starts_with("class ")
-            || cleaned.starts_with("<!DOCTYPE")
-            || cleaned.starts_with("<html")
-        {
-            return SwarmAction::WriteFile { filename: String::new(), content: cleaned.to_string() };
-        }
-
-        // 6. Standard commands line by line
-        for line in cleaned.lines() {
-            let mut l = line.trim();
-            if let Some(rest) = l.strip_prefix("Assistant:") {
-                l = rest.trim();
-            }
-
-            // Strip bullet points or numbering
-            if let Some(rest) = l.strip_prefix("- ")
-                .or_else(|| l.strip_prefix("* "))
-                .or_else(|| l.strip_prefix("1. "))
-                .or_else(|| l.strip_prefix("2. "))
-            {
-                l = rest.trim();
-            }
-
-            // Strip common prefixes
-            if let Some(rest) = l.strip_prefix("Action:").or_else(|| l.strip_prefix("action:")) {
-                l = rest.trim();
-            }
-            if let Some(rest) = l.strip_prefix("Command:").or_else(|| l.strip_prefix("command:")) {
-                l = rest.trim();
-            }
-
-            let upper = l.to_uppercase();
-            if upper.starts_with("DELETE:") || upper.starts_with("REMOVE:") || upper.starts_with("RM:") {
-                let file = l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
-                return SwarmAction::DeleteFile { filename: file.to_string() };
-            }
-            if upper.starts_with("PATCH:") {
-                let rest = l[6..].trim();
-                let parts: Vec<&str> = rest.split('|').collect();
-                let filename = parts[0].trim().trim_matches('"').trim_matches('\'').to_string();
-                let mut target = String::new();
-                let mut replacement = String::new();
-                for part in &parts[1..] {
-                    let trimmed_part = part.trim();
-                    let upper_part = trimmed_part.to_uppercase();
-                    if upper_part.starts_with("TARGET:") {
-                        target = trimmed_part[7..].trim().trim_matches('"').trim_matches('\'').to_string();
-                    } else if upper_part.starts_with("REPLACEMENT:") {
-                        replacement = trimmed_part[12..].trim().trim_matches('"').trim_matches('\'').to_string();
-                    }
-                }
-                return SwarmAction::PatchFile { filename, target, replacement };
-            }
-            if upper.starts_with("EXEC:") || upper.starts_with("RUN:") || upper.starts_with("TERMINAL:") {
-                let clean = Self::strip_command_prefix(l);
-                return SwarmAction::RunTerminal { command: clean };
-            }
-            if upper.starts_with("VERDICT:") {
-                let rest = l[8..].trim();
-                let upper_rest = rest.to_uppercase();
-                let status = upper_rest.starts_with("YES") || upper_rest.starts_with("ACCEPT") || upper_rest.starts_with("PASS");
-                return SwarmAction::Verdict { status, proof_or_missing: rest.to_string() };
-            }
-            if upper.starts_with("SEARCH:") {
-                let q = l[7..].trim().trim_matches('"').trim_matches('\'');
-                return SwarmAction::Search { query: q.to_string() };
-            }
-            if upper.starts_with("FETCH:") {
-                let u = l[6..].trim().trim_matches('"').trim_matches('\'');
-                return SwarmAction::Fetch { url: u.to_string() };
-            }
-            if upper.starts_with("REPORT:") {
-                let f = l[7..].trim();
-                return SwarmAction::Report { finding: f.to_string() };
-            }
-            if upper.starts_with("CONSULT:") || upper.starts_with("ASK:") || upper.starts_with("NEED:") {
-                let q = l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
-                return SwarmAction::Consult { question: q.to_string() };
-            }
-            if upper == "DONE" || upper.starts_with("DONE:") || upper.starts_with("DONE ") {
-                return SwarmAction::Done;
-            }
-        }
-
-        SwarmAction::None
+        crate::planner::action_parser::parse_action(text)
     }
 
 }

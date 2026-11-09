@@ -10,7 +10,7 @@
 #![deny(unused_must_use)]
 
 use crate::native_llama::{NativeLlamaModel, NativeLlamaContext, NativeLlamaSampler, SamplingConfig};
-use crate::planner::surgeon::Diagnostic;
+use crate::planner::fixer::Diagnostic;
 use std::sync::{Arc, Mutex};
 use tracing::info;
 

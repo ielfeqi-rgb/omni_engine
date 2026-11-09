@@ -63,10 +63,10 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/v1/chat/completions", port);
 
-    let mut conversation: Vec<ChatMessage> = vec![ChatMessage {
-        role: "system".to_string(),
-        content: crate::planner::GroundedSystemProfile::build_system_prompt(),
-    }];
+    let mut conversation: Vec<ChatMessage> = vec![ChatMessage::new(
+        "system",
+        crate::planner::GroundedSystemProfile::build_system_prompt(),
+    )];
 
     // Session-bound isolated VFS, Terminal Bridge, and Supervisor
     let vfs = std::sync::Arc::new(MemoryVfs::new());
@@ -184,14 +184,11 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
             None,
         );
         if !conversation.is_empty() {
-            conversation[0].content = initial_system_prompt.clone();
+            conversation[0].content = Some(initial_system_prompt.clone());
         }
 
         // Pass 2: System 1 Execution Pass
-        conversation.push(ChatMessage {
-            role: "user".to_string(),
-            content: query.to_string(),
-        });
+        conversation.push(ChatMessage::new("user", query));
 
         let max_attempts = if intent.is_execution_task { 3 } else { 1 };
         let mut attempt = 1;
@@ -204,7 +201,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                     &something_i_know,
                     Some(feedback),
                 );
-                conversation[0].content = updated_system;
+                conversation[0].content = Some(updated_system);
             }
 
             let pb = ProgressBar::new_spinner();
@@ -232,6 +229,10 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                 temperature: Some(0.6),
                 stream: Some(true),
                 max_tokens: Some(2048),
+                tools: None,
+                tool_choice: None,
+                grammar: None,
+                grammar_root: None,
             };
 
             match client.post(&url).json(&req).send().await {
@@ -284,6 +285,10 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                             temperature: Some(0.6),
                             stream: Some(false),
                             max_tokens: Some(2048),
+                            tools: None,
+                            tool_choice: None,
+                            grammar: None,
+                            grammar_root: None,
                         };
                         if let Ok(res) = client.post(&url).json(&fallback_req).send().await {
                             if let Ok(json_res) = res.json::<serde_json::Value>().await {
@@ -319,10 +324,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                                     );
                                 }
                                 println!();
-                                conversation.push(ChatMessage {
-                                    role: "assistant".to_string(),
-                                    content: full_response,
-                                });
+                                conversation.push(ChatMessage::new("assistant", full_response));
                                 break;
                             } else if attempt < max_attempts {
                                 // Execution trapped! Initiate Causal KV Rollback & Autonomous Fallback
@@ -404,14 +406,11 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                                     initial_system_prompt,
                                     testament.testament_tokens_raw
                                 );
-                                conversation.push(ChatMessage {
-                                    role: "system".to_string(),
-                                    content: reborn_system,
-                                });
-                                conversation.push(ChatMessage {
-                                    role: "user".to_string(),
-                                    content: format!("{} (AVOID EXTINCTION: Follow ancestral rules directly)", query),
-                                });
+                                conversation.push(ChatMessage::new("system", reborn_system));
+                                conversation.push(ChatMessage::new(
+                                    "user",
+                                    format!("{} (AVOID EXTINCTION: Follow ancestral rules directly)", query),
+                                ));
 
                                 println!();
                                 break;
@@ -419,10 +418,7 @@ pub async fn run_tui_session(port: u16, base_dir: &PathBuf) {
                         } else {
                             // Fallback check if response contains classic FILE block
                             check_and_stage_code_blocks(&vfs, &full_response);
-                            conversation.push(ChatMessage {
-                                role: "assistant".to_string(),
-                                content: full_response,
-                            });
+                            conversation.push(ChatMessage::new("assistant", full_response));
                             break;
                         }
                     } else {

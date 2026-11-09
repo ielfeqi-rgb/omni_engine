@@ -297,27 +297,17 @@ impl UniversalCleanroom {
     ) -> CodeAnalysisReport {
         let p = std::path::Path::new(filename);
         let base_name = p.file_name().and_then(|f| f.to_str()).unwrap_or(filename);
-        let verification_cmd = SwarmCoordinator::resolve_syntax_check_command(base_name);
+        let verification_cmd = SwarmCoordinator::resolve_syntax_check_command(filename);
 
         let mut staged_files = Vec::new();
-        // 1. Stage the file being audited at its exact relative path, and also flat base_name
+        // 1. Stage the file being audited at its exact relative path
         staged_files.push((PathBuf::from(filename), code_bytes.to_vec()));
-        if base_name != filename {
-            staged_files.push((PathBuf::from(base_name), code_bytes.to_vec()));
-        }
 
         // 2. Stage all other existing project files from VFS preserving exact relative paths
         for (rel_path, content) in vfs_files {
             let rel_str = rel_path.to_str().unwrap_or("");
-            if rel_str != filename {
+            if rel_str != filename && !staged_files.iter().any(|(p, _)| p == rel_path) {
                 staged_files.push((rel_path.clone(), content.clone()));
-            }
-            let rel_base = rel_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-            if !rel_base.is_empty() && rel_base != base_name {
-                let base_path = PathBuf::from(rel_base);
-                if !staged_files.iter().any(|(p, _)| p == &base_path) {
-                    staged_files.push((base_path, content.clone()));
-                }
             }
         }
 
@@ -363,6 +353,23 @@ impl UniversalCleanroom {
                     overall_success = false;
                     final_exit_code = smoke_res.exit_code.or(Some(1));
                     combined = smoke_combined;
+                }
+            }
+        }
+
+        // Semantic Test Suite Verification for Rust projects with tests/
+        if overall_success && base_name.ends_with(".rs") {
+            let has_tests = staged_files.iter().any(|(p, _)| {
+                let s = p.to_string_lossy();
+                s.starts_with("tests/") || s.contains("/tests/")
+            });
+            if has_tests {
+                if let Ok(test_res) = IsolatedJail::run_in_jail("cargo test --quiet 2>&1", &staged_files, Duration::from_secs(30)) {
+                    if !test_res.success {
+                        overall_success = false;
+                        final_exit_code = test_res.exit_code.or(Some(1));
+                        combined = format!("{}\n{}", test_res.stdout, test_res.stderr);
+                    }
                 }
             }
         }
@@ -437,13 +444,16 @@ impl UniversalCleanroom {
         };
 
         let error_message = if !overall_success {
-            let first_err_line = combined.lines()
-                .find(|l| {
+            let panic_line = combined.lines().find(|l| {
+                l.contains("panicked at") || l.contains("assertion `left == right` failed") || l.contains("assertion failed:")
+            });
+            let first_err_line = panic_line.or_else(|| {
+                combined.lines().find(|l| {
                     let lower = l.to_lowercase();
-                    lower.contains("error:") || lower.contains("syntaxerror") || lower.contains("nameerror:")
-                        || lower.contains("typeerror:") || lower.contains("attributeerror:") || lower.contains("failed")
+                    lower.contains("error[") || lower.contains("error:") || lower.contains("syntaxerror") || lower.contains("nameerror:")
+                        || lower.contains("typeerror:") || lower.contains("attributeerror:") || (l.contains("FAILED") && !l.contains("0 failed"))
                 })
-                .unwrap_or_else(|| combined.lines().next().unwrap_or("Unknown compilation/runtime error"));
+            }).unwrap_or_else(|| combined.lines().next().unwrap_or("Unknown compilation/runtime error"));
             Some(first_err_line.trim().to_string())
         } else {
             None
