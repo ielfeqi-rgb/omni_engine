@@ -540,8 +540,10 @@ fn main() {
     let report_path = base_dir.join("BENCHMARK_RESULTS.md");
     write_benchmark_report(&p1, &p2, p3.as_ref(), &p4, &report_path);
 
-    // Run the live multi-file generation challenge
-    if model_path.exists() {
+    // Run the live multi-file generation challenge when explicitly requested
+    let run_live = std::env::args().any(|arg| arg == "--live")
+        || std::env::var("OMNI_RUN_LIVE_BENCH").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    if run_live && model_path.exists() {
         run_live_multifile_generation(&model_path, &base_dir);
     }
 }
