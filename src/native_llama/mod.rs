@@ -176,7 +176,19 @@ impl NativeLlamaModel {
         let c_path = CString::new(path_str.as_bytes())
             .map_err(|e| format!("Invalid model path string: {}", e))?;
 
-        let raw = unsafe { omni_llama_load_model(c_path.as_ptr(), n_gpu_layers) };
+        let effective_gpu_layers = if n_gpu_layers > 0 {
+            n_gpu_layers
+        } else if let Ok(val) = std::env::var("OMNI_GPU_LAYERS") {
+            val.parse::<i32>().unwrap_or(0)
+        } else if let Ok(val) = std::env::var("LLAMA_GPU_LAYERS") {
+            val.parse::<i32>().unwrap_or(0)
+        } else if std::env::var("OMNI_FORCE_CPU").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false) {
+            0
+        } else {
+            99
+        };
+
+        let raw = unsafe { omni_llama_load_model(c_path.as_ptr(), effective_gpu_layers) };
         if raw.is_null() {
             return Err(format!("llama_model_load_from_file returned null for: {}", path_str));
         }
