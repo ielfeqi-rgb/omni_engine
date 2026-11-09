@@ -246,6 +246,7 @@ impl CodeFixer {
         raw_compiler_output: &str,
         dag_contract: Option<&str>,
         write_set: &[PathBuf],
+        observer_directive: Option<&crate::planner::observer::ObserverDirective>,
         fixer_seq_id: i32,
         attempt: usize,
     ) -> Result<FixAttemptReport, String> {
@@ -347,6 +348,66 @@ impl CodeFixer {
             }
         }
 
+        // 0c. Sovereign Observer Symbol Injection: If the Observer identified a missing mandatory symbol,
+        // inject its standard declaration before the focal block!
+        if let Some(directive) = observer_directive {
+            if let Some(ref sym_code) = directive.missing_symbol_declaration {
+                let sym_ident = sym_code.lines()
+                    .find(|l| l.contains("enum ") || l.contains("struct ") || l.contains("fn ") || l.contains("class "))
+                    .and_then(|l| {
+                        let parts: Vec<&str> = l.split_whitespace().collect();
+                        for i in 0..parts.len() {
+                            if parts[i] == "enum" || parts[i] == "struct" || parts[i] == "fn" || parts[i] == "class" {
+                                if i + 1 < parts.len() {
+                                    return Some(parts[i + 1].trim_matches(|c: char| !c.is_alphanumeric() && c != '_'));
+                                }
+                            }
+                        }
+                        None
+                    });
+
+                if let Some(ident) = sym_ident {
+                    if !ident.is_empty() && !full_code.contains(ident) {
+                        let mut insert_line = 0;
+                        for (i, l) in lines.iter().enumerate() {
+                            let tr = l.trim();
+                            if tr.starts_with("pub struct ") || tr.starts_with("struct ") 
+                                || tr.starts_with("pub enum ") || tr.starts_with("enum ")
+                                || tr.starts_with("pub fn ") || tr.starts_with("fn ") {
+                                insert_line = i;
+                                break;
+                            }
+                        }
+                        if insert_line == 0 {
+                            for (i, l) in lines.iter().enumerate() {
+                                let tr = l.trim();
+                                if tr.starts_with("use ") || tr.starts_with("import ") {
+                                    insert_line = i + 1;
+                                }
+                            }
+                        }
+
+                        let mut updated_lines = lines[..insert_line].to_vec();
+                        updated_lines.push(sym_code.as_str());
+                        updated_lines.push("");
+                        if insert_line < lines.len() {
+                            updated_lines.extend_from_slice(&lines[insert_line..]);
+                        }
+                        let updated_code = updated_lines.join("\n");
+                        vfs.write_file(&path, updated_code.as_bytes());
+                        info!("Sovereign Observer deterministically injected missing symbol declaration '{}' into '{}'", ident, target_file);
+                        return Ok(FixAttemptReport {
+                            success: true,
+                            patch_applied: true,
+                            summary: format!("Sovereign Observer deterministically injected missing symbol '{}' into '{}'", ident, target_file),
+                            target_file: target_file.to_string(),
+                            error_line,
+                        });
+                    }
+                }
+            }
+        }
+
         // 1. Attention Masking: Extract Focal Scope around error_line via Topological AstSlice or Window
         let ast_slice_opt = if let Some(err_l) = error_line {
             crate::sandbox::diagnostics::TopologicalDiagnostic::extract_from_source(target_file, &full_code, err_l).ok()
@@ -414,6 +475,17 @@ impl CodeFixer {
             format!("\n[DAG CONTRACT INVARIANT]:\n{}\n(MANDATE: Keep all public signatures intact. Do not break downstream callers.)\n", c)
         }).unwrap_or_default();
 
+        let observer_formatted = if let Some(d) = observer_directive {
+            format!(
+                "\n[المراقب / THE SOVEREIGN OBSERVER]:\n{}\n{}\n{}\n",
+                d.read_only_warning.as_deref().unwrap_or(""),
+                d.missing_symbol_declaration.as_deref().map(|s| format!("Missing Symbol Definition:\n```rust\n{}\n```", s)).unwrap_or_default(),
+                d.standardized_guidance
+            )
+        } else {
+            String::new()
+        };
+
         // 3. Assemble Cognitive Attention-Masked Prompt
         let system_directive = "You are the Sovereign Code Fixer. Your sole duty is targeted in-situ code repair.\n\
             Preserve all existing functions, signatures, and unbroken logic.\n\
@@ -423,7 +495,7 @@ impl CodeFixer {
             "Target File: `{}` (Attempt {} of 3)\n\
             Diagnostic Error: {}\n\
             Error Line: {:?}\n\
-            {}{}{}{}\n\
+            {}{}{}{}{}\n\
             [FOCAL CODE BLOCK (Lines {}-{})]:\n```{ext}\n{}\n```\n\n\
             INSTRUCTION:\n\
             Fix the diagnostic error above in this code block.\n\
@@ -431,7 +503,7 @@ impl CodeFixer {
             Preserve all unaffected code, signatures, and imports.\n\
             Output the corrected code block now:",
             target_file, attempt, error_message, error_line,
-            contract_formatted, suggestions_formatted, header_context, preceding_anchor_formatted,
+            contract_formatted, suggestions_formatted, observer_formatted, header_context, preceding_anchor_formatted,
             focal_start, focal_end, focal_content,
             ext=ext
         );
@@ -452,9 +524,10 @@ impl CodeFixer {
         let mut output_buf = String::new();
         let mut in_fence = false;
         let mut think_tokens_count = 0;
-        let max_think_budget = 192;
+        let max_think_budget = 96;
+        let max_fixer_tokens = 384;
 
-        for _ in 0..1024 {
+        for _ in 0..max_fixer_tokens {
             let token = ctx.sample(&mut sampler)?;
             let text = model.token_to_piece(token).unwrap_or_default();
             if text.is_empty() || model.is_stop_token(token) || model.is_stop_piece(&text) {

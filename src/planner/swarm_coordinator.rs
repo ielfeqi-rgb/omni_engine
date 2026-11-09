@@ -4782,6 +4782,9 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let target_path = std::path::PathBuf::from(&subgoal.target_entity);
         let mut last_diagnostic: Option<DiagnosticCode> = None;
 
+        let mut observer = crate::planner::observer::SovereignObserver::new(std::slice::from_ref(subgoal));
+        let observer_briefing = observer.supervise_worker_briefing(subgoal);
+
         // Baseline Snapshot for Modification Tasks
         if subgoal.kind == TaskKind::Modify {
             if !self.vfs.exists(&target_path) {
@@ -5039,9 +5042,13 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 code_snippet.clone()
                             };
 
-                            let guidance_extra = subgoal.guidance.as_deref().map(|g| {
-                                format!("\n[ARCHITECTURAL MANDATES & REQUIRED DEFINITIONS]:\n{}\n", g)
-                            }).unwrap_or_default();
+                            let guidance_extra = format!(
+                                "\n{}\n{}",
+                                observer_briefing,
+                                subgoal.guidance.as_deref().map(|g| {
+                                    format!("\n[ARCHITECTURAL MANDATES & REQUIRED DEFINITIONS]:\n{}\n", g)
+                                }).unwrap_or_default()
+                            );
                             format!(
                                 "{}:\n\
                                 Task #{}: {}\n\
@@ -5103,6 +5110,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                             }
                             format!(
                                 "[CONTINUOUS SWARM DIRECTIVE - SHARED MEMORY]:\n\
+                                {}\n\
                                 Task #{}: {}\n\
                                 Target File: {}\n\
                                 Thinker Directive: {}\n{}\n\
@@ -5115,6 +5123,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                 - Output EXCLUSIVELY the complete, working code for '{}' inside a single code block.\n\
                                 - ZERO conversational text outside the code block.\n\
                                 Output the complete '{}' now:",
+                                observer_briefing,
                                 subgoal.id, subgoal.description, subgoal.target_entity, current_directive,
                                 read_context,
                                 java_guidance, subgoal.target_entity, subgoal.target_entity
@@ -6124,6 +6133,24 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         // Snapshot current target in VFS before Fixer attempts, so we can restore if all 3 attempts fail
                         let pre_fixer_code = self.vfs.read_file(&target_path);
 
+                        let observer_directive = observer.intercept_cleanroom_failure(
+                            subgoal,
+                            &cur_error_msg,
+                            &cur_raw_output,
+                            &code_str,
+                        );
+                        println!(
+                            "  {} {}",
+                            "[THE SOVEREIGN OBSERVER]".bright_purple().bold(),
+                            observer_directive.title.bright_white().bold()
+                        );
+                        if let Some(ref warn) = observer_directive.read_only_warning {
+                            println!("     {} {}", "●".bright_yellow(), warn.bright_yellow());
+                        }
+                        if let Some(ref _sym) = observer_directive.missing_symbol_declaration {
+                            println!("     {} Synthesized Standard Contract Node for missing symbol.", "●".bright_cyan());
+                        }
+
                         if let Ok(mut fixer_ctx) = self.worker_model.create_context(4096, 512, 4) {
                             for fixer_attempt in 1..=3 {
                                 println!(
@@ -6141,6 +6168,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                                     &cur_raw_output,
                                     subgoal.guidance.as_deref(),
                                     &subgoal.write_set,
+                                    Some(&observer_directive),
                                     0,
                                     fixer_attempt,
                                 );

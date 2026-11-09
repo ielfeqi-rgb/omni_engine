@@ -30,7 +30,9 @@ pub use action_parser::{
 pub use swarm_coordinator::{SwarmCoordinator, SwarmConfig, SwarmResult, SubGoal, WorkerFinding};
 pub use dossier::{CustomerDossier, PlannerDistiller, DistillationDelta, PurchaseRecord};
 pub use fixer::{CodeFixer, Diagnostic};
+pub use observer::{SovereignObserver, ObserverDirective};
 
+pub mod observer;
 pub mod fixer;
 pub mod analyzer;
 pub mod oracle;
