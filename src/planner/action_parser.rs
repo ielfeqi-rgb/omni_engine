@@ -368,6 +368,12 @@ pub fn strip_command_prefix(raw: &str) -> String {
             s = rest.trim();
             changed = true;
         }
+        if let Some(dot_pos) = s.find(". ") {
+            if dot_pos > 0 && s[..dot_pos].chars().all(|c| c.is_ascii_digit()) {
+                s = s[dot_pos + 2..].trim();
+                changed = true;
+            }
+        }
         if !changed {
             break;
         }
