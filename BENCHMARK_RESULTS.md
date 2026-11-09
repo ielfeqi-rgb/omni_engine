@@ -1,6 +1,6 @@
 # 📊 Omni Engine: Multi-Dimensional Comparative Benchmark Report
 
-Date: 2026-11-08T14:38:01.833964512+02:00
+Date: 2026-11-10T00:30:12.607708531+02:00
 Evaluation Framework: Cleanroom Isolated Runtime ($W = \emptyset$)
 Test Bed: Multi-File Full-Stack Project
 
@@ -31,9 +31,9 @@ Test Bed: Multi-File Full-Stack Project
 
 | Strategy | Latency (ms) | Tokens Excised / Saved | Speedup Factor |
 | :--- | :---: | :---: | :---: |
-| Omni Engine Causal Slicing | **5841.60 ms** | **256 tokens** | **2.41x faster** |
-| Monotonic (Ideal Branch)   | 7047.62 ms     | N/A           | Reference         |
-| Competitor Cold Restart     | 14073.06 ms     | 0 tokens      | 1.00x (Baseline)  |
+| Omni Engine Causal Slicing | **4165.85 ms** | **256 tokens** | **3.41x faster** |
+| Monotonic (Ideal Branch)   | 5126.26 ms     | N/A           | Reference         |
+| Competitor Cold Restart     | 14218.92 ms     | 0 tokens      | 1.00x (Baseline)  |
 
 ---
 
@@ -41,10 +41,10 @@ Test Bed: Multi-File Full-Stack Project
 
 | Paradigm | Query Latency | Ingested Tokens | Latency Speedup | Token Reduction |
 | :--- | :---: | :---: | :---: | :---: |
-| **Omni Engine (HNSW Vector Index)** | **5062.13 µs** | **221 tokens** | **170037.0x faster** | **99.6% saved** |
-| Competitor (Full Context Stuffing) | 860750.00 ms | 51645 tokens | 1.0x (Baseline) | 0.0% (Context Bloat) |
+| **Omni Engine (HNSW Vector Index)** | **461.05 µs** | **341 tokens** | **1962348.3x faster** | **99.4% saved** |
+| Competitor (Full Context Stuffing) | 904750.00 ms | 54285 tokens | 1.0x (Baseline) | 0.0% (Context Bloat) |
 
-* **Indexed Chunks**: 939 semantic Rust blocks ($O(\log N)$ graph traversal).
+* **Indexed Chunks**: 987 semantic Rust blocks ($O(\log N)$ graph traversal).
 
 ---
 
