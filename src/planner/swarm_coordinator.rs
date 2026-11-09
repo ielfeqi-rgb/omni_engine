@@ -2652,6 +2652,64 @@ impl SwarmCoordinator {
             }
         }
 
+        // HUMAN RESPONSIBILITY OVERRIDE GATE:
+        // If there are uncommitted files staged in RAM VFS that did not reach 'Completed' verification,
+        // provide the developer with an explicit, conscious override choice instead of discarding
+        // potentially 99% complete code due to trivial syntax oversights.
+        let all_vfs_files = self.vfs.list_files();
+        let uncommitted_files: Vec<PathBuf> = all_vfs_files
+            .into_iter()
+            .filter(|p| !final_verified_paths.contains(p) && !p.to_string_lossy().ends_with("README.md"))
+            .collect();
+
+        if !uncommitted_files.is_empty() {
+            let is_interactive = if let Some(auto) = self.config.auto_approve_deps {
+                auto
+            } else {
+                std::io::stdin().is_terminal()
+            };
+
+            if is_interactive {
+                println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
+                println!("  {}", "[HUMAN RESPONSIBILITY OVERRIDE / تفريغ الكود على المسؤولية الشخصية]".bright_yellow().bold());
+                println!("  Notice: {} generated file(s) in RAM VFS did not reach 'Completed' cleanroom verification:", uncommitted_files.len());
+                for uf in &uncommitted_files {
+                    println!("   - {}", uf.display().to_string().bright_cyan());
+                }
+                println!("  By default, Omni Engine discards unverified code to protect host integrity ($W = ∅).");
+                println!("  As a developer, you may override this safety gate and flush these files to disk under your own responsibility.");
+                println!("  To force-commit, type '{}' (exact 3 letters). Any other key or Enter will discard safely.", "YES".bright_red().bold());
+                print!("  Override authorization (YES/no) > ");
+                let _ = std::io::stdout().flush();
+
+                let mut input = String::new();
+                if let Ok(_) = std::io::stdin().read_line(&mut input) {
+                    let trimmed = input.trim();
+                    // STRICT 3-LETTER CHECK: Must be "YES" or "yes" (not "y", not empty)
+                    if trimmed == "YES" || trimmed == "yes" {
+                        println!("  {}", "[OVERRIDE AUTHORIZED] Materializing unverified files to host disk under developer responsibility...".bright_magenta().bold());
+                        let target_dir = self.config.output_dir.as_deref();
+                        match self.vfs.commit_verified_files(target_dir, &uncommitted_files, true) {
+                            Ok(saved_paths) => {
+                                for dest_path in &saved_paths {
+                                    println!("   [OVERRIDE SAVED] {}", dest_path.display().to_string().bright_yellow());
+                                }
+                                println!("   [OVERRIDE COMMIT] Successfully flushed {} unverified file(s) to host machine.", saved_paths.len().to_string().bright_green());
+                            }
+                            Err(e) => {
+                                warn!("Failed to commit override VFS files to host disk: {}", e);
+                            }
+                        }
+                    } else {
+                        println!("  [OVERRIDE DECLINED] Safety invariant preserved. Unverified code safely discarded from RAM VFS.");
+                    }
+                }
+                println!("{}\n", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
+            } else {
+                println!("  [SAFETY DIRECTIVE] Discarding {} unverified VFS file(s) to protect host integrity.", uncommitted_files.len());
+            }
+        }
+
         let total_rollbacks: usize = findings.iter().map(|f| f.rollbacks_count).sum();
         let total_tokens_saved: usize = findings.iter().map(|f| f.tokens_saved_by_rollback).sum();
 
