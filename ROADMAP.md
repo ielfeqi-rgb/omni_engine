@@ -1,8 +1,8 @@
-# Omni Engine Development Roadmap
+# Omni Engine: Strategic Architecture Roadmap
 
-This document outlines the strategic architectural milestones for Omni Engine, building upon the empirically verified foundation established in **v2.1.2 (Decoupled Maestro Protocol & Sovereign Runtime)**.
+This document outlines the product trajectory of Omni Engine, building upon the empirically verified foundation established in **v2.2.1 (Official Production Freeze)**.
 
-Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosophy: we do not pursue superficial AI buzzwords. Every milestone directly expands execution throughput, language coverage, and deterministic code safety on local commodity hardware.
+Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosophy: every milestone directly expands execution throughput, language coverage, and deterministic code safety on local commodity hardware.
 
 ---
 
@@ -13,59 +13,47 @@ Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosoph
                                     │
     ┌───────────────────────────────┼───────────────────────────────┐
     ▼                               ▼                               ▼
-[v2.2.0: Hardware Acceleration]    [v2.3.0: Multilingual AST]      [v2.4.0: Local Git Integration]
-* Dynamic CUDA / Metal Auto-Link   * Tree-Sitter for TS/Rust/Go     * Ephemeral Git Branching
-* 3.8 tok/s -> 40 tok/s on GPU     * Universal Contract Distiller   * Atomic Conventional Commits
-* 8GB RAM Floor Preserved          * AST-guided Regression Isolation* Zero-Network Local Workflows
+[v2.1.2: Decoupled Maestro]   [v2.2.1: Sovereign Frozen]     [v3.0.0: Enterprise Sovereign]
+* Maestro Plan Protocol       * Standalone Binary Bundle     * Multi-Tenant Model Server
+* Symbol Contract Gate        * Tree-RNN Recursive Assembly  * Distributed Swarm Mesh
+* Anti-Redeclaration Guard    * ATLR 50-Thread Proof (3B-7B) * Enterprise Audit Trails
+* Dynamic KV-Cache Scaling    * DX Diagnostic Shield         * Custom NPU/FPGA Acceleration
 ```
 
 ---
 
-## Milestone 1: Dynamic Hardware Acceleration (v2.2.0)
-*Target: Multiplying throughput from 3.8 tok/s to 40+ tok/s while preserving the 8GB RAM CPU sovereign baseline.*
+## 🏆 Completed & Verified Milestones
 
-- [ ] **Heterogeneous Dynamic C-FFI Dispatch**
-  - Implement runtime hardware discovery probe: automatically inspect host for Nvidia CUDA, Apple Silicon Metal, or Vulkan compute units.
-  - Dynamically dlopen GPU backend libraries (`libggml-cuda.so`, `libggml-metal.so`) from `./bin/` without requiring recompilation of the Rust binary.
-- [ ] **Adaptive KV-Cache Paging**
-  - Layer unified memory paging between GPU VRAM and host RAM, maintaining the zero-OOM memory gate ($K_{max}$) across hybrid hardware.
-- [ ] **Zero-GPU Fallback Resilience**
-  - Seamless, zero-latency fallback to pure AVX-512/AVX2 CPU execution if GPU memory is saturated or unavailable.
+### Milestone 1: Decoupled Maestro Protocol (v2.1.2) — [DELIVERED]
+- [x] **Maestro Plan Protocol (`--plan-file`)**: Ingestion of structured multi-file DAG blueprints from frontier LLMs or human architects.
+- [x] **Pre-Sandbox Symbol Contract Gate**: Static AST verification guaranteeing classes, traits, and functions are declared in RAM before running tests.
+- [x] **Anti-Redeclaration Guard**: Worker prompt isolation preventing duplicate class declarations across upstream dependencies.
+- [x] **Dynamic KV-Cache Context Scaling**: Adaptive memory allocation scaling context from 4,096 to 16,384 tokens based on dependency graph depth.
 
----
+### Milestone 2: Hardware Scaling & Concurrency Crucible (v2.2.0) — [DELIVERED]
+- [x] **Sovereign BPE v2 Engine**: Complete pure-Rust BPE tokenizer overhaul eliminating C-FFI token count desync.
+- [x] **Tree-RNN Recursive Assembly**: Recursive DAG synthesis replacing flat file generation with hierarchical AST construction.
+- [x] **HNSW Semantic Code Atlas**: Pure Rust vector memory delivering $O(\log N)$ symbol lookups in 0.08ms.
+- [x] **ATLR 50-Thread Stress Benchmark**: Empirically proven against the Thundering Herd financial ledger concurrency challenge.
 
-## Milestone 2: Multilingual AST Contract Synthesis (v2.3.0)
-*Target: Scaling the Zero-Wipe Invariant and $O(1)$ Context Isolation to large polyglot enterprise codebases.*
-
-- [ ] **Universal Tree-Sitter Contract Distiller**
-  - Extend `distill_interface_contract` beyond Python/JavaScript to full AST grammar support for **TypeScript**, **Rust**, **Go**, and **C++**.
-  - Extract public type definitions, trait implementations, and API signatures into compact 25-line contracts, ensuring worker attention remains clamped ($O(1)$ complexity) across 50,000+ line repositories.
-- [ ] **AST-Guided Dependency Graph & Targeted Testing**
-  - Construct an in-memory directed acyclic graph (DAG) of caller-callee relationships across files.
-  - When modifying a function, automatically identify and execute only the specific test suites covering that function's callers.
+### Milestone 3: Purification & Sovereign Standalone Freeze (v2.2.1) — [DELIVERED & FROZEN]
+- [x] **Pure Sovereign Standalone Distribution**: Pre-built binary package with bundled dynamic runtime (`bin/`), eliminating external build tool dependencies.
+- [x] **Hardware Scaling Benchmark (7B on Tesla T4)**: 2.6x speedup (37m 58s makespan), fine-grained per-account locking, and Exit Code 0.
+- [x] **DX Diagnostic Shield**: Raw compiler/test diagnostics surfaced directly in summary cards and `README.md` (`## 🛠️ Unresolved Diagnostics & Fix Hints (For Developer)`).
+- [x] **Zero Unsafe Code**: `#![forbid(unsafe_code)]` and `#![deny(unused_must_use)]` with 150/150 unit and integration tests passing.
 
 ---
 
-## Milestone 3: Sovereign Git Patch & Branch Materialization (v2.4.0)
-*Target: Bridging the in-memory RAM VFS cleanroom directly into professional Git workflows.*
+## 🚀 Forward Strategic Horizons (v3.0.0 Enterprise)
 
-- [ ] **Ephemeral Cleanroom Git Worktrees**
-  - Automatically checkout ephemeral local Git worktrees (`omni/task-<id>`) for worker staging.
-  - Commits to host disk occur as clean, atomic Git commits with verifiable Conventional Commit messages and test pass logs.
-- [ ] **Automated Interactive Diffs & Rebase Verification**
-  - Surface visual interactive Git diffs in the TUI console before finalizing commits.
-  - Allow developers to accept, reject, or amend specific line hunks directly from the terminal.
+### Horizon 1: Distributed Swarm Mesh & Multi-Node Execution
+- **P2P Worker Swarm**: Distribute DAG sub-goals across a local cluster of machines running heterogeneous compute units (e.g., Apple Silicon M-series + NVIDIA workstations).
+- **Zero-Network Encryption**: Encrypted peer-to-peer VFS syncing over local WireGuard/QUIC mesh.
 
----
+### Horizon 2: Enterprise Multi-Tenancy & Governance
+- **Role-Based Sandbox Auditing**: Cryptographically signed audit trails for enterprise compliance (SOC2/ISO27001).
+- **Fine-Grained Budgeting**: Per-team token and compute quota enforcement at the kernel level.
 
-## Milestone 4: Persistent Long-Horizon Refactoring Swarms (v3.0.0)
-*Target: Multi-day codebase migrations and autonomous architectural refactoring.*
-
-- [ ] **Cross-Session Causal DAG Checkpointing**
-  - Serialize and snapshot the Causal Memory DAG into local SQLite storage, enabling the swarm to pause, reboot, and resume complex multi-day refactorings without re-planning.
-- [ ] **Monolith Decomposition Protocol**
-  - Introduce an autonomous migration planner capable of breaking down monolithic codebases into modular micro-packages file-by-file with continuous cleanroom verification.
-
----
-
-> **Guiding Invariant:** *The core text-in/verified-software-out autonomous loop, the Zero-Wipe Invariant, and `#![deny(unused_must_use)]` remain immutable across all versions.*
+### Horizon 3: Custom NPU & Specialized Hardware Acceleration
+- **Qualcomm / Tenstorrent / Apple NPU Backends**: Zero-latency C-FFI bindings targeting dedicated neural processing units.
+- **Micro-Quantization**: Native 2-bit and 3-bit K-quantization kernels optimized for sub-1GB mobile memory envelopes.
