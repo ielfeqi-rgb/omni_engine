@@ -19,6 +19,7 @@
 [**Core Architecture**](#core-architectural-pillars) • 
 [**Quickstart (Standalone)**](#quickstart-standalone-binary) • 
 [**CLI Reference**](#cli-reference--usage) • 
+[**License & Commercial**](#license--commercial-use) • 
 [**Master Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md) • 
 [**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md)
 
@@ -182,6 +183,9 @@ Options:
 - [**ATLR Tri-Party Showdown Report**](docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md): Empirical showdown dossier against Aider Local and Aider Cloud.
 - [**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md): Theoretical foundations of Tree-RNN recursive assembly, causal slicing, and topological scheduling.
 - [**Agent Architecture Guide**](AGENTS.md): Detailed mechanics of the multi-agent worker swarm.
+- [**Third-Party Notices**](THIRD_PARTY_NOTICES.md): Attributions and upstream licenses for dynamic runtime libraries.
+- [**Contributing Guide & CLA**](CONTRIBUTING.md): Engineering standards, pull request workflow, and dual-licensing contributor terms.
+- [**Security Policy**](SECURITY.md): Vulnerability disclosure procedures and cleanroom safety commitments.
 
 ---
 
@@ -190,3 +194,5 @@ Options:
 Omni Engine is dual-licensed under the **GNU Affero General Public License v3.0 (AGPLv3)** for open-source community use, and a **Commercial Enterprise License** for proprietary business deployments. 
 
 Using Omni Engine inside closed-source corporate infrastructure, commercial products, or internal SaaS/server pipelines without disclosing your proprietary source code requires a paid commercial license.
+
+For commercial licensing, enterprise SLAs, and private deployment inquiries, contact: **[ielfeqi@gmail.com](mailto:ielfeqi@gmail.com)**.

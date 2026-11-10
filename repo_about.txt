@@ -1,26 +1,28 @@
 ================================================================================
    :: OMNI ENGINE v2.2.1 — COMPREHENSIVE REPOSITORY DOSSIER (repo_about.txt)
-   :: Generated: 2026-11-10 21:18:41 UTC
+   :: Generated: 2026-11-10 21:35:09 UTC
    :: Repository: https://github.com/ielfeqi-rgb/omni_engine
    :: Purpose: Executive & Architectural Full-Scope Review for CEO / Leadership
 ================================================================================
 
 TABLE OF CONTENTS:
-   1. README.md                                            | Core Project Overview, Pitch, Architecture Pipeline, and Quickstart
-   2. LICENSE                                              | Official Dual-License Notice (GNU AGPLv3 / Commercial Enterprise)
-   3. THIRD_PARTY_NOTICES.md                               | Third-Party Dynamic Linkage & llama.cpp Attributions
-   4. ROADMAP.md                                           | Systems Engineering Roadmap (v2.1.2 -> v2.2.1 -> v3.0.0)
-   5. BENCHMARK_RESULTS.md                                 | Empirical 4 Pillars Benchmark & ATLR Concurrency Matrix
-   6. AGENTS.md                                            | Autonomous Agent Integration Specification & POSIX Contracts
-   7. llms.txt                                             | Machine-Readable Documentation Index & CLI Reference
-   8. REQUIREMENTS.md                                      | Upstream Dynamic Linkage & System Prerequisites
-   9. PROJECT.md                                           | Architectural Feature Inventory & Milestone Verification Tracker
-  10. docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md  | Sovereign Master Dossier: v2.1.0 to v2.2.1 Evolution & Code Freeze
-  11. docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md               | Empirical Tri-Party Showdown: Omni Engine vs Aider Local vs Aider Cloud
-  12. docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md             | Technical Whitepaper: Attention Physics, Shannon Entropy & OS Synchronization
-  13. docs/OMNI_2.1.2_RELEASE_NOTES.md                     | Release Notes: Decoupled Maestro Protocol & Dynamic KV Scaling
-  14. Cargo.toml                                           | Rust Package Manifest & Dependency Declarations
-  15. examples/atlr_maestro_plan.json                      | Canonical Maestro Plan Blueprint: 50-Thread ATLR Concurrency DAG
+    1. README.md                                          | Core Project Overview, Pitch, Architecture Pipeline, and Quickstart
+    2. LICENSE                                            | Official Dual-License Notice (GNU AGPLv3 / Commercial Enterprise)
+    3. THIRD_PARTY_NOTICES.md                             | Third-Party Dynamic Linkage & llama.cpp Attributions
+    4. CONTRIBUTING.md                                    | Contributor License Agreement (CLA) & Engineering Standards
+    5. SECURITY.md                                        | Vulnerability Disclosure Policy & Fail-Closed Cleanroom Invariants
+    6. ROADMAP.md                                         | Systems Engineering Roadmap (v2.1.2 -> v2.2.1 -> v3.0.0)
+    7. BENCHMARK_RESULTS.md                               | Empirical 4 Pillars Benchmark & ATLR Concurrency Matrix
+    8. AGENTS.md                                          | Autonomous Agent Integration Specification & POSIX Contracts
+    9. llms.txt                                           | Machine-Readable Documentation Index & CLI Reference
+   10. REQUIREMENTS.md                                    | Upstream Dynamic Linkage & System Prerequisites
+   11. PROJECT.md                                         | Architectural Feature Inventory & Milestone Verification Tracker
+   12. docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md | Sovereign Master Dossier: v2.1.0 to v2.2.1 Evolution & Code Freeze
+   13. docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md             | Empirical Tri-Party Showdown: Omni Engine vs Aider Local vs Aider Cloud
+   14. docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md           | Technical Whitepaper: Attention Physics, Shannon Entropy & OS Synchronization
+   15. docs/OMNI_2.1.2_RELEASE_NOTES.md                   | Release Notes: Decoupled Maestro Protocol & Dynamic KV Scaling
+   16. Cargo.toml                                         | Rust Package Manifest & Dependency Declarations
+   17. examples/atlr_maestro_plan.json                    | Canonical Maestro Plan Blueprint: 50-Thread ATLR Concurrency DAG
 
 ================================================================================
 
@@ -50,6 +52,7 @@ DESCRIPTION: Core Project Overview, Pitch, Architecture Pipeline, and Quickstart
 [**Core Architecture**](#core-architectural-pillars) • 
 [**Quickstart (Standalone)**](#quickstart-standalone-binary) • 
 [**CLI Reference**](#cli-reference--usage) • 
+[**License & Commercial**](#license--commercial-use) • 
 [**Master Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md) • 
 [**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md)
 
@@ -213,6 +216,9 @@ Options:
 - [**ATLR Tri-Party Showdown Report**](docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md): Empirical showdown dossier against Aider Local and Aider Cloud.
 - [**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md): Theoretical foundations of Tree-RNN recursive assembly, causal slicing, and topological scheduling.
 - [**Agent Architecture Guide**](AGENTS.md): Detailed mechanics of the multi-agent worker swarm.
+- [**Third-Party Notices**](THIRD_PARTY_NOTICES.md): Attributions and upstream licenses for dynamic runtime libraries.
+- [**Contributing Guide & CLA**](CONTRIBUTING.md): Engineering standards, pull request workflow, and dual-licensing contributor terms.
+- [**Security Policy**](SECURITY.md): Vulnerability disclosure procedures and cleanroom safety commitments.
 
 ---
 
@@ -221,6 +227,8 @@ Options:
 Omni Engine is dual-licensed under the **GNU Affero General Public License v3.0 (AGPLv3)** for open-source community use, and a **Commercial Enterprise License** for proprietary business deployments. 
 
 Using Omni Engine inside closed-source corporate infrastructure, commercial products, or internal SaaS/server pipelines without disclosing your proprietary source code requires a paid commercial license.
+
+For commercial licensing, enterprise SLAs, and private deployment inquiries, contact: **[ielfeqi@gmail.com](mailto:ielfeqi@gmail.com)**.
 
 
 ================================================================================
@@ -920,7 +928,152 @@ Licensed under the MIT License (https://github.com/ggerganov/llama.cpp/blob/mast
 
 
 ================================================================================
-FILE #4: ROADMAP.md
+FILE #4: CONTRIBUTING.md
+DESCRIPTION: Contributor License Agreement (CLA) & Engineering Standards
+================================================================================
+
+# Contributing to Omni Engine
+
+Thank you for your interest in contributing to **Omni Engine**, the sovereign, in-process autonomous software engineering runtime. We welcome community contributions, bug reports, and optimizations that align with our core architectural values: **100% offline determinism, cleanroom safety, and zero cloud lock-in**.
+
+---
+
+## 1. Contributor License Agreement (CLA) & Dual-Licensing Grant
+
+Omni Engine is distributed under a **Dual-Licensing model**:
+1. **Open Source:** GNU Affero General Public License v3.0 (AGPL-3.0).
+2. **Commercial Enterprise:** Closed-source enterprise licenses for private corporate deployments.
+
+### Legal Contribution Terms
+To ensure Omni Engine can remain both vibrant open-source software and a sustainable enterprise project, all contributors must agree to the following terms prior to merging:
+
+> **By submitting a pull request, patch, code contribution, or documentation update to the Omni Engine repository, you grant Ibrahim El Feqi (Omni AI) and his successors a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce, adapt, modify, perform, display, sublicense, and distribute your contributions under both the GNU Affero General Public License v3.0 (AGPLv3) and any current or future commercial enterprise licenses without restriction or accounting.**
+
+You represent that you are the sole author of your contributions, that you have the full legal right to grant these rights, and that your contribution does not violate any third-party intellectual property or employment agreements.
+
+---
+
+## 2. Engineering Standards & Architectural Invariants
+
+All contributions must adhere strictly to the project's engineering discipline:
+
+1. **Unit Test Coverage:** All new features or bug fixes must include unit tests. The test suite (`cargo test --lib`) must pass with **100% success (0 failures, 0 ignored)**.
+2. **Compiler Quality:** The codebase must compile with **zero warnings and zero errors** across all targets (`cargo check --all-targets`).
+3. **The Zero-Wipe Invariant ($W = \emptyset$):** Refactoring or modifying existing features must never introduce silent regressions or break existing public AST symbol contracts.
+4. **Hermetic Sandboxing:** Features interacting with the host filesystem must strictly respect the `MemoryVfs` read/write set bounds and Bubblewrap (`bwrap`) cleanroom jail guarantees.
+5. **Memory Safety & C-FFI Encapsulation:** Low-level bindings to `llama.cpp` must remain strictly encapsulated with verified lifetime bounds, preventing memory leaks and dangling pointers.
+
+---
+
+## 3. Development Workflow
+
+### Prerequisites
+- **Rust Toolchain:** Stable (1.80+), installed via [rustup.rs](https://rustup.rs).
+- **Build Essentials:** `clang`, `cmake`, `libssl-dev`.
+- **Linux Bubblewrap:** `bwrap` (for cleanroom testing).
+
+### Local Build & Verification
+```bash
+# 1. Clone your fork
+git clone https://github.com/<your-username>/omni_engine.git
+cd omni_engine
+
+# 2. Check compilation across all targets
+cargo check --all-targets
+
+# 3. Run the complete test suite
+cargo test --lib
+
+# 4. Build release binary
+cargo build --release
+```
+
+---
+
+## 4. Pull Request Guidelines
+
+1. **Branch Naming:** Use descriptive branch prefixes:
+   - `feat/` for new features (e.g., `feat/avx512-kv-quant`).
+   - `fix/` for bug fixes (e.g., `fix/vfs-path-traversal`).
+   - `docs/` for documentation updates.
+2. **Commit Messages:** Follow the Conventional Commits specification (e.g., `feat(planner): optimize DAG makespan scheduler`).
+3. **Keep PRs Focused:** Small, single-purpose PRs with clear rationale and test proofs are reviewed and merged significantly faster than monolithic changes.
+
+---
+
+## 5. Contact & Questions
+
+For questions regarding contributions, architecture, or commercial licensing:
+- **Founder & Maintainer:** Ibrahim El Feqi
+- **Email:** [ielfeqi@gmail.com](mailto:ielfeqi@gmail.com)
+- **GitHub Discussions / Issues:** [https://github.com/ielfeqi-rgb/omni_engine](https://github.com/ielfeqi-rgb/omni_engine)
+
+
+================================================================================
+FILE #5: SECURITY.md
+DESCRIPTION: Vulnerability Disclosure Policy & Fail-Closed Cleanroom Invariants
+================================================================================
+
+# Security Policy
+
+At **Omni Engine**, security, determinism, and data sovereignty are primary architectural invariants. Because Omni Engine compiles, sandboxes, and executes code generated by autonomous AI agents, we enforce rigorous security standards across all layers of the stack.
+
+---
+
+## 1. Supported Versions
+
+We provide active security patches and vulnerability remediation for the following release lines:
+
+| Version | Supported | Status |
+| :--- | :---: | :--- |
+| **`v2.2.x`** | :white_check_mark: | **Active Production Line (Frozen Baseline)** |
+| `v2.1.x` | :x: | End of Life (Deprecated) |
+| `< v2.1.0` | :x: | End of Life (Deprecated) |
+
+We strongly recommend all users and organizations maintain deployment on the latest patch of `v2.2.x`.
+
+---
+
+## 2. Reporting a Vulnerability
+
+**DO NOT report suspected security vulnerabilities through public GitHub issues or public discussions.**
+
+If you discover a security vulnerability or potential attack vector in Omni Engine, please disclose it responsibly:
+
+- **Primary Security Contact:** Ibrahim El Feqi
+- **Email:** [ielfeqi@gmail.com](mailto:ielfeqi@gmail.com)
+- **Subject Line:** `[SECURITY] Omni Engine Vulnerability Report - <Brief Component Description>`
+
+### Information to Include in Your Report
+To accelerate investigation and remediation, please provide:
+1. **Component Affected:** (e.g., Bubblewrap cleanroom jail, `MemoryVfs` path resolution, C-FFI inference boundary, API authentication).
+2. **Severity Assessment:** Impact on host filesystem integrity, memory corruption, privilege escalation, or host container escape.
+3. **Reproducible Proof of Concept (PoC):** Step-by-step commands, minimal GGUF model scenario, or JSON blueprint triggering the vulnerability.
+4. **Environment Details:** Linux distribution, kernel version, CPU architecture, and whether `--allow-unsandboxed` was active.
+
+---
+
+## 3. Response Process & SLA
+
+Upon receiving a private security report:
+1. **Acknowledgment:** We will acknowledge receipt of your report within **48 hours**.
+2. **Assessment:** Our core systems team will verify and triage the finding within **5 business days**.
+3. **Patch & Release:** A patch will be authored, tested against the 150-test invariant suite, and published in an expedited patch release (`v2.2.x`).
+4. **Public Advisory:** We will publish a GitHub Security Advisory crediting the finder (if desired) after a patch is deployed.
+
+---
+
+## 4. Architectural Security Commitments
+
+Omni Engine is built around fail-closed security guarantees:
+- **Zero-Cloud Isolation:** The engine makes zero unsolicited outbound network calls. All inference and synthesis occur 100% on-device in local RAM.
+- **Fail-Closed Cleanroom:** Untrusted operations run inside unprivileged Linux user namespace containers (`bwrap`) with read-only root filesystems and restricted temporary directories.
+- **VFS Boundary Clamping:** Workers cannot write or read files outside their declared `read_set` and `write_set` boundaries (`VfsBoundaryError`).
+- **Zero-Wipe Invariant:** Verified existing codebase structures are frozen, mathematically preventing accidental or malicious code deletion during modification passes.
+
+
+================================================================================
+FILE #6: ROADMAP.md
 DESCRIPTION: Systems Engineering Roadmap (v2.1.2 -> v2.2.1 -> v3.0.0)
 ================================================================================
 
@@ -986,7 +1139,7 @@ Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosoph
 
 
 ================================================================================
-FILE #5: BENCHMARK_RESULTS.md
+FILE #7: BENCHMARK_RESULTS.md
 DESCRIPTION: Empirical 4 Pillars Benchmark & ATLR Concurrency Matrix
 ================================================================================
 
@@ -1067,7 +1220,7 @@ The ultimate empirical stress test: Synthesizing a 50-thread concurrent financia
 
 
 ================================================================================
-FILE #6: AGENTS.md
+FILE #8: AGENTS.md
 DESCRIPTION: Autonomous Agent Integration Specification & POSIX Contracts
 ================================================================================
 
@@ -1329,7 +1482,7 @@ The assistant condenses all specifications into the executable CLI command:
 
 
 ================================================================================
-FILE #7: llms.txt
+FILE #9: llms.txt
 DESCRIPTION: Machine-Readable Documentation Index & CLI Reference
 ================================================================================
 
@@ -1360,7 +1513,7 @@ Omni Engine is an offline, zero-cloud autonomous software engineering runtime wr
 
 
 ================================================================================
-FILE #8: REQUIREMENTS.md
+FILE #10: REQUIREMENTS.md
 DESCRIPTION: Upstream Dynamic Linkage & System Prerequisites
 ================================================================================
 
@@ -1446,7 +1599,7 @@ When a model is loaded:
 
 
 ================================================================================
-FILE #9: PROJECT.md
+FILE #11: PROJECT.md
 DESCRIPTION: Architectural Feature Inventory & Milestone Verification Tracker
 ================================================================================
 
@@ -1579,7 +1732,7 @@ impl MemoryGate {
 
 
 ================================================================================
-FILE #10: docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md
+FILE #12: docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md
 DESCRIPTION: Sovereign Master Dossier: v2.1.0 to v2.2.1 Evolution & Code Freeze
 ================================================================================
 
@@ -1782,7 +1935,7 @@ flowchart TD
 
 
 ================================================================================
-FILE #11: docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md
+FILE #13: docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md
 DESCRIPTION: Empirical Tri-Party Showdown: Omni Engine vs Aider Local vs Aider Cloud
 ================================================================================
 
@@ -1946,7 +2099,7 @@ Omni Engine proves that:
 
 
 ================================================================================
-FILE #12: docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md
+FILE #14: docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md
 DESCRIPTION: Technical Whitepaper: Attention Physics, Shannon Entropy & OS Synchronization
 ================================================================================
 
@@ -2213,7 +2366,7 @@ Compute Thread (C++ / llama.cpp)                UI Runtime (Rust / Tokio)
 
 
 ================================================================================
-FILE #13: docs/OMNI_2.1.2_RELEASE_NOTES.md
+FILE #15: docs/OMNI_2.1.2_RELEASE_NOTES.md
 DESCRIPTION: Release Notes: Decoupled Maestro Protocol & Dynamic KV Scaling
 ================================================================================
 
@@ -2300,7 +2453,7 @@ To empirically validate the protocol, OmniEngine generated **OmniLite** (a compl
 
 
 ================================================================================
-FILE #14: Cargo.toml
+FILE #16: Cargo.toml
 DESCRIPTION: Rust Package Manifest & Dependency Declarations
 ================================================================================
 
@@ -2375,8 +2528,9 @@ codegen-units = 1
 panic = "unwind"
 
 
+
 ================================================================================
-FILE #15: examples/atlr_maestro_plan.json
+FILE #17: examples/atlr_maestro_plan.json
 DESCRIPTION: Canonical Maestro Plan Blueprint: 50-Thread ATLR Concurrency DAG
 ================================================================================
 
@@ -2506,5 +2660,4 @@ DESCRIPTION: Canonical Maestro Plan Blueprint: 50-Thread ATLR Concurrency DAG
     }
   ]
 }
-
 
