@@ -21,7 +21,7 @@ The foundational design objective is to break the paradigm of **"blind autoregre
 |            v                                                    v           |
 |  +--------------------+                               +------------------+  |
 |  | AST Gatekeeper     |                               | Persistent       |  |
-|  | (Tree-Sitter / Syn)|                               | KV-Cache Matrix  |  |
+|  | (Rust AST Scanner) |                               | KV-Cache Matrix  |  |
 |  +--------------------+                               +------------------+  |
 +-----------------------------------------------------------------------------+
 ```
@@ -144,7 +144,7 @@ When scheduling complex composite entities:
 ## 5. AST Gatekeeping & Static Verification
 
 ### 5.1 Contract Extraction
-Upon completion of a generated module, the code is passed immediately through an in-memory Abstract Syntax Tree (AST) parser (`tree-sitter`, `syn`):
+Upon completion of a generated module, the code is passed immediately through an in-memory Abstract Syntax Tree (AST) parser (Native Zero-Dependency Rust AST/Symbol Scanner):
 * $\text{AST}_{\text{provides}}$: Concrete exported types, structs, enums, functions, and traits defined within the file.
 * $\text{AST}_{\text{requires}}$: External symbols and types imported or referenced without local declarations.
 

@@ -10,7 +10,7 @@
 [![Tests](https://img.shields.io/badge/Tests-150%2F150%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
 [![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)](#core-architectural-pillars)
 [![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)](#core-architectural-pillars)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Dual%3A%20AGPLv3%20%2F%20Commercial-red.svg)](LICENSE)
 
 <br/>
 
@@ -185,6 +185,8 @@ Options:
 
 ---
 
-## 📄 License
+## 📄 License & Commercial Use
 
-Omni Engine is licensed under the [MIT License](LICENSE). All runtime libraries, documentation, and architecture specifications are free and open-source.
+Omni Engine is dual-licensed under the **GNU Affero General Public License v3.0 (AGPLv3)** for open-source community use, and a **Commercial Enterprise License** for proprietary business deployments. 
+
+Using Omni Engine inside closed-source corporate infrastructure, commercial products, or internal SaaS/server pipelines without disclosing your proprietary source code requires a paid commercial license.

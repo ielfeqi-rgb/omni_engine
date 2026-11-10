@@ -38,7 +38,7 @@ Is the task operating on an existing repository or directory?
 │
 └── YES --> Use 'modify' (Incremental Refactor with Zero-Wipe Guarantee)
             Preloads existing repository files into RAM VFS before planning.
-            Enforces strict Tree-Sitter AST preservation (+lines / -0 regressions).
+            Enforces strict Native Rust AST preservation (+lines / -0 regressions).
             Syntax: omni_engine modify "<goal>" --dir <path> --output-dir <path>
 ```
 
@@ -176,7 +176,7 @@ DAG Subgoals:
 
 ### 5.1 The Zero-Wipe Invariant
 In `modify` mode, the engine treats pre-existing working logic as immutable invariants:
-* **Structural Guarantee (AST Symbol Invariant):** The Tree-Sitter AST validator locks all pre-existing public classes, methods, and functions. If any pre-existing public symbol disappears from the staged file in RAM VFS, the deliverable is rejected and the worker is rolled back in KV-cache to retry with an additive delta.
+* **Structural Guarantee (AST Symbol Invariant):** The Native Zero-Dependency Rust AST/Symbol Scanner locks all pre-existing public classes, methods, and functions. If any pre-existing public symbol disappears from the staged file in RAM VFS, the deliverable is rejected and the worker is rolled back in KV-cache to retry with an additive delta.
 * **Behavioral Guarantee (Cleanroom Test Execution):** Preserving AST signatures alone does not prove behavioral correctness. Semantic regression prevention is enforced by executing the project's test suite inside the Linux Bubblewrap sandbox (`bwrap`) before any byte is committed to disk.
 
 ### 5.2 Constant-Bounded Attention Window ($O(1)$ Attention Ceiling)

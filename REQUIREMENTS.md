@@ -12,11 +12,10 @@ Omni Engine is completely decoupled from model weights and external library buil
 - **CMake & Ninja**: (for building upstream `llama.cpp`)
 - **Bubblewrap (`bwrap`)**: Linux user namespace container isolation for zero-write sandbox cleanrooms (`sudo apt install bubblewrap` / `sudo dnf install bubblewrap`)
 
-### ⚠️ Important Notice: llama.cpp and Models are NOT Bundled
-Omni Engine is completely decoupled from model weights and external library builds. **It does not bundle `llama.cpp` binaries or model weights** in this repository. It links dynamically against official upstream `llama.cpp` shared libraries, ensuring:
-- Full freedom to update upstream `llama.cpp` versions without waiting for engine patches.
-- Native compiler optimization for your exact CPU/GPU architecture (AVX, AVX2, AVX-512, CUDA, Metal, ROCm, Vulkan).
-- Clean, lightweight source repository without platform-specific binary or model bloat.
+### ⚠️ Important Notice: Source Repository vs. Release Bundles
+To keep the git source repository lightweight, raw model weights (`.gguf`) and compiled binaries are excluded from the git tree. However:
+1. **Official Release Bundles (`v2.2.1` tar.gz):** Come pre-bundled with verified `llama.cpp` shared libraries inside `bin/` for instant, zero-compile execution.
+2. **Source Builds:** Developers building from source can either drop pre-compiled `.so` files into `./bin/` or compile upstream `llama.cpp` manually for custom hardware flags (AVX-512, CUDA, Vulkan).
 
 ### Verified Upstream llama.cpp Build
 The current production release (`v2.2.1`) is verified against:
