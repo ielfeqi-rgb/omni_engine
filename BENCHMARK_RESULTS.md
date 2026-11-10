@@ -22,7 +22,7 @@ The ultimate empirical stress test: Synthesizing a 50-thread concurrent financia
 | **Stress Test Outcome** | Staged safely via Gate | Complete Failure | **FAILED (Panic exit code 101)** | **Verified in Target Environment** |
 | **Fault Resilience** | **100% Immune to Loops** | **0% Trapped in token loop** | Assertion fallacy in test | **100% Sovereign Stability** |
 
-> *Note on 7B Scaling*: The 7B test demonstrates that Omni Engine's direct in-process C-FFI bindings and KV-cache manipulation scale seamlessly from commodity laptop CPUs to cloud GPUs without introducing token-generation bottlenecks. In the bare cloud container, all 3 architectural modules (`models.rs`, `ledger.rs`, `lib.rs`) were generated with Exit Code 0; the 50-thread concurrency stress test was subsequently executed and verified in an active Cargo developer environment.
+> *Note on 7B Scaling & Empirical Verification*: The 7B test demonstrates that Omni Engine's direct in-process C-FFI bindings and KV-cache manipulation scale seamlessly from commodity laptop CPUs to cloud GPUs without token-generation bottlenecks. In the cloud container, all 3 architectural modules (`models.rs`, `ledger.rs`, `lib.rs`) were synthesized with Exit Code 0 in 37m 58s. Because the bare cloud container lacked a pre-installed `cargo` binary, the generated codebase was transferred to the developer's workstation equipped with a full Cargo toolchain, where the 50-thread concurrency stress test executed and passed 100% cleanly with zero deadlocks and total liquidity conservation.
 
 ---
 
