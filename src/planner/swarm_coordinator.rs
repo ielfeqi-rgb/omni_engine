@@ -2664,13 +2664,24 @@ impl SwarmCoordinator {
             .collect();
 
         if !uncommitted_files.is_empty() {
-            let is_interactive = if let Some(auto) = self.config.auto_approve_deps {
-                auto
-            } else {
-                std::io::stdin().is_terminal()
-            };
+            let auto_approved = self.config.auto_approve_deps == Some(true);
+            let is_interactive = self.config.auto_approve_deps.is_none() && std::io::stdin().is_terminal();
 
-            if is_interactive {
+            if auto_approved {
+                println!("  {}", "[OVERRIDE AUTO-AUTHORIZED via -y] Materializing unverified files to host disk...".bright_magenta().bold());
+                let target_dir = self.config.output_dir.as_deref();
+                match self.vfs.commit_verified_files(target_dir, &uncommitted_files, true) {
+                    Ok(saved_paths) => {
+                        for dest_path in &saved_paths {
+                            println!("   [OVERRIDE SAVED] {}", dest_path.display().to_string().bright_yellow());
+                        }
+                        println!("   [OVERRIDE COMMIT] Successfully flushed {} unverified file(s) to host machine.", saved_paths.len().to_string().bright_green());
+                    }
+                    Err(e) => {
+                        warn!("Failed to commit override VFS files to host disk: {}", e);
+                    }
+                }
+            } else if is_interactive {
                 println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
                 println!("  {}", "[HUMAN RESPONSIBILITY OVERRIDE / تفريغ الكود على المسؤولية الشخصية]".bright_yellow().bold());
                 println!("  Notice: {} generated file(s) in RAM VFS did not reach 'Completed' cleanroom verification:", uncommitted_files.len());

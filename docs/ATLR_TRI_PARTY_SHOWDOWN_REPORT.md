@@ -127,7 +127,7 @@
 - تنفيذ سرب المهام بطلب مباشر:
   ```bash
   ./omni_engine modify "Implement ATLR financial ledger with zero dependencies and deadlock prevention" \
-      --plan-file atlr_maestro_plan.json --model models/qwen2.5-coder-7b.gguf --subgoals 4 --steps 3
+      --plan-file examples/atlr_maestro_plan.json --model models/qwen2.5-coder-7b.gguf --subgoals 4 --steps 3
   ```
 
 ### ب. النتائج القياسية والمقارنة

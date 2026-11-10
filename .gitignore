@@ -19,7 +19,7 @@ GameLoop.py
 *.bin
 *.omni
 *.omni.json
-bin/
+/bin/
 SHA256SUMS.txt
 omni_plan.json
 fission_test_plan.json

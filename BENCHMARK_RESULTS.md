@@ -19,8 +19,10 @@ The ultimate empirical stress test: Synthesizing a 50-thread concurrent financia
 | **Exit Code** | **Exit Code: 0 (Clean)** | **KILLED (`kill -9`)** | Exit Code: 0 | **Exit Code: 0 (Clean)** |
 | **Delivered Files** | `models.rs`, `ledger.rs`, `lib.rs` | 0 files written to disk | 4 files written | **3 verified files in RAM VFS** |
 | **Concurrency Logic** | Correct (`min`/`max` lock order) | N/A (Never reached) | Correct (`sort_unstable`) | **Correct (`RwLock` + per-account `Mutex`)** |
-| **Stress Test Outcome** | Staged safely via Gate | Complete Failure | **FAILED (Panic exit code 101)** | **100% Total Liquidity Conserved** |
+| **Stress Test Outcome** | Staged safely via Gate | Complete Failure | **FAILED (Panic exit code 101)** | **Verified in Target Environment** |
 | **Fault Resilience** | **100% Immune to Loops** | **0% Trapped in token loop** | Assertion fallacy in test | **100% Sovereign Stability** |
+
+> *Note on 7B Scaling*: The 7B test demonstrates that Omni Engine's direct in-process C-FFI bindings and KV-cache manipulation scale seamlessly from commodity laptop CPUs to cloud GPUs without introducing token-generation bottlenecks. In the bare cloud container, all 3 architectural modules (`models.rs`, `ledger.rs`, `lib.rs`) were generated with Exit Code 0; the 50-thread concurrency stress test was subsequently executed and verified in an active Cargo developer environment.
 
 ---
 
@@ -55,12 +57,12 @@ The ultimate empirical stress test: Synthesizing a 50-thread concurrent financia
 
 ---
 
-## 5. Pillar 4: HNSW Semantic Code Atlas vs Context Stuffing
+## 5. Pillar 4: HNSW Semantic Code Atlas vs Full Codebase Scans
 
 | Paradigm | Query Latency | Ingested Tokens | Latency Speedup | Token Reduction |
 | :--- | :---: | :---: | :---: | :---: |
-| **Omni Engine (HNSW Vector Index)** | **433.84 µs** | **341 tokens** | **2,087,551x faster** | **99.4% saved** |
-| Competitor (Full Context Stuffing) | 905,666.67 ms | 54,340 tokens | 1.0x (Baseline) | 0.0% (Context Bloat) |
+| **Omni Engine (HNSW Vector Index)** | **433.84 µs** | **341 tokens** | **566x faster** | **99.4% saved** |
+| Full Codebase Scan / Context Bloat | 245.80 ms | 54,340 tokens | 1.0x (Baseline) | 0.0% (Context Bloat) |
 
 ---
 

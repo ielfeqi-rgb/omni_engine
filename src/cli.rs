@@ -118,7 +118,7 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
         unknown => {
             eprintln!("[-] Unknown command: '{}'", unknown);
             eprintln!("Run 'omni_engine --help' for a list of available commands.");
-            Ok(true)
+            Err(format!("Unknown command: '{}'", unknown).into())
         }
     }
 }
@@ -1297,7 +1297,7 @@ EXAMPLES:
             plan_spec: plan_spec.clone(),
             max_parallel_workers: max_concurrency,
         }
-    } else if let Some((o, w)) = resolve_swarm_models(base_dir, &models_dir, orch_path, worker_path) {
+    } else if let Some((o, w)) = resolve_swarm_models(base_dir, &models_dir, orch_path, worker_path, auto_approve_deps.is_some()) {
         crate::planner::SwarmConfig {
             orchestrator_model_path: o,
             worker_model_path: w,
@@ -1413,6 +1413,7 @@ fn resolve_swarm_models(
     models_dir: &Path,
     mut orch_path: Option<PathBuf>,
     mut worker_path: Option<PathBuf>,
+    auto_approve: bool,
 ) -> Option<(PathBuf, PathBuf)> {
     if let (Some(o), Some(w)) = (orch_path.as_ref(), worker_path.as_ref()) {
         return Some((o.clone(), w.clone()));
@@ -1424,7 +1425,7 @@ fn resolve_swarm_models(
     }
 
     use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() {
+    if auto_approve || !std::io::stdin().is_terminal() {
         let default_model = found[0].1.clone();
         let o = orch_path.unwrap_or_else(|| default_model.clone());
         let w = worker_path.unwrap_or_else(|| default_model);

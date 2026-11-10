@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  Omni Engine (v2.1.2) - Universal 1-Line Sovereign Installer
+#  Omni Engine (v2.2.1) - Universal 1-Line Sovereign Installer
 #  Usage: curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
 # ==============================================================================
 set -e
@@ -12,7 +12,7 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RED="\033[31m"
 
-VERSION="2.1.2"
+VERSION="2.2.1"
 TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
 RELEASE_URL="https://github.com/ielfeqi-rgb/omni_engine/releases/download/v${VERSION}/${TARBALL}"
 
@@ -76,17 +76,17 @@ INSTALLED=0
 # Priority A: Local workspace pre-built release
 if [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/target/release/omni_engine" ]; then
     echo -e "[*] Installing pre-built release binary from workspace..."
-    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni_engine"
     if [ -d "${SCRIPT_DIR}/bin" ]; then
         cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
     fi
+    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni_engine"
     INSTALLED=1
 elif [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/bin/omni_engine" ]; then
     echo -e "[*] Installing binary from workspace bin/ directory..."
-    cp -f "${SCRIPT_DIR}/bin/omni_engine" "${BIN_DIR}/omni_engine"
     if [ -d "${SCRIPT_DIR}/bin" ]; then
         cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
     fi
+    cp -f "${SCRIPT_DIR}/bin/omni_engine" "${BIN_DIR}/omni_engine"
     INSTALLED=1
 fi
 

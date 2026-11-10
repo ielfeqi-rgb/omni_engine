@@ -537,7 +537,7 @@ fn main() {
     let p3 = run_pillar_3_kv_cache(&model_path);
     let p4 = run_pillar_4_hnsw_atlas(&base_dir);
 
-    let report_path = base_dir.join("BENCHMARK_RESULTS.md");
+    let report_path = base_dir.join("docs/COMPARATIVE_PILLARS.md");
     write_benchmark_report(&p1, &p2, p3.as_ref(), &p4, &report_path);
 
     // Run the live multi-file generation challenge when explicitly requested
