@@ -1592,7 +1592,7 @@ fn print_console_help() {
     println!("  {:<32} {}", "download <preset|URL>".bright_white().bold(), "Download GGUF model directly into models/ with progress bar");
     println!("  {:<32} {}", "config".bright_white().bold(), "Tune planning depth (subgoals), worker retry budget, and workspace dir");
 
-    println!("\n  {}", "HNSW SEMANTIC CODEBASE ATLAS (v2.2.0):".bright_white().bold());
+    println!("\n  {}", format!("HNSW SEMANTIC CODEBASE ATLAS (v{}):", env!("CARGO_PKG_VERSION")).bright_white().bold());
     println!("  {:<32} {}", "index [dir]".bright_green().bold(), "Index codebase into in-memory HNSW vector memory (e.g. 'index src')");
     println!("  {:<32} {}", "search <query>".bright_green().bold(), "Instant O(log N) semantic proximity search over indexed code");
 
