@@ -1,13 +1,13 @@
-# Omni Engine: مواصفة المعمارية التقنية والتصميم الحسابي
-**وثيقة مرجعية شاملة للنظام (Technical Whitepaper & Architectural Specification)**
+# Omni Engine: Technical Whitepaper & Architectural Specification
+**A Comprehensive Systems Engineering & Computational Reference**
 
 ---
 
-## 1. الفلسفة التأسيسية للمحرك (Foundational Philosophy)
+## 1. Foundational Philosophy
 
-يُعرّف **Omni Engine** بأنه محرك توليد وتنسيق برمجي حتمي فائق الأداء مبني بلغة Rust، ومرتبط بمكتبة `llama.cpp` عبر واجهات FFI منخفضة المستوى.
+**Omni Engine** is a high-performance, deterministic autonomous software engineering runtime written in pure Rust and coupled directly to upstream `llama.cpp` via low-level in-process C-FFI bindings.
 
-الهدف الأساسي للمحرك هو كسر نمط "التوليد الأعمى" (Blind Autoregressive Generation) ونقل النماذج اللغوية (خاصة النماذج الصغيرة SLMs) من دور "المبرمج المسترسل غير المنضبط" إلى دور "وحدة حسابية ذرية موجهة" (Deterministic Processing Unit) داخل آلة حالات منتهية (State Machine) مدفوعة بنظرية البيان (Graph Theory) والتحليل الساكن.
+The foundational design objective is to break the paradigm of **"blind autoregressive generation."** Rather than treating Large Language Models—especially Small Language Models (SLMs, 1.5B–7B)—as unconstrained conversational storytellers, Omni Engine constrains them into **Deterministic Processing Units (DPUs)** within a finite state machine governed by graph theory, set algebra, and static AST analysis.
 
 ```text
 +-----------------------------------------------------------------------------+
@@ -28,72 +28,72 @@
 
 ---
 
-## 2. فيزياء الانتباه وميكانيكا الـ KV-Cache
+## 2. Attention Physics & KV-Cache Mechanics
 
-### 2.1 معادلة الانتباه والتحكم بالماسك (Attention Mask Manipulation)
-يعتمد توجيه العمال الذريين على التلاعب المباشر بمصفوفة الانتباه (Attention Mask) $M \in \mathbb{R}^{N \times N}$ داخل كيرنل الحساب:
+### 2.1 Attention Mask Manipulation
+Orchestration of localized worker threads relies on direct, in-process manipulation of the attention mask matrix $M \in \mathbb{R}^{N \times N}$ inside the compute kernel:
 
 $$\text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V$$
 
-حيث:
-* $Q \in \mathbb{R}^{L \times d_k}$ مصفوفة الاستعلام للتوكنات الحالية.
-* $K, V \in \mathbb{R}^{S \times d_k}$ مصفوفات المفاتيح والقيم المخزنة في الـ KV-Cache.
-* $M_{i, j}$ هي قيمة القناع بين التوكن $i$ والتوكن $j$:
+Where:
+* $Q \in \mathbb{R}^{L \times d_k}$ is the query matrix for the current active tokens.
+* $K, V \in \mathbb{R}^{S \times d_k}$ are key and value tensors retained inside the persistent KV-cache.
+* $M_{i, j}$ defines token-to-token visibility:
 
-$$M_{i, j} = \begin{cases} 0 & \text{إذا كان التوكن } j \text{ مرئياً للتوكن } i \\ -\infty & \text{إذا كان التوكن } j \text{ محجوباً} \end{cases}$$
+$$M_{i, j} = \begin{cases} 0 & \text{if token } j \text{ is visible to token } i \\ -\infty & \text{if token } j \text{ is masked / obscured} \end{cases}$$
 
-رياضياً، عند تطبيق الـ Softmax:
+Under the Softmax transformation:
 $$\exp(-\infty) = 0$$
 
-يؤدي هذا إلى تصفير وزن الانتباه الموجه للتوكن المحجوب تماماً، مما يلغي إسهامه في جمع متجهات $V$، مع بقاء بياناته محفوظة في الذاكرة دون مسح.
+Masked tokens receive zero attention weight, completely eliminating their contribution to $V$ aggregation while retaining their cached representations in memory without costly eviction or recomputation.
 
-### 2.2 بالوعات الانتباه (Attention Sinks)
-للحفاظ على الاستقرار العددي وتفادي انهيار الحسابات النقطية (Softmax Degradation)، يفرض المحرك كشف أول 4 توكنات من السياق بشكل دائم:
+### 2.2 Attention Sinks
+To maintain numerical stability across deep transformer layers and prevent softmax degradation, Omni Engine enforces persistent visibility over the first 4 tokens of the context sequence:
 $$\forall i \ge 0, \quad M_{i, 0..3} = 0$$
 
-تعمل هذه التوكنات كـ "بالوعات انتباه" تستقبل فائض أوزان الـ Softmax غير المستخدمة وتحمي استقرار طبقات المحول (Transformer Layers).
+These tokens function as **Attention Sinks**, absorbing residual softmax mass and preventing numerical overflow or underflow across multi-turn generation.
 
-### 2.3 حفظ الذاكرة الساكنة (Zero-Compute Retention)
-الـ KV-Cache هو بنية بيانات ساكنة في الرام. بقاء التوكنات فيه لا يستهلك أي قدرة معالجة ($0.0\%$ CPU Load). يتم التعديل عليه عبر مشراط جراحي:
-* **التفريغ الشريحي (Slice Truncation):**
+### 2.3 Zero-Compute Memory Retention
+The KV-cache is a static RAM data structure. Retaining cached tokens imposes $0.0\%$ CPU compute overhead. Dynamic context modification is executed via microsecond surgical slice operations:
+* **Surgical Slice Truncation:**
   $$\text{llama\_kv\_cache\_seq\_rm}(\text{ctx}, \text{seq\_id}, p_0, p_1)$$
-  يمسح فقط التوكنات المتذبذبة في النطاق $[p_0, p_1)$ ويبقي على السياق الأصلي كما هو دون إعادة حساب.
+  Excises only the oscillating or failed token span $[p_0, p_1)$, retaining the valid prefix intact without requiring cold context recalculations.
 
 ---
 
-## 3. التحليل الرياضي للإنتروبيا وانشطار العقد (Node Fission)
+## 3. Mathematical Entropy Analysis & Node Fission
 
-### 3.1 حساب إنتروبيا شانون اللحظية (Instantaneous Shannon Entropy)
-لا يعتمد المحرك على القواعد اللغوية لتحديد تعثر النموذج، بل يراقب دالة توزيع الاحتمالات الناتجة عن طبقة الـ Softmax عند كل خطوة توليد $t$:
+### 3.1 Instantaneous Shannon Entropy Monitoring
+Omni Engine does not rely on fragile heuristic regexes to detect model confusion or token looping. Instead, it computes the Shannon entropy of the softmax probability distribution at each generation step $t$:
 
 $$H(t) = -\sum_{i=1}^{|V|} P(w_i) \log_2 P(w_i)$$
 
-حيث:
-* $|V|$ هو الحجم الكلي لقاموس النموذج (Vocabulary Size).
-* $P(w_i)$ هو الاحتمال المحسوب للرمز $w_i$.
+Where:
+* $|V|$ is the total model vocabulary size.
+* $P(w_i)$ is the computed probability for candidate token $w_i$.
 
-### 3.2 كشف التردد والانشطار (Fission Trigger)
-يتم حساب المتوسط المتحرك للإنتروبيا لنافذة انزلاقية ذات طول $K$:
+### 3.2 Fission Trigger & Cutpoint Identification
+The engine tracks the moving average of entropy over a sliding window of length $K$:
 
 $$\bar{H}_K(t) = \frac{1}{K} \sum_{\tau=t-K+1}^t H(\tau)$$
 
-إذا تحقق الشرط:
+When entropy exceeds the stability threshold:
 $$\bar{H}_K(t) > H_{\text{threshold}}$$
 
-يوقف محرك Rust عملية التوليد فوراً، ويحدد نقطة القطع $T_{\text{cut}}$ عند أقرب فاصل استقرار سابق:
+The Rust host halts generation immediately and identifies the optimal rollback cutpoint $T_{\text{cut}}$ at the nearest preceding entropy minimum:
 $$T_{\text{cut}} = \arg\min_{\tau \le t} H(\tau)$$
 
-### 3.3 ميكانيكية الانشطار (Worker Fission Protocol)
-* **تجميد العامل الأول (Worker A):** تثبيت السياق من 0 إلى $T_{\text{cut}}$ وجعله للقراءة فقط (Read-Only).
-* **ولادة العامل المكمل (Worker B):** ضبط إزاحة الموضع الزمني (RoPE Offset) إلى $T_{\text{cut}} + 1$.
-* **حقن شريط النية الكامنة (Epistemic Intent Anchor):** الحفاظ على أهداف المهمة محقونة في أول الـ Cache ليراها العامل الجديد بوضوح، مما يمنع فقدان النية المشتركة.
+### 3.3 Worker Fission Protocol
+* **Freeze Worker A:** Context from token 0 to $T_{\text{cut}}$ is sealed and marked read-only.
+* **Spawn Worker B:** The subsequent worker thread initializes with Rotary Position Embedding (RoPE) offset at $T_{\text{cut}} + 1$.
+* **Epistemic Intent Anchor:** The original architectural objective is retained at sequence prefix index 0, ensuring consistent task alignment across worker resets.
 
 ---
 
-## 4. بنية التخطيط الشجري الحتمي (Dynamic DAG Generation)
+## 4. Deterministic DAG Scheduling & Graph Theory
 
-### 4.1 الاستخراج النقطي بالمقاطعة الإجبارية (Stepwise Forcible Halting)
-يتم تفكيك المشروع بالكامل ديناميكياً ودون قوالب مسبقة عبر مقاطعة النموذج قسراً عند كل سطر:
+### 4.1 Stepwise Forcible Halting
+Project goals are decomposed dynamically without pre-baked prompt templates by forcibly intercepting generation at syntactic line boundaries:
 ```text
 [Prompt: Project Entity 1:] 
    -> LLM generates: "Block" 
@@ -106,48 +106,50 @@ $$T_{\text{cut}} = \arg\min_{\tau \le t} H(\tau)$$
    -> Rust Interrupt Engine (Halt on '\n')
 ```
 
-### 4.2 بناء مصفوفة الاعتماديات (Adjacency Matrix)
-يتم تحديد العلاقات بأسئلة أحادية الاتجاه تُطرح على النموذج مع المقاطعة اللحظية:
+### 4.2 Adjacency Matrix Construction
+Inter-entity dependencies are resolved via atomic, single-token directional inquiries:
 * `"To define Player, which entity is required first?"` $\to$ `World`
 * `"To define World, which entity is required first?"` $\to$ `Block`
 
-تُبنى مصفوفة التجاور $A \in \{0, 1\}^{N \times N}$ حيث $A_{i, j} = 1$ تدل على أن العقدة $j$ تعتمد على العقدة $i$:
+Dependencies populate an adjacency matrix $A \in \{0, 1\}^{N \times N}$, where $A_{i, j} = 1$ denotes that entity $j$ depends on entity $i$.
 
-### 4.3 الفرز الطوبولوجي للأولويات (Topological Sorting)
-يستخدم المحرك خوارزمية Kahn لتحديد الترتيب الحتمي للتنفيذ:
+### 4.3 Kahn's Algorithm for Topological Scheduling
+The engine applies Kahn's algorithm to resolve a deterministic, cycle-free topological execution order:
+
 ```text
-L <- قائمة فارغة للترتيب النهائي
-S <- مجموعة كل العقد التي ليس لها أطراف داخلة (In-Degree = 0)
+L <- Empty list that will contain the sorted elements
+S <- Set of all nodes with no incoming edges (In-Degree = 0)
 
-طالما أن S ليست فارغة:
-    أخرج عقدة n من S وأضفها إلى L
-    لكل عقدة m يوجد سهم من n إليها:
-        احذف السهم e من البيان
-        إذا أصبحت m بدون أطراف داخلة:
-            أضف m إلى S
+while S is not empty:
+    remove a node n from S
+    append n to L
+    for each node m with an edge e from n to m:
+        remove edge e from the graph
+        if m has no other incoming edges:
+            insert m into S
 
-إذا كان البيان يحتوي على أسهم:
-    أطلق تحذير وجود حلقة مغلقة (Circular Dependency Detected)
-وإلا:
-    الترتيب التنفيذي الحتمي = L
+if graph has edges:
+    return Error (Circular Dependency Detected)
+else:
+    return L (Deterministic Execution Schedule)
 ```
 
-### 4.4 التفكيك الجزئي المتفرع (Fractal Drill-Down)
-عند وصول التنفيذ إلى عقدة مركبة (مثل Player):
-* **النماذج الصغيرة ($N_{\text{scratch}} = 0$):** استخراج المشتقات مباشرة عبر مقاطعة التوليد النقطية (Movement, Interaction).
-* **النماذج الكبيرة:** منح نافذة مسودة مؤقتة $N_{\text{sub-scratch}} \le 100$ توكن للتفكير في المعمارية الداخلية، ثم حذف توكنات المسودة من الكاش عبر الـ Truncation بمجرد استخراج أسماء المكونات.
+### 4.4 Fractal Drill-Down Decomposition
+When scheduling complex composite entities:
+* **Small Models ($N_{\text{scratch}} = 0$):** Sub-components are extracted via strict stepwise line halting (e.g., `Movement`, `Interaction`).
+* **Large Models:** A temporary scratchpad budget ($N_{\text{sub-scratch}} \le 100$ tokens) is allocated for internal architectural reasoning, followed by instantaneous KV truncation once module signatures are extracted.
 
 ---
 
-## 5. بوابة التحقق الساكن (AST Gatekeeping & Verification)
+## 5. AST Gatekeeping & Static Verification
 
-### 5.1 استخراج العقود البرمجية
-عند اكتمال توليد أي ملف، يمرره المحرك فوراً عبر محلل شجرة البناء اللغوي المجرد (AST) باستخدام مكتبات فحص سريعة (tree-sitter, syn):
-* $\text{AST}_{\text{provides}}$: المعرفات والدوال والكلاسات المصدّرة فعلياً داخل الملف.
-* $\text{AST}_{\text{requires}}$: المعرفات المستوردة والمستخدمة دون تعريف محلي.
+### 5.1 Contract Extraction
+Upon completion of a generated module, the code is passed immediately through an in-memory Abstract Syntax Tree (AST) parser (`tree-sitter`, `syn`):
+* $\text{AST}_{\text{provides}}$: Concrete exported types, structs, enums, functions, and traits defined within the file.
+* $\text{AST}_{\text{requires}}$: External symbols and types imported or referenced without local declarations.
 
-### 5.2 جبر المجموعات وفحص "الوعد الكاذب"
-يجري المحرك العمليات الجبرية التالية:
+### 5.2 Set Algebra & Ghost Symbol Rejection
+The engine applies formal set operations to verify interface contracts:
 
 ```text
                           +------------------------+
@@ -172,44 +174,43 @@ S <- مجموعة كل العقد التي ليس لها أطراف داخلة (
                                                     +---------------------+
 ```
 
-* إذا كانت $\Delta_{\text{ghost\_provides}} \neq \emptyset$:
-  يُحظر انتقال العقدة إلى الـ DAG. يُحقن خطأ التحليل الساكن في الكاش مباشرة:
-  ```python
-  # AST ERROR: Symbol 'UserModel' missing.
-  class UserModel:
+* If $\Delta_{\text{ghost\_provides}} \neq \emptyset$:
+  The module is blocked from DAG commitment. The missing symbol declaration is injected directly into the worker's prompt prefix:
+  ```rust
+  // AST CONTRACT DIRECTIVE: Missing required symbol definition.
+  pub struct Account { ... }
   ```
-  يُجبر النموذج على إكمال التعريف فقط (Strict Prefill Completion).
+  The worker is constrained to complete only the missing contract definition (Strict Prefill Completion).
 
 ---
 
-## 6. بروتوكول استشارة المطور (Human-in-the-Loop Triage)
+## 6. Human-in-the-Loop Triage Protocol
 
-### 6.1 حساب معامل الأثر (Impact & Centrality Score)
-عند حدوث تردد مستعصٍ، يحسب المحرك درجة خروج العقدة (Out-Degree) في مصفوفة التجاور $A$:
+### 6.1 Centrality & Impact Scoring
+When persistent ambiguity occurs, Omni Engine evaluates node centrality via its out-degree in the dependency matrix $A$:
 
-| المسار | الشرط الرياضي | الإجراء البرمجي |
+| Execution Path | Mathematical Condition | Runtime Action |
 |---|---|---|
-| **المسار الحرج (Critical Path)** | $\text{OutDegree}(v_i) \ge 3$ | إيقاف خيط التنفيذ فوراً، تجميد الكاش، وإرسال تنبيه للمستخدم لحسم القرار. |
-| **المسار المؤجل (Deferred Path)** | $\text{OutDegree}(v_i) < 3$ | حقن علامة `OMNI_DEFERRED_DECISION`، إكمال التوليد، وعرض القرار قبل الإطلاق. |
+| **Critical Path** | $\text{OutDegree}(v_i) \ge 3$ | Halt compute thread immediately, park KV-cache, and surface an interactive triage request to the human user. |
+| **Deferred Path** | $\text{OutDegree}(v_i) < 3$ | Inject an `OMNI_DEFERRED_DECISION` marker, proceed with generation, and present the choice prior to final commit. |
 
-### 6.2 ترسيخ القرارات السيادية (Sovereign Rules Injection)
-القرارات الصادرة من المستخدم تُسجل في جدول دائم في Rust، وتُحقن في أول التوكنات (Prefix) لجميع العمال القادمين:
+### 6.2 Sovereign Rules Persistence
+User decisions are permanently recorded in a structured table and injected as immutable constraints into all downstream worker contexts:
 ```text
 [SOVEREIGN_RULES]:
-- Rule #1: Hostile mobs must use external LootTable JSON format.
+- Rule #1: All financial transactions must use canonical lock ordering (min/max).
 ```
-يضمن هذا عدم تكرار السؤال لنفس المعضلة في أي مرحلة لاحقة من المشروع.
+This guarantees zero redundant prompts for identical architectural decisions across subsequent turns.
 
 ---
 
-## 7. بروتوكول التزامن وإيقاف الاستهلاك (OS-Level Synchronization)
+## 7. OS-Level Synchronization & Zero-Power Hardware Parking
 
-### 7.1 التجميد دون تفريغ (Zero-Power Hardware Parking)
-لتفادي استهلاك المعالج أثناء انتظار المستخدم دون مسح الـ KV-Cache:
-* يدير المحرك الحسابي خيطاً مخصصاً لنظام التشغيل (`std::thread`).
-* عند الحاجة لقرار بشري، يُنشئ الخيط قناة اتصال فردية (`tokio::sync::oneshot`).
-* يستدعي الخيط أمر الحظر: `oneshot_rx.blocking_recv()`.
-داخلياً، يستدعي نظام التشغيل استدعاء النظام الخاص بـ Futex:
+### 7.1 Zero-Power Parking via Futex
+To prevent CPU spinning or thread burn while awaiting user decisions without evicting the KV-cache:
+* The inference core runs on a dedicated OS thread (`std::thread`).
+* When human triage is triggered, the thread creates a `tokio::sync::oneshot` channel.
+* The thread executes `oneshot_rx.blocking_recv()`, triggering a Linux futex syscall:
 ```c
 futex(uaddr, FUTEX_WAIT, val, NULL, NULL, 0);
 ```
@@ -219,7 +220,7 @@ Compute Thread (C++ / llama.cpp)                UI Runtime (Rust / Tokio)
 --------------------------------                -------------------------
 [Active Token Generation]
        |
-       v (Critical Hesitation Detected)
+       v (Critical Ambiguity Detected)
 [Create oneshot channel]
 [Send TriageRequest to UI] ------------------> [Receive Event]
 [Invoke: blocking_recv()]                      [Render Prompt to User]
@@ -235,25 +236,25 @@ Compute Thread (C++ / llama.cpp)                UI Runtime (Rust / Tokio)
 [Resume Forward Pass]
 ```
 
-### 7.2 حالة العتاد أثناء التجميد
-* **المعالج (CPU):** يتحول استهلاك الخيط إلى $0.0\%$؛ حيث يُنقل إلى قائمة الانتظار (WaitQueue).
-* **كارت الشاشة (GPU):** تتوقف كيرنلات CUDA تماماً، ويهبط استهلاك الطاقة للحد الأدنى (Idle P-State) مع بقاء الـ Tensors محجوزة بالكامل في الـ VRAM.
-* **زمن الاستجابة (Wakeup Latency):** عند إرسال المستخدم للرد، يستيقظ الخيط خلال زمن يقل عن $5\,\mu\text{s}$ ويستأنف التوليد من التوكن التالي مباشرة.
+### 7.2 Hardware State During Parking
+* **CPU Utilization:** Compute thread CPU consumption drops to strictly **$0.0\%$** as the OS moves the task into `WaitQueue`.
+* **GPU Utilization:** Compute kernels suspend; GPU power drops to the idle baseline (Low P-State) while weights and KV tensors remain pinned in VRAM.
+* **Wakeup Latency:** Upon receipt of user input, the OS scheduler wakes the compute thread in **$< 5\,\mu\text{s}$**, instantly resuming inference from the subsequent token.
 
 ---
 
-## 8. ملخص المواصفات البرمجية للمحرك
+## 8. Architectural Specification Summary
 
-| المكون البرمجي | الوظيفة الرياضية والبرمجية |
+| Architectural Component | Mathematical & Systems Role |
 | :--- | :--- |
-| **Memory Retention** | إدارة الـ KV-Cache بالماسك دون تفريغ دوري |
-| **Mask Bounds** | مصفوفة ثنائية ($0$ / $-\infty$) مع حماية Sink Tokens |
-| **Hesitation Monitor** | حساب إنتروبيا شانون اللحظية ومراقبة تجاوز الحد |
-| **Node Fission** | انشطار العقد عند التردد وتمرير الـ Intent السابق |
-| **Topology Resolution** | فرز طوبولوجي لمصفوفة التجاور بدون قوالب جاهزة (Kahn's Algorithm) |
-| **Stepwise Halter** | استخراج الكيانات بمقاطعة التوليد عند كل رمز (`Halt on '\n'`) |
-| **Verification** | مقارنة مخرجات الـ AST مع الإعلانات بجبر المجموعات ($\Delta_{\text{ghost}}$) |
-| **Sync Primitive** | تجميد الخيوط بحظر صفري للطاقة عبر Futex/Oneshot ($0.0\%$ CPU) |
+| **Memory Retention** | Mask-driven KV-cache governance with zero periodic cache evictions. |
+| **Mask Bounds** | Binary attention matrix ($0$ / $-\infty$) with guaranteed Attention Sink preservation. |
+| **Hesitation Monitor** | Instantaneous Shannon entropy calculation tracking distribution collapse. |
+| **Node Fission** | Entropy-triggered worker bifurcation preserving prefix intent. |
+| **Topology Resolution** | Template-free Kahn's algorithm topological sort on the adjacency matrix. |
+| **Stepwise Halter** | Deterministic symbol extraction via line boundary interrupts (`Halt on '\n'`). |
+| **AST Verification** | Set-algebra verification of provided vs required symbols ($\Delta_{\text{ghost}} = \emptyset$). |
+| **Sync Primitive** | Futex-level zero-power hardware thread parking ($0.0\%$ CPU load during triage). |
 
 ---
-*تم توثيق هذه المواصفة كمرجع هندسي رسمي لتطوير وتثبيت معمارية Omni Engine.*
+*Omni Engine v2.2.1 — Official Systems Architecture Specification.*

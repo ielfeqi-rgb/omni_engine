@@ -2683,7 +2683,7 @@ impl SwarmCoordinator {
                 }
             } else if is_interactive {
                 println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
-                println!("  {}", "[HUMAN RESPONSIBILITY OVERRIDE / تفريغ الكود على المسؤولية الشخصية]".bright_yellow().bold());
+                println!("  {}", "[HUMAN RESPONSIBILITY OVERRIDE: FORCE COMMIT UNVERIFIED FILES]".bright_yellow().bold());
                 println!("  Notice: {} generated file(s) in RAM VFS did not reach 'Completed' cleanroom verification:", uncommitted_files.len());
                 for uf in &uncommitted_files {
                     println!("   - {}", uf.display().to_string().bright_cyan());

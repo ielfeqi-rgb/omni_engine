@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -818,8 +818,8 @@ print(response.choices[0].message.content)</pre>
             <div style="display: flex; flex-direction: column; gap: 14px;">
                 <label style="font-size: 14px; font-weight: 700;" data-i18n="lblLanguage">🌐 واجهة اللغة (UI Language):</label>
                 <select id="langSelect" class="input-field" onchange="changeLanguage(this.value)">
-                    <option value="ar" selected>العربية (Arabic) 🇪🇬</option>
-                    <option value="en">English 🇬🇧</option>
+                    <option value="en" selected>English 🇬🇧</option>
+                    <option value="ar">العربية (Arabic) 🇪🇬</option>
                     <option value="fr">Français 🇫🇷</option>
                 </select>
             </div>
@@ -1040,7 +1040,12 @@ print(response.choices[0].message.content)</pre>
             }
         };
 
-        let currentLang = 'ar';
+        let currentLang = 'en';
+
+        // Initialize default English UI
+        window.addEventListener('DOMContentLoaded', () => {
+            changeLanguage('en');
+        });
 
         function changeLanguage(lang) {
             currentLang = lang;

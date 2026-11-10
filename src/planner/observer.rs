@@ -161,12 +161,12 @@ impl SovereignObserver {
         subgoal: &crate::planner::swarm_coordinator::SubGoal,
     ) -> String {
         let mut lines = Vec::new();
-        lines.push("[المراقب / THE SOVEREIGN OBSERVER]:".to_string());
-        lines.push("بصفتي المشرف على المعمارية الكلية للمشروع من البداية للنهاية:".to_string());
+        lines.push("[THE SOVEREIGN OBSERVER]:".to_string());
+        lines.push("As the holistic project architectural supervisor:".to_string());
 
         if !self.read_only_entities.is_empty() {
             lines.push(format!(
-                "- تنبيه الحماية: الملفات التالية للقراءة فقط ومحظور تعديلها تماماً: [{}]",
+                "- Protection Alert: The following files are READ-ONLY and strictly forbidden from modification: [{}]",
                 self.read_only_entities.join(", ")
             ));
         }
@@ -182,7 +182,7 @@ impl SovereignObserver {
         }
 
         if !relevant_symbols.is_empty() {
-            lines.push("- العقود القياسية الإجبارية للأنواع والرموز المطلوبة:".to_string());
+            lines.push("- Mandatory Standard Symbol & Type Contracts:".to_string());
             for sym in relevant_symbols {
                 lines.push(format!("```rust\n{}\n```", sym));
             }
@@ -190,13 +190,13 @@ impl SovereignObserver {
 
         // Invariants
         if !self.global_invariants.is_empty() {
-            lines.push("- القيود المعمارية المعتمدة (Invariants):".to_string());
+            lines.push("- Verified Architectural Invariants:".to_string());
             for inv in &self.global_invariants {
                 lines.push(format!("  * {}", inv));
             }
         }
 
-        lines.push("التعليمات: التزم بهذه العقود بحذافيرها. لا تضف صفات (traits) غير مدعومة من التبعيات.".to_string());
+        lines.push("Directive: Strictly adhere to these contracts. Do not introduce unsupported traits across dependencies.".to_string());
 
         let briefing = lines.join("\n");
         self.log_chronicle(
@@ -229,7 +229,7 @@ impl SovereignObserver {
                 if error_msg.contains(&needle) || raw_compiler_output.contains(&needle) {
                     missing_symbol_code = Some(sym_code.clone());
                     guidance_points.push(format!(
-                        "الرمز المفقود `{}` يجب تعريفه في أعلى الملف قبل أي استخدام:",
+                        "Missing symbol `{}` must be explicitly declared before usage:",
                         sym_name
                     ));
                     break;
@@ -242,7 +242,7 @@ impl SovereignObserver {
             let ro_filename = Path::new(ro).file_name().and_then(|n| n.to_str()).unwrap_or(ro);
             if raw_compiler_output.contains(ro_filename) && raw_compiler_output.contains("help: consider") {
                 let warn = format!(
-                    "الكومبيلر اقترح تعديل '{}'، ولكن هذا الملف محمي للقراءة فقط! الحل يجب أن يكون بحذف الـ trait المسبب للخطأ وليس بتعديل '{}'.",
+                    "Compiler suggested modifying '{}', but this file is strictly READ-ONLY! Resolve by removing the offending trait/call, NOT by altering '{}'.",
                     ro, ro
                 );
                 read_only_warning = Some(warn.clone());
@@ -255,7 +255,7 @@ impl SovereignObserver {
         if raw_compiler_output.contains("cannot be applied to type `&Transaction`") 
             || raw_compiler_output.contains("binary operation `==` cannot be applied") 
         {
-            let hint = "نوع `Transaction` لا يدعم `PartialEq`. احذف `PartialEq, Eq` من `IdempotencyRecord` واستخدم `#[derive(Debug, Clone)]` فقط.".to_string();
+            let hint = "Type `Transaction` does not implement `PartialEq`. Remove `PartialEq, Eq` from `IdempotencyRecord` and derive only `#[derive(Debug, Clone)]`.".to_string();
             guidance_points.push(hint.clone());
             if !self.global_invariants.contains(&hint) {
                 self.global_invariants.push(hint);
@@ -263,7 +263,7 @@ impl SovereignObserver {
         }
 
         if guidance_points.is_empty() {
-            guidance_points.push(format!("أصلح خطأ الكومبيلر المباشر: {}", error_msg));
+            guidance_points.push(format!("Resolve direct compiler diagnostic: {}", error_msg));
         }
 
         let learned = if missing_symbol_code.is_some() {
@@ -283,7 +283,7 @@ impl SovereignObserver {
         );
 
         ObserverDirective {
-            title: format!("توجيه المراقب لإصلاح الخطأ في '{}'", subgoal.target_entity),
+            title: format!("Observer Directive: Fix error in '{}'", subgoal.target_entity),
             missing_symbol_declaration: missing_symbol_code,
             read_only_warning,
             standardized_guidance: guidance_points.join("\n- "),
@@ -293,19 +293,19 @@ impl SovereignObserver {
     /// Formats the directive under the official supervisory persona for the CodeFixer.
     pub fn format_observer_message_for_fixer(&self, directive: &ObserverDirective) -> String {
         let mut msg = Vec::new();
-        msg.push("[المراقب / THE SOVEREIGN OBSERVER]:".to_string());
-        msg.push(format!("أشرف على المعمارية الكلية وأوجهك بالمواصفات القياسية لحل المشكلة:"));
+        msg.push("[THE SOVEREIGN OBSERVER]:".to_string());
+        msg.push("Supervising overall architecture with standardized specifications:".to_string());
 
         if let Some(ref warn) = directive.read_only_warning {
-            msg.push(format!("- تحذير حاسم: {}", warn));
+            msg.push(format!("- CRITICAL WARNING: {}", warn));
         }
 
         if let Some(ref sym_code) = directive.missing_symbol_declaration {
-            msg.push(format!("- الكود المعياري الإجباري للرمز المفقود:\n```rust\n{}\n```", sym_code));
+            msg.push(format!("- Mandatory Standard Symbol Declaration:\n```rust\n{}\n```", sym_code));
         }
 
-        msg.push(format!("- توجيه التنفيذ: {}", directive.standardized_guidance));
-        msg.push("التزم بالعقد أعلاه حرفياً دون أي تعديل على الملفات المحمية.".to_string());
+        msg.push(format!("- Execution Directive: {}", directive.standardized_guidance));
+        msg.push("Strictly adhere to the contract above without modifying protected read-only files.".to_string());
 
         msg.join("\n")
     }
