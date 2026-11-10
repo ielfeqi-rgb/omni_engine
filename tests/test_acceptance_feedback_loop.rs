@@ -160,6 +160,7 @@ fn test_dynamic_dag_subgoal_injection_on_acceptance_delta() {
             steps_taken: 1,
             rollbacks_count: 0,
             tokens_saved_by_rollback: 0,
+            last_diagnostic: None,
         },
     };
 

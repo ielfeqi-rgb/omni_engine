@@ -1732,6 +1732,7 @@ pub struct WorkerFinding {
     pub steps_taken: usize,
     pub rollbacks_count: usize,
     pub tokens_saved_by_rollback: usize,
+    pub last_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -3260,7 +3261,7 @@ impl SwarmCoordinator {
                 )?;
 
                 worker_ctx.kv_cache_clear();
-                Ok(finding)
+                Ok::<WorkerFinding, String>(finding)
             }));
 
             match res {
@@ -3307,6 +3308,7 @@ impl SwarmCoordinator {
                         steps_taken: 0,
                         rollbacks_count: 0,
                         tokens_saved_by_rollback: 0,
+                        last_diagnostic: Some(err_str.clone()),
                     };
                     let _ = tx.send(WorkerEvent::Failed {
                         task_id,
@@ -4816,6 +4818,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 steps_taken: 1,
                 rollbacks_count: 0,
                 tokens_saved_by_rollback: 0,
+                last_diagnostic: None,
             });
         }
 
@@ -4889,6 +4892,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         steps_taken: attempt,
                         rollbacks_count,
                         tokens_saved_by_rollback: tokens_saved,
+                        last_diagnostic: None,
                     });
                 }
             }
@@ -5571,6 +5575,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         steps_taken: attempt,
                         rollbacks_count,
                         tokens_saved_by_rollback: tokens_saved,
+                        last_diagnostic: None,
                     });
                 }
             }
@@ -6817,6 +6822,16 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             };
         }
 
+        let last_diagnostic = if final_finding.starts_with("FAILED") {
+            last_raw_compiler_output
+                .or(last_error_desc)
+                .map(|s| {
+                    s.lines().take(20).collect::<Vec<_>>().join("\n")
+                })
+        } else {
+            None
+        };
+
         Ok(WorkerFinding {
             worker_id: subgoal.id,
             sub_goal: subgoal.description.clone(),
@@ -6824,6 +6839,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
             steps_taken: attempt,
             rollbacks_count,
             tokens_saved_by_rollback: tokens_saved,
+            last_diagnostic,
         })
     }
 
@@ -6839,6 +6855,14 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 "  {} Task #{}: {}\n     Result: {}\n",
                 status_mark, i + 1, f.sub_goal, f.finding
             ));
+            if f.finding.starts_with("FAILED") {
+                if let Some(ref diag) = f.last_diagnostic {
+                    report.push_str("     Compiler/Test Diagnostic:\n");
+                    for l in diag.lines().take(8) {
+                        report.push_str(&format!("       | {}\n", l));
+                    }
+                }
+            }
         }
 
         let mut ctx = match self.orchestrator_model.create_context(4096, 512, 4) {
@@ -6975,7 +6999,23 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let has_failures = findings.iter().any(|f| f.finding.contains("FAILED") || f.finding.contains("could not"));
         md.push_str("## Quality & Verification Verdict\n\n");
         if has_failures {
-            md.push_str("⚠️ **Partial Deliverable Notice:** One or more subgoals could not be completed successfully. Generated artifacts passed cleanroom validation, but acceptance criteria were only partially met.\n");
+            md.push_str("⚠️ **Partial Deliverable Notice:** One or more subgoals could not be completed successfully. Generated artifacts passed cleanroom validation, but acceptance criteria were only partially met.\n\n");
+
+            let failed_diagnostics: Vec<_> = findings.iter()
+                .filter(|f| f.finding.contains("FAILED") || f.finding.contains("could not"))
+                .filter_map(|f| f.last_diagnostic.as_ref().map(|d| (f.worker_id, &f.sub_goal, d)))
+                .collect();
+
+            if !failed_diagnostics.is_empty() {
+                md.push_str("## 🛠️ Unresolved Diagnostics & Fix Hints (For Developer)\n\n");
+                md.push_str("The following compiler or test diagnostics were captured during autonomous execution to assist with immediate manual resolution:\n\n");
+                for (w_id, goal, diag) in failed_diagnostics {
+                    md.push_str(&format!("### Worker #{} (`{}`)\n\n", w_id, goal));
+                    md.push_str("```text\n");
+                    md.push_str(diag.trim());
+                    md.push_str("\n```\n\n");
+                }
+            }
         } else {
             md.push_str("All deliverables verified inside isolated Linux cleanroom sandbox (Bubblewrap `bwrap`). Zero syntax errors, zero trapped tokens, 100% acceptance criteria satisfied.\n");
         }
