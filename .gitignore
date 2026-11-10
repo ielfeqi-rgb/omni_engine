@@ -45,6 +45,7 @@ OmniLite/
 OmniAudio/
 run_minivault_*.sh
 arena_*/
+atlr_*/
 production_crucible/
 
 # Local AI assistant instructions
