@@ -1,5 +1,5 @@
 # AGENTS.md — Omni Engine Autonomous Integration Specification
-**Version:** 2.1.2  
+**Version:** 2.2.1 (Production Freeze)  
 **Target Audience:** Autonomous Coding Agents, LLM Orchestrators, Tool-Calling Systems (Claude, GPT-4, Cursor, Cline, Aider)  
 **Encoding:** UTF-8 • Markdown Specification
 
@@ -9,11 +9,11 @@
 > ### 🛑 CRITICAL DIRECTIVE FOR EXTERNAL LLMS (ChatGPT, Claude, Cursor, Copilot)
 > 1. **DO NOT output conversational English prompts** (e.g., *"Read the project's AGENTS.md file and follow its instructions..."*) for the user to paste into the terminal. The terminal is a Linux Bash shell, **NOT an LLM chat prompt**. Pasting English sentences will crash with `bash: Read: command not found`.
 > 2. **DO NOT write or generate code files yourself.**
-> 3. **`omni_engine` is the local compiler & software engineer.** Your ONLY role as an external AI assistant is to construct and provide the single executable Bash command calling `./bin/omni_engine`.
+> 3. **`omni_engine` is the local compiler & software engineer.** Your ONLY role as an external AI assistant is to construct and provide the single executable Bash command calling `./omni_engine` (or `omni_engine` if on PATH).
 >
 > **The ONLY valid output to give the user is a shell execution command, e.g.:**
 > ```bash
-> ./bin/omni_engine run "<CONCISE_REQUIREMENTS_SUMMARY>" --output-dir ./<TARGET_DIR> -y
+> ./omni_engine run "<CONCISE_REQUIREMENTS_SUMMARY>" --output-dir ./<TARGET_DIR> -y
 > ```
 > *(Condense all functional requirements, unit test expectations, and file constraints into the `<goal>` argument string).*
 
@@ -213,7 +213,7 @@ For agents with Bash / Process execution tools:
 {
   "tool": "run_command",
   "parameters": {
-    "CommandLine": "./bin/omni_engine modify \"Add rate limiting middleware\" --dir ./backend --output-dir ./backend_patched -y",
+    "CommandLine": "./omni_engine modify \"Add rate limiting middleware\" --dir ./backend --output-dir ./backend_patched -y",
     "toolSummary": "Incremental rate limiting extension with zero-wipe preservation"
   }
 }
@@ -251,5 +251,5 @@ Read the project's AGENTS.md file and follow its instructions exactly. Create a 
 ### ✅ RIGHT (What a correct assistant does):
 The assistant condenses all specifications into the executable CLI command:
 ```bash
-./bin/omni_engine run "Create a complete Python mini_calculator project with calculator.py (implementing addition, subtraction, multiplication, and safe division by zero handling), test_calculator.py using unittest, and README.md. Verify by running python -m unittest." --output-dir ./workspace/mini_calculator -y
+./omni_engine run "Create a complete Python mini_calculator project with calculator.py (implementing addition, subtraction, multiplication, and safe division by zero handling), test_calculator.py using unittest, and README.md. Verify by running python -m unittest." --output-dir ./workspace/mini_calculator -y
 ```

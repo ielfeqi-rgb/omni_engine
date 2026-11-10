@@ -8,8 +8,8 @@
 [![Release](https://img.shields.io/badge/Release-v2.2.1_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.1)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20Standalone-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.1)
 [![Tests](https://img.shields.io/badge/Tests-150%2F150%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
-[![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)]()
-[![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)]()
+[![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)](#core-architectural-pillars)
+[![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)](#core-architectural-pillars)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <br/>

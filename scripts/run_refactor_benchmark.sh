@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Omni Engine (v2.1.2) - Refactoring & Zero-Wipe Invariant Benchmark
+# Omni Engine (v2.2.1) - Refactoring & Zero-Wipe Invariant Benchmark
 # ==============================================================================
 set -e
 
@@ -13,13 +13,13 @@ TELEMETRY_CSV="${PROJECT_ROOT}/telemetry_refactor.csv"
 MODEL_PATH="${1:-${PROJECT_ROOT}/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf}"
 
 if [ ! -f "${MODEL_PATH}" ]; then
-    echo "[-] Model not found at ${MODEL_PATH}. Run './bin/omni_engine download --qwen' first."
+    echo "[-] Model not found at ${MODEL_PATH}. Run './omni_engine download --qwen' first."
     exit 1
 fi
 
 GOAL_TEXT="In refactor_enterprise_challenge, perform cross-cutting multi-tenant organization isolation: in models.py add org_id: int = 1 to Task, in repository.py update TaskRepository to filter by org_id and accept org_id in create, in service.py update TaskService to require valid org_id > 0, in test_suite.py add new test_multi_tenant_isolation test and keep all existing tests passing."
 
-echo "[*] Launching Omni Engine v2.1.2 in modify mode..."
+echo "[*] Launching Omni Engine v2.2.1 in modify mode..."
 export LD_LIBRARY_PATH="${PROJECT_ROOT}/bin:${LD_LIBRARY_PATH}"
 
 ENGINE_BIN="${PROJECT_ROOT}/target/release/omni_engine"

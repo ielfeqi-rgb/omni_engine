@@ -34,9 +34,15 @@ ARCH="$(uname -m)"
 
 echo -e "[*] Detected Platform: ${BOLD}${OS} (${ARCH})${RESET}"
 
-if [ "${OS}" != "linux" ] && [ "${OS}" != "darwin" ]; then
-    echo -e "${RED}[-] Error: Omni Engine currently supports Linux and macOS.${RESET}"
-    exit 1
+if [ "${OS}" != "linux" ]; then
+    if [ "${OS}" = "darwin" ] && command -v cargo >/dev/null 2>&1; then
+        echo -e "${YELLOW}[*] macOS detected. Standalone pre-built tarball targets Linux x86_64.${RESET}"
+        echo -e "[*] Compiling natively for Darwin via Cargo..."
+    else
+        echo -e "${RED}[-] Error: Omni Engine pre-compiled standalone tarball currently targets Linux x86_64.${RESET}"
+        echo -e "[*] For macOS, clone the repository and build natively: cargo build --release"
+        exit 1
+    fi
 fi
 
 # 1. Check for Bubblewrap (Sandboxing)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Omni AI Engine v2.1.2 | Sovereign Autonomous Runtime</title>
+    <title>Omni AI Engine v2.2.1 | Sovereign Autonomous Runtime</title>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -501,7 +501,7 @@
     <div class="sidebar">
         <div class="brand">
             <div class="brand-icon">Ω</div>
-            <div class="brand-title">OMNI ENGINE v2.1.2</div>
+            <div class="brand-title">OMNI ENGINE v2.2.1</div>
         </div>
 
         <div class="nav-menu">
@@ -845,14 +845,14 @@ print(response.choices[0].message.content)</pre>
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.6;">
-                <p><strong data-i18n="aboutName">الاسم: Omni AI Engine v2.1.2 (Sovereign Autonomous Runtime)</strong></p>
+                <p><strong data-i18n="aboutName">الاسم: Omni AI Engine v2.2.1 (Sovereign Autonomous Runtime)</strong></p>
                 <p><strong data-i18n="aboutAuthor">المطور والمؤسس: ielfeqi-rgb</strong></p>
-                <p><strong data-i18n="aboutGithub">رابط الـ GitHub الرسمي:</strong> <a href="https://github.com/ielfeqi-rgb" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 700;">https://github.com/ielfeqi-rgb</a></p>
+                <p><strong data-i18n="aboutGithub">رابط الـ GitHub الرسمي:</strong> <a href="https://github.com/ielfeqi-rgb/omni_engine" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 700;">https://github.com/ielfeqi-rgb/omni_engine</a></p>
 
                 <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border); padding: 16px; border-radius: 12px; margin-top: 10px;">
-                    <div style="font-weight: 800; color: #f59e0b; margin-bottom: 6px;" data-i18n="privacyHeader">📜 بند سياسة الخصوصية (Privacy Policy):</div>
-                    <p id="sarcasticPrivacyText" style="font-size: 13px; color: #cbd5e1; font-style: italic;">
-                        "بتدور على بند الخصوصية ليه يا عم؟ المحرك ده شغال 100% أوفلاين على كمبيوترك المباشر! يعني حتى لو حبّينا نسرق أو نبيع بياناتك، مش هنعرف! لأن ما عندناش سيرفرات ولا قاعدة بيانات نبعتها عليها... محادثاتك بتعيش وتموت جوه الرام بتاع جهازك، فـ إطمن ومتقلقش خالص!"
+                    <div style="font-weight: 800; color: #38bdf8; margin-bottom: 6px;" data-i18n="privacyHeader">🛡️ الخصوصية والأمان السيادي (Sovereign Privacy & Security):</div>
+                    <p id="sarcasticPrivacyText" style="font-size: 13px; color: #cbd5e1; line-height: 1.6;">
+                        المحرك يعمل محلياً بالكامل (100% On-Device & Offline) دون أي اتصال بخوادم خارجية أو تتبع سحابي. جميع النماذج والبيانات وشفرات الكود يتم معالجتها حصرياً داخل ذاكرة الجهاز المحلية (RAM) مع عزل أمني تام في بيئة Cleanroom.
                     </p>
                 </div>
             </div>
@@ -914,11 +914,11 @@ print(response.choices[0].message.content)</pre>
                 btnShutdown: '🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)',
                 shutdownDesc: 'هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.',
                 aboutTitle: 'عن مشروع Omni Engine',
-                aboutName: 'الاسم: Omni AI Engine v2.1.2 (Sovereign Autonomous Runtime)',
+                aboutName: 'الاسم: Omni AI Engine v2.2.1 (Sovereign Autonomous Runtime)',
                 aboutAuthor: 'المطور والمؤسس: ielfeqi-rgb',
                 aboutGithub: 'رابط الـ GitHub الرسمي:',
-                privacyHeader: '📜 بند سياسة الخصوصية (Privacy Policy):',
-                privacy: '"بتدور على بند الخصوصية ليه يا عم؟ المحرك ده شغال 100% أوفلاين على كمبيوترك المباشر! يعني حتى لو حبّينا نسرق أو نبيع بياناتك، مش هنعرف! لأن ما عندناش سيرفرات ولا قاعدة بيانات نبعتها عليها... محادثاتك بتعيش وتموت جوه الرام بتاع جهازك، فـ إطمن ومتقلقش خالص!"'
+                privacyHeader: '🛡️ الخصوصية والأمان السيادي (Sovereign Privacy & Security):',
+                privacy: 'المحرك يعمل محلياً بالكامل (100% On-Device & Offline) دون أي اتصال بخوادم خارجية أو تتبع سحابي. جميع النماذج والبيانات وشفرات الكود يتم معالجتها حصرياً داخل ذاكرة الجهاز المحلية (RAM) مع عزل أمني تام في بيئة Cleanroom.'
             },
             en: {
                 dir: 'ltr',
@@ -973,11 +973,11 @@ print(response.choices[0].message.content)</pre>
                 btnShutdown: '🔴 Safe Power Shutdown (Stop Server & Engine)',
                 shutdownDesc: 'This button terminates the Rust omni_engine and llama-server completely.',
                 aboutTitle: 'About Omni Engine Project',
-                aboutName: 'Name: Omni AI Engine v2.1.2 (Sovereign Autonomous Runtime)',
+                aboutName: 'Name: Omni AI Engine v2.2.1 (Sovereign Autonomous Runtime)',
                 aboutAuthor: 'Developer & Founder: ielfeqi-rgb',
                 aboutGithub: 'Official GitHub Link:',
-                privacyHeader: '📜 Privacy Policy Statement:',
-                privacy: '"Why on earth are you reading a privacy policy? This software runs 100% offline directly on your machine! Even if we desperately wanted to steal or sell your data, we literally cannot because we own zero cloud servers or remote databases. Your chats live and die inside your local RAM. Relax."'
+                privacyHeader: '🛡️ Sovereign Privacy & Security Policy:',
+                privacy: 'Omni Engine operates 100% offline and on-device. Zero cloud telemetry or external logging. All inference, memory, and code verification execute strictly within local RAM and isolated cleanroom environments.'
             },
             fr: {
                 dir: 'ltr',
@@ -1032,11 +1032,11 @@ print(response.choices[0].message.content)</pre>
                 btnShutdown: '🔴 Arrêt Sécurisé du Serveur',
                 shutdownDesc: 'Ce bouton arrête complètement le processus Rust omni_engine et llama-server.',
                 aboutTitle: 'À Propos du Projet Omni Engine',
-                aboutName: 'Nom : Omni AI Engine v2.1.2 (Sovereign Autonomous Runtime)',
+                aboutName: 'Nom : Omni AI Engine v2.2.1 (Sovereign Autonomous Runtime)',
                 aboutAuthor: 'Développeur et Fondateur : ielfeqi-rgb',
                 aboutGithub: 'Lien GitHub Officiel :',
-                privacyHeader: '📜 Déclaration de Politique de Confidentialité :',
-                privacy: '"Pourquoi lisez-vous une politique de confidentialité ? Ce logiciel fonctionne à 100% hors ligne directement sur votre machine ! Vos discussions restent exclusivement dans votre mémoire RAM."'
+                privacyHeader: '🛡️ Confidentialité et Sécurité Souveraine :',
+                privacy: 'Omni Engine fonctionne à 100% hors-ligne sur votre machine. Aucune télémétrie cloud. Vos modèles et données restent strictement confinés dans la mémoire RAM locale.'
             }
         };
 

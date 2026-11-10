@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Omni Engine (v2.1.2) - Comprehensive Systems Benchmark Harness
+# Omni Engine (v2.2.1) - Comprehensive Systems Benchmark Harness
 # ==============================================================================
 set -e
 
