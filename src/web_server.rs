@@ -60,10 +60,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/keys", get(handle_list_keys))
         .route("/api/keys/generate", post(handle_create_key))
         .route("/api/keys/revoke/:id", delete(handle_revoke_key))
-        // Market Store Sovereign SQL Endpoints
-        .route("/api/market/products", get(handle_market_products))
-        .route("/api/market/orders", get(handle_market_orders))
-        .route("/api/market/tool", post(handle_market_tool))
         // OpenAI Public Spec Endpoints with API Key authentication
         .route("/v1/models", get(handle_v1_models))
         .route("/v1/chat/completions", post(handle_v1_chat_completions))
@@ -347,28 +343,5 @@ async fn handle_v1_chat_completions(
                 }
             }))
         ))
-    }
-}
-
-async fn handle_market_products() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    match crate::market_db::MarketDb::list_products() {
-        Ok(products) => Ok(Json(serde_json::to_value(products).unwrap_or_default())),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e})))),
-    }
-}
-
-async fn handle_market_orders() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    match crate::market_db::MarketDb::list_orders() {
-        Ok(orders) => Ok(Json(serde_json::to_value(orders).unwrap_or_default())),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e})))),
-    }
-}
-
-async fn handle_market_tool(
-    Json(payload): Json<crate::market_db::ExecuteToolRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    match crate::market_db::MarketDb::execute_tool(&payload.tool_name, &payload.arguments) {
-        Ok(val) => Ok(Json(val)),
-        Err(e) => Err((StatusCode::BAD_REQUEST, Json(json!({"error": e})))),
     }
 }

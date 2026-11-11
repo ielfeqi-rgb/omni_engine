@@ -25,7 +25,6 @@ pub mod system_info;
 pub mod tui_agent;
 pub mod web_server;
 pub mod tui;
-pub mod market_db;
 pub mod vector_memory;
 
 /// Reliably resolves the project base directory containing models/, config/, and bin/

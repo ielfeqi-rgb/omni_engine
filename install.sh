@@ -12,8 +12,13 @@ CYAN="\033[36m"
 YELLOW="\033[33m"
 RED="\033[31m"
 
-VERSION="2.2.1"
-TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
+VERSION="2.2.2"
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+    TARBALL="omni_engine_v${VERSION}_linux_x86_64_cuda.tar.gz"
+else
+    TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
+fi
 RELEASE_URL="https://github.com/ielfeqi-rgb/omni_engine/releases/download/v${VERSION}/${TARBALL}"
 
 echo -e "${CYAN}${BOLD}"

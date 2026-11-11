@@ -5,9 +5,9 @@
 *100% Offline • Zero Cloud Subscriptions • Direct In-Process C-FFI • Deterministic Cleanroom Sandboxing*
 
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
-[![Release](https://img.shields.io/badge/Release-v2.2.1_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.1)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20Standalone-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.1)
-[![Tests](https://img.shields.io/badge/Tests-150%2F150%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
+[![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20Standalone-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
+[![Tests](https://img.shields.io/badge/Tests-151%2F151%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
 [![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)](#core-architectural-pillars)
 [![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)](#core-architectural-pillars)
 [![License](https://img.shields.io/badge/License-Dual%3A%20AGPLv3%20%2F%20Commercial-red.svg)](LICENSE)
@@ -29,7 +29,7 @@
 
 ## 📖 Executive Overview
 
-**Omni Engine v2.2.1** is a sovereign, production-grade autonomous software engineering runtime written in Rust. It transforms open-weights Small Language Models (SLMs) and Coder models (3B to 7B) into deterministic, verified software compilers capable of architecting, generating, and stress-testing multi-file systems completely on-device without cloud dependencies, API tokens, or external daemons.
+**Omni Engine v2.2.2** is a sovereign, production-grade autonomous software engineering runtime written in Rust. It transforms open-weights Small Language Models (SLMs) and Coder models (3B to 7B) into deterministic, verified software compilers capable of architecting, generating, and stress-testing multi-file systems completely on-device without cloud dependencies, API tokens, or external daemons.
 
 ### Why Omni Engine?
 
@@ -107,19 +107,20 @@ When environment or compiler issues arise during cleanroom verification, the eng
 
 Omni Engine is distributed as a sovereign, self-contained binary package for Linux x86_64.
 
-### 1. Download & Extract Official Release (v2.2.1)
+### 1. Download & Extract Official Release (v2.2.2)
 
 ```bash
-# Download official v2.2.1 release archive
-wget https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.1/omni_engine_v2.2.1_linux_x86_64.tar.gz
+# Download official v2.2.2 release archive (CPU or CUDA)
+# CPU Standalone:
+wget https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz
 
 # Extract package
-tar -xzf omni_engine_v2.2.1_linux_x86_64.tar.gz
+tar -xzf omni_engine_v2.2.2_linux_x86_64.tar.gz
 chmod +x omni_engine
 
 # Verify sovereign binary
 ./omni_engine --version
-# Output: omni_engine v2.2.1 (Rust Standalone)
+# Output: omni_engine v2.2.2 (Rust Standalone)
 ```
 
 ### 2. Download Recommended Coder Model

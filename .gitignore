@@ -54,4 +54,10 @@ GEMINI.md
 .cursorrules
 .github/copilot-instructions.md
 
+# Scratch, Dossiers & Audits
+repo_about.txt
+repo_audit.txt
+notebooks/
+data/
+
 *.tar.gz

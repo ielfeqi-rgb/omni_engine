@@ -869,6 +869,58 @@ impl MemoryVfs {
     ) -> Result<Vec<PathBuf>, String> {
         self.commit_diffs_atomic(target_dir, user_authorized, Some(verified_paths))
     }
+
+    /// Exports selected files directly from MemoryVfs into an isolated .tar.gz archive.
+    /// Ensures deliverables remain hermetically packaged without spilling loose files onto host disk,
+    /// preventing accidental double-clicking or execution on the developer's host machine.
+    pub fn export_to_tar_gz(
+        &self,
+        dest_archive_path: &Path,
+        file_paths: &[PathBuf],
+    ) -> Result<PathBuf, String> {
+        use std::fs::File;
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use tar::{Builder, Header};
+
+        if let Some(parent) = dest_archive_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let tar_gz_file = File::create(dest_archive_path)
+            .map_err(|e| format!("Failed to create tar.gz file '{}': {}", dest_archive_path.display(), e))?;
+        let enc = GzEncoder::new(tar_gz_file, Compression::default());
+        let mut tar_builder = Builder::new(enc);
+
+        let files_guard = self.files.read();
+        let mut exported_count = 0;
+        for path in file_paths {
+            if let Some(data) = files_guard.get(path) {
+                let mut header = Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+
+                let clean_str = path.to_string_lossy();
+                let tar_entry_path = clean_str.trim_start_matches("./").trim_start_matches('/');
+
+                tar_builder.append_data(&mut header, tar_entry_path, &data[..])
+                    .map_err(|e| format!("Failed to append '{}' to tar.gz: {}", path.display(), e))?;
+                exported_count += 1;
+            }
+        }
+
+        if exported_count == 0 {
+            return Err("No matching files found in VFS to archive".to_string());
+        }
+
+        tar_builder.into_inner()
+            .map_err(|e| format!("Failed to finish tar archive: {}", e))?
+            .finish()
+            .map_err(|e| format!("Failed to finish gzip compression: {}", e))?;
+
+        Ok(dest_archive_path.to_path_buf())
+    }
 }
 
 
@@ -1367,5 +1419,22 @@ mod tests {
 
         assert!(target_dir.join("valid.py").exists());
         assert!(!target_dir.join("unverified.py").exists());
+    }
+
+    #[test]
+    fn test_export_to_tar_gz() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let archive_path = temp_dir.path().join("deliverables.tar.gz");
+
+        let vfs = MemoryVfs::new();
+        let f1 = PathBuf::from("src/models.rs");
+        let f2 = PathBuf::from("Cargo.toml");
+        vfs.write_file(&f1, b"pub struct Account;\n");
+        vfs.write_file(&f2, b"[package]\nname = \"test_pkg\"\n");
+
+        let res = vfs.export_to_tar_gz(&archive_path, &[f1, f2]);
+        assert!(res.is_ok(), "export_to_tar_gz failed: {:?}", res.err());
+        assert!(archive_path.exists());
+        assert!(std::fs::metadata(&archive_path).unwrap().len() > 0);
     }
 }

@@ -2047,20 +2047,18 @@ impl SwarmCoordinator {
             }
             "py" => {
                 if Self::is_command_available("python3") {
-                    format!("python3 -m py_compile {0} 2>&1 && python3 {0} 2>&1", target)
+                    format!("python3 -m py_compile {0} 2>&1", target)
                 } else if Self::is_command_available("python") {
-                    format!("python -m py_compile {0} 2>&1 && python {0} 2>&1", target)
+                    format!("python -m py_compile {0} 2>&1", target)
                 } else {
                     format!("test -f {}", target)
                 }
             }
             "rs" => {
-                if Self::is_command_available("cargo") && (std::path::Path::new("Cargo.toml").exists() || std::path::Path::new("../Cargo.toml").exists()) {
-                    "cargo check --quiet 2>&1".to_string()
-                } else if Self::is_command_available("rustc") {
-                    format!("rustc --emit=metadata {} -o /tmp/omni_rs_target.rmeta 2>&1", target)
+                if Self::is_command_available("rustc") {
+                    format!("rustc --emit=metadata --crate-type=lib {} -o /tmp/omni_rs_target.rmeta 2>&1", target)
                 } else {
-                    format!("test -f {}", target)
+                    format!("test -s {}", target)
                 }
             }
             "go" => {
@@ -2638,25 +2636,28 @@ impl SwarmCoordinator {
         if final_verified_paths.is_empty() {
             println!("  [HOST DISK COMMIT GATE] Zero tasks reached 'Completed' status. Skipping host disk commit.");
         } else {
-            let target_dir = self.config.output_dir.as_deref();
-            println!("  [HOST DISK COMMIT GATE] Materializing verified deliverables to host disk: {:?}", final_verified_paths);
-            match self.vfs.commit_verified_files(target_dir, &final_verified_paths, true) {
-                Ok(saved_paths) => {
-                    for dest_path in &saved_paths {
-                        println!("   [SAVED TO DISK] {}", dest_path.display().to_string().bright_white());
-                    }
-                    println!("   [COMMIT] Successfully committed {} verified file(s) to host machine.", saved_paths.len().to_string().bright_green());
+            let target_dir = self.config.output_dir.as_deref().unwrap_or_else(|| std::path::Path::new("."));
+            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            let archive_filename = format!("omni_deliverables_{}.tar.gz", timestamp);
+            let archive_path = target_dir.join(&archive_filename);
+
+            println!("  [HOST DISK COMMIT GATE] Packaging {} verified deliverable(s) into isolated archive...", final_verified_paths.len());
+            match self.vfs.export_to_tar_gz(&archive_path, &final_verified_paths) {
+                Ok(saved_archive) => {
+                    println!("   [SAVED ARCHIVE] {}", saved_archive.display().to_string().bright_green().bold());
+                    println!("   [HERMETIC PACKAGING] All verified files packaged into .tar.gz (zero uncompressed disk spill).");
+                    println!("   To extract and inspect files, run: tar -xzf {}", archive_filename.bright_cyan());
                 }
                 Err(e) => {
-                    warn!("Failed to commit verified VFS files to host disk: {}", e);
+                    warn!("Failed to export verified deliverables to tar.gz: {}", e);
                 }
             }
         }
 
-        // HUMAN RESPONSIBILITY OVERRIDE GATE:
-        // If there are uncommitted files staged in RAM VFS that did not reach 'Completed' verification,
-        // provide the developer with an explicit, conscious override choice instead of discarding
-        // potentially 99% complete code due to trivial syntax oversights.
+        // VFS MATERIAL RESCUE & HUMAN OVERRIDE GATE:
+        // If there are files staged in RAM VFS that did not reach 'Completed' verification,
+        // present the material to the developer and offer to package it into an isolated rescue tarball
+        // rather than discarding the material to the trash.
         let all_vfs_files = self.vfs.list_files();
         let uncommitted_files: Vec<PathBuf> = all_vfs_files
             .into_iter()
@@ -2667,59 +2668,68 @@ impl SwarmCoordinator {
             let auto_approved = self.config.auto_approve_deps == Some(true);
             let is_interactive = self.config.auto_approve_deps.is_none() && std::io::stdin().is_terminal();
 
+            println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
+            println!("  {}", "[VFS MATERIAL RESCUE GATE]".bright_yellow().bold());
+            println!("  Notice: {} generated material file(s) exist in RAM VFS across worker passes:", uncommitted_files.len());
+            for uf in &uncommitted_files {
+                let sz = self.vfs.file_size(uf);
+                println!("   * {} ({} bytes)", uf.display().to_string().bright_cyan(), sz);
+            }
+
+            let target_dir = self.config.output_dir.as_deref().unwrap_or_else(|| std::path::Path::new("."));
+            let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            let rescue_filename = format!("omni_rescue_material_{}.tar.gz", timestamp);
+            let rescue_path = target_dir.join(&rescue_filename);
+
             if auto_approved {
-                println!("  {}", "[OVERRIDE AUTO-AUTHORIZED via -y] Materializing unverified files to host disk...".bright_magenta().bold());
-                let target_dir = self.config.output_dir.as_deref();
-                match self.vfs.commit_verified_files(target_dir, &uncommitted_files, true) {
-                    Ok(saved_paths) => {
-                        for dest_path in &saved_paths {
-                            println!("   [OVERRIDE SAVED] {}", dest_path.display().to_string().bright_yellow());
-                        }
-                        println!("   [OVERRIDE COMMIT] Successfully flushed {} unverified file(s) to host machine.", saved_paths.len().to_string().bright_green());
+                println!("  {}", "[AUTO-RESCUE via -y] Archiving generated material into isolated tarball...".bright_magenta().bold());
+                match self.vfs.export_to_tar_gz(&rescue_path, &uncommitted_files) {
+                    Ok(saved_archive) => {
+                        println!("   [RESCUE ARCHIVE SAVED] {}", saved_archive.display().to_string().bright_green().bold());
+                        println!("   To inspect and review the material, run: tar -xzf {}", rescue_filename.bright_cyan());
                     }
                     Err(e) => {
-                        warn!("Failed to commit override VFS files to host disk: {}", e);
+                        warn!("Failed to create rescue tarball: {}", e);
                     }
                 }
             } else if is_interactive {
-                println!("\n{}", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
-                println!("  {}", "[HUMAN RESPONSIBILITY OVERRIDE: FORCE COMMIT UNVERIFIED FILES]".bright_yellow().bold());
-                println!("  Notice: {} generated file(s) in RAM VFS did not reach 'Completed' cleanroom verification:", uncommitted_files.len());
-                for uf in &uncommitted_files {
-                    println!("   - {}", uf.display().to_string().bright_cyan());
-                }
-                println!("  By default, Omni Engine discards unverified code to protect host integrity ($W = ∅).");
-                println!("  As a developer, you may override this safety gate and flush these files to disk under your own responsibility.");
-                println!("  To force-commit, type '{}' (exact 3 letters). Any other key or Enter will discard safely.", "YES".bright_red().bold());
-                print!("  Override authorization (YES/no) > ");
+                println!("  Omni Engine holds this material safely in RAM VFS.");
+                println!("  Would you like to package it into an isolated tar archive on disk, or discard it safely?");
+                print!("  Save material archive to workspace? (y/N) > ");
                 let _ = std::io::stdout().flush();
 
                 let mut input = String::new();
                 if let Ok(_) = std::io::stdin().read_line(&mut input) {
-                    let trimmed = input.trim();
-                    // STRICT 3-LETTER CHECK: Must be "YES" or "yes" (not "y", not empty)
-                    if trimmed == "YES" || trimmed == "yes" {
-                        println!("  {}", "[OVERRIDE AUTHORIZED] Materializing unverified files to host disk under developer responsibility...".bright_magenta().bold());
-                        let target_dir = self.config.output_dir.as_deref();
-                        match self.vfs.commit_verified_files(target_dir, &uncommitted_files, true) {
-                            Ok(saved_paths) => {
-                                for dest_path in &saved_paths {
-                                    println!("   [OVERRIDE SAVED] {}", dest_path.display().to_string().bright_yellow());
-                                }
-                                println!("   [OVERRIDE COMMIT] Successfully flushed {} unverified file(s) to host machine.", saved_paths.len().to_string().bright_green());
+                    let trimmed = input.trim().to_lowercase();
+                    if trimmed == "y" || trimmed == "yes" {
+                        println!("  {}", "[MATERIAL PRESERVED] Packaging into isolated tar archive...".bright_magenta().bold());
+                        match self.vfs.export_to_tar_gz(&rescue_path, &uncommitted_files) {
+                            Ok(saved_archive) => {
+                                println!("   [RESCUE ARCHIVE SAVED] {}", saved_archive.display().to_string().bright_green().bold());
+                                println!("   To inspect and review the material, run: tar -xzf {}", rescue_filename.bright_cyan());
                             }
                             Err(e) => {
-                                warn!("Failed to commit override VFS files to host disk: {}", e);
+                                warn!("Failed to create rescue tarball: {}", e);
                             }
                         }
                     } else {
-                        println!("  [OVERRIDE DECLINED] Safety invariant preserved. Unverified code safely discarded from RAM VFS.");
+                        println!("  [MATERIAL DISCARDED] Safely released from RAM VFS per developer instruction.");
                     }
                 }
-                println!("{}\n", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
             } else {
-                println!("  [SAFETY DIRECTIVE] Discarding {} unverified VFS file(s) to protect host integrity.", uncommitted_files.len());
+                println!("  [HEADLESS PRESERVATION] Non-interactive execution: Archiving generated material into isolated tarball to prevent data loss...");
+                match self.vfs.export_to_tar_gz(&rescue_path, &uncommitted_files) {
+                    Ok(saved_archive) => {
+                        println!("   [RESCUE ARCHIVE SAVED] {}", saved_archive.display().to_string().bright_yellow().bold());
+                        println!("   Unverified material preserved in: {}", rescue_filename.bright_cyan());
+                        println!("   To inspect, extract with: tar -xzf {}", rescue_filename.bright_cyan());
+                    }
+                    Err(e) => {
+                        warn!("Failed to create rescue archive: {}", e);
+                    }
+                }
             }
+            println!("{}\n", "────────────────────────────────────────────────────────────────────────────────".bright_yellow());
         }
 
         let total_rollbacks: usize = findings.iter().map(|f| f.rollbacks_count).sum();

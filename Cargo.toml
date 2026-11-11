@@ -1,6 +1,6 @@
 [package]
 name = "omni_engine"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2021"
 authors = ["Omni AI Team"]
 license = "AGPL-3.0-or-later"
@@ -41,6 +41,7 @@ dirs = "7.0.0"
 chrono = "0.4.45"
 arboard = "3.6.1"
 libc = "0.2"
+tar = "0.4"
 
 
 [build-dependencies]

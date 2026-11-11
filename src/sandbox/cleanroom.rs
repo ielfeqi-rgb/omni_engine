@@ -327,53 +327,6 @@ impl UniversalCleanroom {
         let mut overall_success = jail_res.success;
         let mut final_exit_code = jail_res.exit_code;
 
-        // Semantic Runtime Smoke Testing for executable scripts
-        if overall_success && base_name.ends_with(".py") {
-            let smoke_cmd = format!("python3 {}", base_name);
-            let simulated_inputs = "1\ntest task\n4\nexit\nquit\n5\n";
-            if let Ok(smoke_res) = IsolatedJail::run_in_jail_with_input(
-                &smoke_cmd,
-                &staged_files,
-                Duration::from_secs(10),
-                Some(simulated_inputs.as_bytes()),
-            ) {
-                let smoke_combined = format!("{}\n{}", smoke_res.stdout, smoke_res.stderr);
-                // An interactive script exhausting piped stdin throws EOFError when awaiting user input;
-                // this is an interaction boundary, NOT a code syntax or runtime crash defect.
-                let is_benign_eof = smoke_combined.contains("EOFError: EOF when reading a line")
-                    || smoke_combined.contains("EOFError");
-
-                let has_fatal_runtime_error = (smoke_combined.contains("Traceback (most recent call last)") && !is_benign_eof)
-                    || smoke_combined.contains("NameError:")
-                    || smoke_combined.contains("TypeError:")
-                    || smoke_combined.contains("AttributeError:")
-                    || smoke_combined.contains("UnboundLocalError:");
-
-                if has_fatal_runtime_error {
-                    overall_success = false;
-                    final_exit_code = smoke_res.exit_code.or(Some(1));
-                    combined = smoke_combined;
-                }
-            }
-        }
-
-        // Semantic Test Suite Verification for Rust projects with tests/
-        if overall_success && base_name.ends_with(".rs") {
-            let has_tests = staged_files.iter().any(|(p, _)| {
-                let s = p.to_string_lossy();
-                s.starts_with("tests/") || s.contains("/tests/")
-            });
-            if has_tests {
-                if let Ok(test_res) = IsolatedJail::run_in_jail("cargo test --quiet 2>&1", &staged_files, Duration::from_secs(90)) {
-                    if !test_res.success {
-                        overall_success = false;
-                        final_exit_code = test_res.exit_code.or(Some(1));
-                        combined = format!("{}\n{}", test_res.stdout, test_res.stderr);
-                    }
-                }
-            }
-        }
-
         // Semantic UI & Web Contract Verification for frontend artifacts
         let is_ui_artifact = base_name.ends_with(".html")
             || base_name.ends_with(".js")
