@@ -1,3 +1,0 @@
-FROM /home/hema/Downloads/files(1)/omni_engine/models/Qwen3-4B-Q6_K.gguf
-PARAMETER temperature 0.2
-PARAMETER num_ctx 4096

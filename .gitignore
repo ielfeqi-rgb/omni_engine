@@ -60,5 +60,6 @@ repo_audit.txt
 notebooks/
 data/
 dist_*/
+Modelfile
 
 *.tar.gz
