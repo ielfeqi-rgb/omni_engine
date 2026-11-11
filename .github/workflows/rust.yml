@@ -22,11 +22,6 @@ jobs:
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Install System Dependencies
-      run: |
-        sudo sed -i 's/azure\.archive\.ubuntu\.com/archive.ubuntu.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
-        ( sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap ) || true
-
     - name: Download Pre-built Runtime Libraries
       run: |
         mkdir -p bin
