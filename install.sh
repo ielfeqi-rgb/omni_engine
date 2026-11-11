@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  Omni Engine (v2.2.1) - Universal 1-Line Sovereign Installer
+#  Omni Engine (v2.2.2) - Universal 1-Line Sovereign Installer
 #  Usage: curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
 # ==============================================================================
 set -e

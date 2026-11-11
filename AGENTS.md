@@ -1,5 +1,5 @@
 # AGENTS.md — Omni Engine Autonomous Integration Specification
-**Version:** 2.2.1 (Production Freeze)  
+**Version:** 2.2.2 (Production Release)  
 **Target Audience:** Autonomous Coding Agents, LLM Orchestrators, Tool-Calling Systems (Claude, GPT-4, Cursor, Cline, Aider)  
 **Encoding:** UTF-8 • Markdown Specification
 

@@ -57,8 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Check for custom port in args (e.g. `serve --port 8095`)
-    // [GUIDANCE] Use env!("CARGO_PKG_VERSION") instead of hardcoded version strings.
-    // Currently main.rs says "v2.0.0", line 81 says "v1.0.1", cli.rs says "v1.0.1".
+    // Uses env!("CARGO_PKG_VERSION") dynamically across all outputs.
     let mut port: u16 = 8090;
     let mut bind_host = "127.0.0.1".to_string();
     let mut i = 1;

@@ -119,7 +119,7 @@ All three contenders were subjected to the identical, uncompromising specificati
 
 ## 6. Hardware Scaling Benchmark: Qwen2.5-Coder-7B on NVIDIA Tesla T4
 
-To evaluate scalability on larger open-weights models without cloud dependencies, **Omni Engine v2.2.1 Standalone** was subjected to the identical ATLR challenge using `Qwen2.5-Coder-7B-Instruct` (4.68 GB GGUF) on an isolated cloud environment with an NVIDIA Tesla T4 GPU.
+To evaluate scalability on larger open-weights models without cloud dependencies, **Omni Engine v2.2.2 Standalone** was subjected to the identical ATLR challenge using `Qwen2.5-Coder-7B-Instruct` (4.68 GB GGUF) on an isolated cloud environment with an NVIDIA Tesla T4 GPU.
 
 ### A. Standalone Sovereign Binary Execution
 The benchmark ran as a true standalone deployment:

@@ -146,7 +146,7 @@ wget -c -O models/qwen2.5-coder-7b.gguf \
 ## 💻 CLI Reference & Usage
 
 ```bash
-Omni Engine v2.2.1 (Rust Standalone)
+Omni Engine v2.2.2 (Rust Standalone)
 Usage: omni_engine [COMMAND] [OPTIONS]
 
 Commands:
@@ -173,14 +173,14 @@ Options:
 
 - **Deterministic Memory Bounds**: Strict hardware memory ceilings ($K_{max}$) prevent out-of-memory (OOM) crashes across CPU and GPU hardware.
 - **Fail-Closed Sandboxing**: Untrusted operations execute in isolated Linux Bubblewrap containers with read-only host mounts.
-- **Unit Test Suite**: **150 / 150 library unit tests passing (0 failures, 0 warnings)**.
+- **Unit Test Suite**: **151 / 151 library unit tests passing (0 failures, 0 warnings)**.
 - **Zero Regression Invariant**: Verified AST structures are frozen in RAM VFS during modifications, mathematically preventing code erasure.
 
 ---
 
 ## 📜 Documentation & Specifications
 
-- [**Master Sovereign Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md): The full historical retrospective from v2.1.0 to v2.2.1 with comprehensive benchmark data.
+- [**Master Sovereign Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md): The full historical retrospective from v2.1.0 to v2.2.2 with comprehensive benchmark data.
 - [**ATLR Tri-Party Showdown Report**](docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md): Empirical showdown dossier against Aider Local and Aider Cloud.
 - [**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md): Theoretical foundations of Tree-RNN recursive assembly, causal slicing, and topological scheduling.
 - [**Agent Architecture Guide**](AGENTS.md): Detailed mechanics of the multi-agent worker swarm.

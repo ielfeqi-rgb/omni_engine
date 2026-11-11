@@ -1,7 +1,7 @@
 # 📊 Omni Engine: Multi-Dimensional Empirical Benchmark Report
 
 **Evaluation Framework**: Cleanroom Isolated Runtime ($W = \emptyset$)  
-**Target Engine**: Omni Engine v2.2.1 (Official Production Freeze)  
+**Target Engine**: Omni Engine v2.2.2 (Official Production Release)  
 **Date**: November 2026  
 
 ---

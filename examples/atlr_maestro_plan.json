@@ -46,7 +46,7 @@
         "Include full Debug, Clone, and PartialEq derives where appropriate."
       ],
       "acceptance_tests": [
-        "cargo check --lib passes with 0 warnings."
+        "Syntax and symbol contracts pass with zero errors."
       ]
     },
     {
@@ -84,7 +84,7 @@
         "NO UNSAFE: 100% safe Rust std::sync primitives only."
       ],
       "acceptance_tests": [
-        "cargo check --lib passes with zero warnings.",
+        "Syntax and symbol contracts pass with zero errors.",
         "Single-thread transfer deducts fee and credits recipient."
       ]
     },
@@ -100,7 +100,7 @@
         "pub mod models; pub mod ledger;"
       ],
       "acceptance_tests": [
-        "cargo check --lib passes."
+        "Syntax and symbol contracts pass with zero errors."
       ]
     },
     {

@@ -1,4 +1,4 @@
-# Omni Engine (v2.2.1)
+# Omni Engine (v2.2.2)
 > The Sovereign, In-Process Autonomous Software Engineering Runtime
 
 ## Overview
@@ -9,7 +9,7 @@ Omni Engine is an offline, zero-cloud autonomous software engineering runtime wr
 - [AGENTS.md](AGENTS.md): Full autonomous agent integration specification, tool calling schemas, invariant contracts, and Maestro protocol.
 - [REQUIREMENTS.md](REQUIREMENTS.md): System dependencies, upstream llama.cpp version (Build 11429), and dynamic linkage details.
 - [ROADMAP.md](ROADMAP.md): Systems engineering roadmap, acceleration backends, and milestones.
-- [docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md): Comprehensive Sovereign Master Dossier for v2.2.1 production freeze.
+- [docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md): Comprehensive Sovereign Master Dossier for v2.2.x sovereign evolution.
 - [docs/OMNI_2.1.2_RELEASE_NOTES.md](docs/OMNI_2.1.2_RELEASE_NOTES.md): Historical v2.1.2 release notes detailing Decoupled Maestro Protocol and Dynamic KV-Cache Scaling.
 - [examples/maestro_plan.json](examples/maestro_plan.json): Canonical JSON schema and blueprint example for the Maestro Plan Protocol.
 - [examples/atlr_maestro_plan.json](examples/atlr_maestro_plan.json): Comprehensive 50-thread ATLR concurrent financial ledger blueprint example.

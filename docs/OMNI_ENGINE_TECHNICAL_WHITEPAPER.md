@@ -257,4 +257,4 @@ Compute Thread (C++ / llama.cpp)                UI Runtime (Rust / Tokio)
 | **Sync Primitive** | Futex-level zero-power hardware thread parking ($0.0\%$ CPU load during triage). |
 
 ---
-*Omni Engine v2.2.1 — Official Systems Architecture Specification.*
+*Omni Engine v2.2.2 — Official Systems Architecture Specification.*

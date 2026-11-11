@@ -14,11 +14,11 @@ Omni Engine is completely decoupled from model weights and external library buil
 
 ### ⚠️ Important Notice: Source Repository vs. Release Bundles
 To keep the git source repository lightweight, raw model weights (`.gguf`) and compiled binaries are excluded from the git tree. However:
-1. **Official Release Bundles (`v2.2.1` tar.gz):** Come pre-bundled with verified `llama.cpp` shared libraries inside `bin/` for instant, zero-compile execution.
+1. **Official Release Bundles (`v2.2.2` tar.gz):** Come pre-bundled with verified `llama.cpp` shared libraries inside `bin/` for instant, zero-compile execution (available in both standalone CPU and CUDA GPU acceleration variants).
 2. **Source Builds:** Developers building from source can either drop pre-compiled `.so` files into `./bin/` or compile upstream `llama.cpp` manually for custom hardware flags (AVX-512, CUDA, Vulkan).
 
 ### Verified Upstream llama.cpp Build
-The current production release (`v2.2.1`) is verified against:
+The current production release (`v2.2.2`) is verified against:
 - **Upstream Version:** `v0.6.0-dev`
 - **Build Number:** `11429`
 - **Git Commit:** `d81235049`

@@ -30,7 +30,7 @@ jobs:
     - name: Download Pre-built Runtime Libraries
       run: |
         mkdir -p bin
-        curl -fsSL https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.1/omni_engine_v2.2.1_linux_x86_64.tar.gz | tar -xz
+        curl -fsSL https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz | tar -xz
         chmod +x bin/* 2>/dev/null || true
 
     - name: Build Debug & Release
