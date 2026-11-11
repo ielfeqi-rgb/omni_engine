@@ -59,5 +59,6 @@ repo_about.txt
 repo_audit.txt
 notebooks/
 data/
+dist_*/
 
 *.tar.gz
