@@ -26,6 +26,7 @@ jobs:
       run: |
         mkdir -p bin
         curl -fsSL https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz | tar -xz
+        cp -rf omni_engine_v2.2.2_linux_x86_64/bin/* bin/ 2>/dev/null || true
         chmod +x bin/* 2>/dev/null || true
 
     - name: Build Debug & Release
