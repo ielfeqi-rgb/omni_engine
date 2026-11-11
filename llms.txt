@@ -17,7 +17,7 @@ Omni Engine is an offline, zero-cloud autonomous software engineering runtime wr
 ## Core CLI Usage
 - `omni_engine download <preset|url>`: Download GGUF models directly with live progress bar (presets: `--qwen`, `--qwen-7b`, `--phi-4`).
 - `omni_engine run "<goal>" --output-dir <dir> --review`: Synthesize new multi-file project from scratch with human/agent review.
-- `omni_engine run --plan-file <plan.json> --output-dir <dir>`: Execute pre-compiled Maestro architectural blueprint (decoupled frontier LLM planner + sovereign worker swarm).
+- `omni_engine run --plan-file <plan.json> --output-dir <dir> -y`: Execute pre-compiled Maestro architectural blueprint (the plan JSON file MUST be written to disk before running; pass -y for non-interactive auto-dependency installation).
 - `omni_engine modify "<goal>" --dir <dir> --output-dir <dir> --review`: Incrementally extend existing codebase with Zero-Wipe Invariant.
 - `omni_engine tui`: Launch full-screen graphical Terminal Dashboard (Ratatui).
 - `omni_engine console`: Launch interactive REPL console shell.

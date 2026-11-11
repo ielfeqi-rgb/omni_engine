@@ -73,12 +73,35 @@ omni_engine modify "<modification_goal>" --dir <existing_project_path> [OPTIONS]
 When high-capacity Big Cloud LLMs (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5 Pro) or human software architects design the system, they bypass local orchestrator planning by outputting an ultra-precise JSON blueprint.
 
 ```bash
-omni_engine run --plan-file ./omni_plan.json --output-dir <DIR> [OPTIONS]
+omni_engine run --plan-file ./omni_plan.json --output-dir <DIR> -y [OPTIONS]
 ```
 * **Parameters:**
   * `--plan-file <PATH>`: Path to structured JSON blueprint (`omni_plan.json`).
   * `--plan "<JSON_OR_SPEC>"`: Inline JSON or pipe-delimited subgoal specification.
   * `--concurrency <N>`: Maximum parallel worker threads capped to CPU physical cores (default: 2).
+  * `-y`, `--yes`: **[MANDATORY FOR AGENTS]** Auto-approve dependency installs and bypass interactive stdin prompts.
+
+> [!IMPORTANT]
+> **Maestro Pre-Requisite for Autonomous Agents (Claude, Cursor, Cline, Aider):**
+> Before executing `omni_engine run --plan-file <PATH>`, the calling AI Agent **MUST write the JSON blueprint to disk first**!
+> Omni Engine parses the plan file at the very start of its run loop. If the file does not exist, the engine aborts immediately with:
+> `Failed to read plan file '<PATH>': No such file or directory`.
+> **Recommended Agent Workflow:**
+> 1. Agent authors the architectural DAG JSON.
+> 2. Agent writes the JSON to disk (e.g., `write_file("./omni_plan.json", ...)`).
+> 3. Agent executes `./omni_engine run --plan-file ./omni_plan.json --output-dir ./workspace -y`.
+
+#### Handling External Dependencies via `-y / --yes`
+Omni Engine's primary design invariant is **Zero External Dependencies (Standard Library First)** to ensure deterministic execution on any machine.
+However, if a complex project strictly requires third-party packages (e.g., `requests`, `numpy`, `serde`, `tokio`, `express`):
+* **How Omni Engine Resolves Dependencies:**
+  1. When a test or syntax check fails with a missing module (e.g. `ModuleNotFoundError: No module named 'requests'`), Omni Engine's Universal Dependency Interceptor traps the diagnostic (`DiagnosticCode::MissingDependency`).
+  2. The `HostPackageManager` auto-detects the host system's package manager (`pip`, `cargo`, `npm`, `apt`).
+  3. If **`-y` / `--yes`** is supplied on the CLI, Omni Engine **automatically executes the install command synchronously** (e.g., `pip install requests` or `cargo add serde`) and triggers an instant worker self-healing retry:
+     `"Dependency '<pkg>' was installed on the system. Re-execute your script now."`
+  4. If `--no` is supplied, Omni Engine rejects external packages and forces the worker to fallback to standard library built-ins.
+  5. If neither flag is supplied in an automated (non-TTY) environment, Omni Engine fails-safe to standard library alternatives.
+* **Agent Rule:** Always supply `-y` to enable automatic dependency installation for multi-package projects.
 
 #### The Maestro JSON Blueprint Schema:
 ```json
@@ -223,6 +246,7 @@ When modifying large codebases (50+ files / 50,000+ lines):
 | `2` | **Cleanroom Failure**: Code failed compilation or sandbox tests after max healing retries. | Inspect compiler/test stderr logs emitted in terminal output. |
 | `3` | **Model Error**: No GGUF model detected or failed to initialize context in RAM. | Run `omni_engine download --qwen` or provide `--model <PATH>`. |
 | `4` | **Zero-OOM Memory Gate Rejection**: Task requested more tokens than maximum safe KV capacity ($K_{max}$). | Split task into smaller subgoals or increase physical RAM. |
+| `126` | **Permission Denied**: Binary or script lacks executable permissions. | Run `chmod +x <binary>` or invoke through interpreter (`python3`, `bash`). |
 | `130` | **SIGINT**: Interrupted by user or calling process. | Clean up ephemeral temp files in RAM. |
 
 ---
@@ -255,6 +279,10 @@ To maintain absolute transparency:
    * **Bubblewrap (`bwrap`)**: Linux user namespace container isolation (`sudo apt install bubblewrap` / `sudo dnf install bubblewrap`).
    * **Target Language Compilers / Interpreters**: The runtime needed to execute your target project's tests (e.g., `python3`, `cargo`, `node`).
    * *Fail-Closed Guarantee:* If Bubblewrap is missing, Omni Engine refuses to run untrusted code on the physical host by default, unless explicitly authorized via `--allow-unsandboxed`.
+3. **Executable File Permissions (`chmod +x`):**
+   * *Engine Binary:* When downloading or extracting a fresh release bundle on Linux/macOS, ensure execute permissions are set: `chmod +x ./bin/omni_engine`.
+   * *Permission Denied Recovery:* If an agent or terminal bridge encounters `Permission denied` (exit code 126), ensure the script is marked executable (`chmod +x <script>`) or invoke it directly with its language interpreter (e.g., `python3 <script>.py` or `bash <script>.sh`).
+   * *In-Memory Sandbox Guarantee:* Omni Engine's isolated jail automatically grants executable permissions (`0755`) to all staged `.sh`, `.bash`, `.py`, and shebang (`#!`) files before running cleanroom tests.
 
 ---
 

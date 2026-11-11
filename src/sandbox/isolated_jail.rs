@@ -132,6 +132,17 @@ impl IsolatedJail {
             }
             fs::write(&target_path, content)
                 .map_err(|e| format!("Failed to write staged file '{}': {}", target_path.display(), e))?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let ext = rel_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let is_script = ext == "sh" || ext == "bash" || ext == "py" || ext == "pl" || ext == "rb";
+                let has_shebang = content.starts_with(b"#!");
+                if is_script || has_shebang || ext.is_empty() {
+                    let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
+                }
+            }
         }
 
         let bwrap_present = Self::is_bwrap_available();
