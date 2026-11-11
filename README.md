@@ -7,7 +7,8 @@
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20Standalone-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
-[![Tests](https://img.shields.io/badge/Tests-151%2F151%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
+[![Tests](https://img.shields.io/badge/Tests-152%2F152%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
 [![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)](#core-architectural-pillars)
 [![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)](#core-architectural-pillars)
 [![License](https://img.shields.io/badge/License-Dual%3A%20AGPLv3%20%2F%20Commercial-red.svg)](LICENSE)
@@ -15,6 +16,7 @@
 <br/>
 
 [**Overview**](#executive-overview) • 
+[**Google Colab Playground**](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb) • 
 [**Empirical Benchmarks**](#empirical-benchmarks--showdown) • 
 [**Core Architecture**](#core-architectural-pillars) • 
 [**Quickstart (Standalone)**](#quickstart-standalone-binary) • 
@@ -114,12 +116,13 @@ Omni Engine is distributed as a sovereign, self-contained binary package for Lin
 # CPU Standalone:
 wget https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz
 
-# Extract package
+# Extract package and enter release directory
 tar -xzf omni_engine_v2.2.2_linux_x86_64.tar.gz
-chmod +x omni_engine
+cd omni_engine_v2.2.2_linux_x86_64
+chmod +x bin/omni_engine
 
 # Verify sovereign binary
-./omni_engine --version
+./bin/omni_engine --version
 # Output: omni_engine v2.2.2 (Rust Standalone)
 ```
 
@@ -134,12 +137,26 @@ wget -c -O models/qwen2.5-coder-7b.gguf \
 ### 3. Run Autonomous Swarm
 
 ```bash
-# Execute multi-goal software synthesis
-./omni_engine run "Build an asynchronous rate-limited web scraper in Rust with unit tests" \
+# Execute multi-goal software synthesis (verified output written hermetically as .tar.gz)
+./bin/omni_engine run "Build an asynchronous rate-limited web scraper in Rust with unit tests" \
   --model models/qwen2.5-coder-7b.gguf \
+  --output-dir ./workspace \
   --subgoals 4 \
-  --steps 3
+  --steps 3 \
+  -y
 ```
+
+---
+
+## 🧪 Run Live in Google Colab (Free Tesla T4 GPU)
+
+Want to test **Omni Engine v2.2.2 (CUDA)** without local hardware setup? Launch our official interactive notebook on Google Colab with one click:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
+
+* **Notebook:** [`notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb`](notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
+* **Runtime Setup:** Select **`Runtime -> Change runtime type -> T4 GPU`** in Colab.
+* **What It Reproduces:** Provisions the `v2.2.2` CUDA binary, downloads `Qwen2.5-Coder-7B-Instruct-Q4_K_M`, executes the **Atomic Transaction Ledger in Rust (ATLR)** Maestro DAG plan, extracts the resulting `.tar.gz` deliverable archive, and verifies the 50-thread concurrent stress test (`cargo test --test atlr_stress`) live in Colab.
 
 ---
 
@@ -156,15 +173,16 @@ Commands:
   serve     Start local OpenAI-compatible API server and Web UI
 
 Options:
-  -m, --model <PATH>          Path to GGUF model file
-  -p, --plan-file <PATH>      Ingest pre-computed Maestro DAG plan (JSON)
-  -d, --dir <PATH>            Target project working directory
-  -o, --output-dir <PATH>     Destination directory for verified deliverables
-  --subgoals <INT>            Number of topological sub-goals (Default: 4)
-  --steps <INT>               Number of repair steps per sub-goal (Default: 3)
+  --model <PATH>              Path to GGUF model file
+  --plan-file <PATH>          Ingest pre-computed Maestro DAG plan (JSON)
+  --dir, -i <PATH>            Target project working directory
+  --output-dir <PATH>         Destination directory for verified deliverables
+  --subgoals <INT>            Number of topological sub-goals (Default: 3)
+  --steps <INT>               Number of repair steps per sub-goal (Default: 5)
+  -y, --yes                   Auto-approve dependency triage in headless runs
   --allow-unsandboxed         Fallback mode for environments lacking unprivileged namespaces
-  -v, --verbose               Enable microsecond debug logging
   -h, --help                  Print help documentation
+  -v, --version               Print engine version
 ```
 
 ---
@@ -173,13 +191,14 @@ Options:
 
 - **Deterministic Memory Bounds**: Strict hardware memory ceilings ($K_{max}$) prevent out-of-memory (OOM) crashes across CPU and GPU hardware.
 - **Fail-Closed Sandboxing**: Untrusted operations execute in isolated Linux Bubblewrap containers with read-only host mounts.
-- **Unit Test Suite**: **151 / 151 library unit tests passing (0 failures, 0 warnings)**.
+- **Unit Test Suite**: **152 / 152 library unit tests passing (0 failures, 0 warnings)**.
 - **Zero Regression Invariant**: Verified AST structures are frozen in RAM VFS during modifications, mathematically preventing code erasure.
 
 ---
 
 ## 📜 Documentation & Specifications
 
+- [**Colab Interactive Playground**](notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb): Hands-on Tesla T4 notebook reproducing the ATLR 7B CUDA benchmark in Google Colab.
 - [**Master Sovereign Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md): The full historical retrospective from v2.1.0 to v2.2.2 with comprehensive benchmark data.
 - [**ATLR Tri-Party Showdown Report**](docs/ATLR_TRI_PARTY_SHOWDOWN_REPORT.md): Empirical showdown dossier against Aider Local and Aider Cloud.
 - [**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md): Theoretical foundations of Tree-RNN recursive assembly, causal slicing, and topological scheduling.

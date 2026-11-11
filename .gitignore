@@ -57,7 +57,6 @@ GEMINI.md
 # Scratch, Dossiers & Audits
 repo_about.txt
 repo_audit.txt
-notebooks/
 data/
 dist_*/
 Modelfile
