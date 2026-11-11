@@ -128,6 +128,10 @@ pub struct PlanBlueprintNode {
     #[serde(default)]
     pub responsibility: Option<String>,
     #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub ecosystem: Option<String>,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub imports: Vec<String>,
@@ -232,6 +236,12 @@ impl PlanBlueprint {
             let mut guidance_parts = Vec::new();
             if let Some(ref resp) = node.responsibility {
                 guidance_parts.push(format!("Objective: {}", resp));
+            }
+            if let Some(ref eco) = node.ecosystem {
+                guidance_parts.push(format!("TARGET ECOSYSTEM:\n{}", eco.trim()));
+            }
+            if let Some(ref cmd) = node.command {
+                guidance_parts.push(format!("MANDATORY EXECUTION COMMAND:\n{}", cmd.trim()));
             }
             if !node.imports.is_empty() {
                 guidance_parts.push(format!("MANDATORY IMPORTS:\n{}", node.imports.join("\n")));
@@ -1994,6 +2004,19 @@ impl SwarmCoordinator {
             }
         }
         false
+    }
+
+    /// Extracts any pre-authorized explicit command defined in Maestro JSON guidance (e.g. "MANDATORY EXECUTION COMMAND: <cmd>")
+    #[inline]
+    pub fn extract_explicit_command_from_guidance(guidance: Option<&str>) -> Option<String> {
+        let g = guidance?;
+        let marker = "MANDATORY EXECUTION COMMAND:\n";
+        if let Some(idx) = g.find(marker) {
+            let rest = &g[idx + marker.len()..];
+            let cmd_line = rest.lines().next().map(|s| s.trim()).filter(|s| !s.is_empty())?;
+            return Some(cmd_line.to_string());
+        }
+        None
     }
 
     /// Resolves the optimal host syntax check command for any artifact to perform fast AST/syntax
@@ -5494,7 +5517,16 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
 
             let parsed_action = Self::parse_action(&generated_text);
             let action = if subgoal.kind == TaskKind::Test {
-                match parsed_action {
+                if let Some(explicit_cmd) = Self::extract_explicit_command_from_guidance(subgoal.guidance.as_deref()) {
+                    let clean_cmd = Self::strip_command_prefix(&explicit_cmd);
+                    println!("  {} Executing Maestro-specified test command: '{}'", "[MAESTRO COMMAND]".bright_cyan().bold(), clean_cmd.bright_yellow());
+                    if let SwarmAction::TestRun { ref inputs, .. } = parsed_action {
+                        SwarmAction::TestRun { command: clean_cmd, inputs: inputs.clone() }
+                    } else {
+                        SwarmAction::RunTerminal { command: clean_cmd }
+                    }
+                } else {
+                    match parsed_action {
                     SwarmAction::TestRun { .. } => parsed_action,
                     SwarmAction::Verdict { .. } => parsed_action,
                     SwarmAction::RunTerminal { ref command } => {
@@ -5567,6 +5599,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                         SwarmAction::RunTerminal { command: default_cmd }
                     }
                 }
+            }
             } else {
                 parsed_action
             };
@@ -7296,6 +7329,43 @@ mod tests {
             None,
         );
         assert_eq!(diag7, DiagnosticCode::MissingDependency("ffmpeg".to_string()));
+    }
+
+    #[test]
+    fn test_maestro_plan_with_explicit_command_and_ecosystem() {
+        let plan_json = r#"{
+            "project": "CustomEcosystemApp",
+            "language": "elixir",
+            "nodes": [
+                {
+                    "id": 1,
+                    "entity": "lib/app.ex",
+                    "kind": "CREATE",
+                    "ecosystem": "elixir",
+                    "responsibility": "Define the core supervisor module in Elixir."
+                },
+                {
+                    "id": 2,
+                    "entity": "test/app_test.exs",
+                    "kind": "TEST",
+                    "ecosystem": "elixir",
+                    "command": "mix test",
+                    "responsibility": "Run full Elixir test suite using mix test."
+                }
+            ]
+        }"#;
+
+        let subgoals = SwarmCoordinator::parse_external_plan(plan_json).expect("Should parse plan successfully");
+        assert_eq!(subgoals.len(), 2);
+        assert_eq!(subgoals[0].kind, TaskKind::Create);
+        assert!(subgoals[0].guidance.as_ref().unwrap().contains("TARGET ECOSYSTEM:\nelixir"));
+
+        assert_eq!(subgoals[1].kind, TaskKind::Test);
+        assert!(subgoals[1].guidance.as_ref().unwrap().contains("TARGET ECOSYSTEM:\nelixir"));
+        assert!(subgoals[1].guidance.as_ref().unwrap().contains("MANDATORY EXECUTION COMMAND:\nmix test"));
+
+        let extracted_cmd = SwarmCoordinator::extract_explicit_command_from_guidance(subgoals[1].guidance.as_deref());
+        assert_eq!(extracted_cmd, Some("mix test".to_string()));
     }
 
     #[test]

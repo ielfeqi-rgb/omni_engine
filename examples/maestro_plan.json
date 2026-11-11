@@ -137,6 +137,8 @@
       "entity": "test_suite.py",
       "kind": "CREATE",
       "responsibility": "Implement comprehensive cleanroom unit test suite testing all modules.",
+      "ecosystem": "python",
+      "command": "python3 -m py_compile test_suite.py",
       "depends_on": ["models.py", "storage.py", "graph.py", "executor.py", "cli.py"],
       "imports": [
         "import unittest",
@@ -158,6 +160,22 @@
       ],
       "acceptance_tests": [
         "Executing 'python3 test_suite.py' must execute at least 6 tests and exit with code 0."
+      ]
+    },
+    {
+      "id": 7,
+      "entity": "test_suite.py",
+      "kind": "TEST",
+      "responsibility": "Execute comprehensive cleanroom unit test suite using direct execution command.",
+      "ecosystem": "python",
+      "command": "python3 test_suite.py",
+      "depends_on": ["test_suite.py"],
+      "invariants": [
+        "Process must terminate cleanly with exit code 0.",
+        "Zero test failures or assertion errors."
+      ],
+      "acceptance_tests": [
+        "python3 test_suite.py completes with returncode 0."
       ]
     }
   ]

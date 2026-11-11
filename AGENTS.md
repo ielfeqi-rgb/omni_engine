@@ -134,10 +134,32 @@ omni_engine run --plan-file ./omni_plan.json --output-dir <DIR> [OPTIONS]
       "acceptance_tests": [
         "Save and load records round-trip."
       ]
+    },
+    {
+      "id": 3,
+      "entity": "test_suite.py",
+      "kind": "TEST",
+      "ecosystem": "python",
+      "command": "python3 test_suite.py",
+      "responsibility": "Execute unit tests in cleanroom sandbox using direct command.",
+      "depends_on": ["models.py", "storage.py"],
+      "invariants": [
+        "Process must terminate cleanly with exit code 0.",
+        "Zero assertion errors or test failures."
+      ],
+      "acceptance_tests": [
+        "python3 test_suite.py completes with returncode 0."
+      ]
     }
   ]
 }
 ```
+
+##### Explicit Execution Command (`"command"`) & Ecosystem (`"ecosystem"`)
+Maestro plans can explicitly dictate the exact execution and test verification commands for any node:
+- **`command` (String, Optional)**: The explicit shell command executed in the cleanroom sandbox (e.g. `"python3 test_suite.py"`, `"cargo test --test atlr_stress"`, `"pytest"`, `"npm test"`, `"go test ./..."`).
+  When `command` is supplied, Omni Engine executes the command directly without model hesitation or language runner guesswork.
+- **`ecosystem` (String, Optional)**: Identifies the target runtime environment (e.g. `"python"`, `"rust"`, `"go"`, `"elixir"`, `"zig"`, `"java"`). If an unlisted or novel language is specified, Omni Engine honors Maestro's authority and transparently executes the declared command in the isolated sandbox.
 
 #### Why This Decoupled Protocol Wins:
 1. **Zero Hallucination:** Local 1.5B/3B workers receive exact AST symbols, type signatures, and import lines directly in their prompt.
