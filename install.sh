@@ -298,32 +298,21 @@ if [ "${CHOICE}" = "2" ]; then
     echo -e "[*] Metal GPU Acceleration: ${GREEN}libggml-metal runtime ready${RESET}"
     echo -e "[*] Sandbox: ${GREEN}Apple Seatbelt (sandbox-exec) fail-closed profile${RESET}"
 
-    # Dependency audit for macOS
-    MAC_MISSING_PKGS=()
+    # Optional Target Language Runtimes (Omni Engine is 100% pure Rust; languages below are only for testing generated code)
+    echo -e "\n${DIM}[*] Target Language Runtimes (Optional - for cleanroom code verification):${RESET}"
     if command -v python3 >/dev/null 2>&1; then
-        PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")"
-        PY_MAJOR="$(echo "${PY_VER}" | cut -d. -f1)"
-        PY_MINOR="$(echo "${PY_VER}" | cut -d. -f2)"
-        if [ "${PY_MAJOR}" -ge 3 ] && [ "${PY_MINOR}" -ge 9 ]; then
-            echo -e "[+] Python Runtime: ${GREEN}Python ${PY_VER} (OK)${RESET}"
-        else
-            echo -e "${YELLOW}[!] Python Runtime: Detected Python ${PY_VER} (Recommended: 3.9+)${RESET}"
-            MAC_MISSING_PKGS+=("python@3.11")
-        fi
+        PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")"
+        echo -e "    - Python: ${GREEN}Python ${PY_VER} detected${RESET} ${DIM}(ready for Python code synthesis)${RESET}"
     else
-        echo -e "${YELLOW}[!] Python Runtime: Not found.${RESET}"
-        MAC_MISSING_PKGS+=("python@3.11")
+        echo -e "    - Python: ${DIM}Not detected (optional - only needed if generating Python projects)${RESET}"
     fi
 
-    if [ ${#MAC_MISSING_PKGS[@]} -gt 0 ]; then
-        if command -v brew >/dev/null 2>&1; then
-            echo -e "\n[*] Homebrew detected: Installing recommended dependencies (${MAC_MISSING_PKGS[*]})..."
-            brew install "${MAC_MISSING_PKGS[@]}" || {
-                echo -e "${YELLOW}[!] Brew installation failed. You can manually run: brew install ${MAC_MISSING_PKGS[*]}${RESET}"
-            }
-        else
-            echo -e "${YELLOW}[!] Notice: Homebrew (brew) not detected. To install Python 3.9+, visit: https://brew.sh${RESET}"
-        fi
+    if command -v cargo >/dev/null 2>&1; then
+        echo -e "    - Rust:   ${GREEN}Cargo detected${RESET} ${DIM}(ready for Rust code synthesis)${RESET}"
+    fi
+
+    if command -v node >/dev/null 2>&1; then
+        echo -e "    - Node:   ${GREEN}Node.js detected${RESET} ${DIM}(ready for JS/TS code synthesis)${RESET}"
     fi
 
     echo -e "\n[*] Downloading frozen macOS snapshot (${FROZEN_MACOS_VERSION})..."
@@ -439,28 +428,11 @@ fi
 
 echo -e "[*] Detected Distribution: ${BOLD}${DISTRO_NAME}${RESET}"
 
-# 2. Dependency Audit (Python 3.9+, Bubblewrap, Curl/Wget, Tar)
+# 2. Cleanroom Sandboxing Prerequisites
 MISSING_PKGS=()
-PYTHON_OK=0
-
-if command -v python3 >/dev/null 2>&1; then
-    PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")"
-    PY_MAJOR="$(echo "${PY_VER}" | cut -d. -f1)"
-    PY_MINOR="$(echo "${PY_VER}" | cut -d. -f2)"
-    if [ "${PY_MAJOR}" -ge 3 ] && [ "${PY_MINOR}" -ge 9 ]; then
-        PYTHON_OK=1
-        echo -e "[+] Python Runtime: ${GREEN}Python ${PY_VER} (OK)${RESET}"
-    else
-        echo -e "${YELLOW}[!] Python Runtime: Detected Python ${PY_VER} (Recommended: 3.9+)${RESET}"
-        MISSING_PKGS+=("python3")
-    fi
-else
-    echo -e "${YELLOW}[!] Python Runtime: Not found.${RESET}"
-    MISSING_PKGS+=("python3")
-fi
 
 if command -v bwrap >/dev/null 2>&1; then
-    echo -e "[+] Sandboxing Primitives: ${GREEN}Bubblewrap (bwrap) present (Kernel namespaces ready)${RESET}"
+    echo -e "[+] Cleanroom Sandboxing: ${GREEN}Bubblewrap (bwrap) present (Kernel namespaces ready)${RESET}"
 else
     echo -e "${YELLOW}[!] Sandboxing: 'bwrap' not detected.${RESET}"
     MISSING_PKGS+=("bubblewrap")
@@ -471,11 +443,28 @@ if ! command -v tar >/dev/null 2>&1; then
 fi
 
 if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
-    echo -e "\n${YELLOW}[!] Recommended packages for full cleanroom & tooling support:${RESET}"
+    echo -e "\n${YELLOW}[!] Recommended packages for full cleanroom sandboxing:${RESET}"
     echo -e "    Missing: ${BOLD}${MISSING_PKGS[*]}${RESET}"
     if [ -n "${PKG_INSTALL_CMD}" ]; then
         echo -e "    Can be installed via: ${CYAN}${PKG_INSTALL_CMD} ${MISSING_PKGS[*]}${RESET}\n"
     fi
+fi
+
+# Optional Target Language Runtimes (Omni Engine is 100% pure Rust; languages below are only for testing generated code)
+echo -e "${DIM}[*] Target Language Runtimes (Optional - for cleanroom code verification):${RESET}"
+if command -v python3 >/dev/null 2>&1; then
+    PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")"
+    echo -e "    - Python: ${GREEN}Python ${PY_VER} detected${RESET} ${DIM}(ready for Python code synthesis)${RESET}"
+else
+    echo -e "    - Python: ${DIM}Not detected (optional - only needed if generating Python projects)${RESET}"
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+    echo -e "    - Rust:   ${GREEN}Cargo detected${RESET} ${DIM}(ready for Rust code synthesis)${RESET}"
+fi
+
+if command -v node >/dev/null 2>&1; then
+    echo -e "    - Node:   ${GREEN}Node.js detected${RESET} ${DIM}(ready for JS/TS code synthesis)${RESET}"
 fi
 
 # 3. Dynamic Latest Version Discovery from GitHub

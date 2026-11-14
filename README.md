@@ -138,10 +138,9 @@ curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/instal
 1. **Host Environment Auto-Detection**:
    - Detects Linux, macOS Apple Silicon, or Windows WSL2.
    - For custom Virtual Machines, hypervisors, or unprivileged containers, safely displays an interactive selection menu so you select on your own responsibility.
-2. **Dependency & Sandboxing Audit**:
-   - **Linux**: Audits Python 3.9+ and Bubblewrap (`bwrap`); installs missing dependencies via your package manager (`apt`, `dnf`, `pacman`, `zypper`, `apk`).
-   - **macOS**: Audits Python 3.9+ via Homebrew (`brew`) and configures `DYLD_LIBRARY_PATH`.
-   - **Windows**: Seamlessly launches or instructs setup inside bare-metal WSL2.
+2. **Pure Standalone Engine & Sandboxing Audit**:
+   - Omni Engine is 100% pure standalone Rust and requires zero external runtimes to execute.
+   - Verifies kernel cleanroom sandboxing (`bwrap` on Linux, Apple Seatbelt on macOS) and detects available target language tools (`cargo`, `python3`, `node`) for compiling and testing user-requested codebases.
 3. **Hardware-Matched Runtime Fetching**:
    - **Linux**: Queries GitHub API dynamically for the latest production release, auto-selecting CUDA if an NVIDIA GPU is detected or standard universal CPU otherwise.
    - **macOS**: Downloads the frozen `v2.2.2` Darwin `arm64` snapshot with native Metal GPU acceleration.
