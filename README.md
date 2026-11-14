@@ -6,7 +6,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20Standalone-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20%7C%20macOS%20Apple%20Silicon%20(M1--M4)-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
 [![Tests](https://img.shields.io/badge/Tests-152%2F152%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
 [![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)](#core-architectural-pillars)
@@ -107,24 +107,33 @@ When environment or compiler issues arise during cleanroom verification, the eng
 
 ## ⚡ Quickstart (Standalone Binary)
 
-Omni Engine is distributed as a sovereign, self-contained binary package for Linux x86_64.
+Omni Engine is distributed as a sovereign, self-contained standalone binary package for **Linux x86_64** and **macOS Apple Silicon (M1, M2, M3, M4)**.
 
-### 1. Download & Extract Official Release (v2.2.2)
+### 1. Download & Extract Official Standalone Package
 
+#### 🐧 Linux x86_64:
 ```bash
-# Download official v2.2.2 release archive (CPU or CUDA)
-# CPU Standalone:
 wget https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz
-
-# Extract package and enter release directory
 tar -xzf omni_engine_v2.2.2_linux_x86_64.tar.gz
 cd omni_engine_v2.2.2_linux_x86_64
 chmod +x bin/omni_engine
-
-# Verify sovereign binary
 ./bin/omni_engine --version
-# Output: omni_engine v2.2.2 (Rust Standalone)
 ```
+
+#### 🍏 macOS Apple Silicon (M1, M2, M3, M4):
+```bash
+# Download official Darwin ARM64 standalone release
+curl -LO https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz
+tar -xzf omni_engine_v2.2.2_darwin_arm64.tar.gz
+cd omni_engine_v2.2.2_darwin_arm64
+chmod +x bin/omni_engine
+./bin/omni_engine --version
+```
+
+> [!TIP]
+> **Native Metal GPU Acceleration**: On macOS Apple Silicon, Omni Engine utilizes native `Metal.framework` via `libggml-metal.dylib` across the unified memory architecture (UMA) for high-speed inference without PCIe transfer bottlenecks.
+> 
+> **Zero Physical SSD Writes on macOS**: Test verification executes strictly inside in-memory RAM volumes (`hdiutil attach -nomount ram://`), guaranteeing untrusted code never touches the physical APFS SSD until cleanroom assertions pass 100%.
 
 ### 2. Download Recommended Coder Model
 
