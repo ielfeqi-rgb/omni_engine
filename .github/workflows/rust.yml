@@ -58,8 +58,8 @@ jobs:
       id: cache-llama
       uses: actions/cache@v4
       with:
-        path: bin
-        key: macos-llama-metal-v2.2.2
+        path: bin/*.dylib
+        key: macos-llama-metal-v2.2.2-r2
 
     - name: Compile Native llama.cpp with Metal Acceleration
       if: steps.cache-llama.outputs.cache-hit != 'true'
@@ -70,11 +70,12 @@ jobs:
           -DBUILD_SHARED_LIBS=ON \
           -DGGML_METAL=ON \
           -DGGML_METAL_EMBED_LIBRARY=ON \
+          -DLLAMA_BUILD_COMMON=OFF \
           -DLLAMA_BUILD_EXAMPLES=OFF \
           -DLLAMA_BUILD_TESTS=OFF \
           -DLLAMA_BUILD_SERVER=OFF \
           -DCMAKE_BUILD_TYPE=Release
-        cmake --build llama_src/build --config Release -j 3
+        cmake --build llama_src/build --config Release --target llama ggml -j 3
         find llama_src/build -name "*.dylib" -exec cp -f {} bin/ \;
         chmod +x bin/* 2>/dev/null || true
         for f in bin/*.dylib; do
