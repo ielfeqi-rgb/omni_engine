@@ -35,27 +35,20 @@
       "id": 2,
       "entity": "test_calculator.py",
       "kind": "CREATE",
-      "responsibility": "Author automated unit test suite verifying MathEngine correctness across addition, multiplication, and factorial invariants.",
+      "responsibility": "Author smoke test script importing MathEngine from calculator and verifying add, multiply, and factorial methods.",
       "depends_on": ["calculator.py"],
-      "command": "python3 -m unittest test_calculator.py",
+      "command": "python3 test_calculator.py",
       "symbols": {
-        "classes": [
-          {
-            "name": "TestMathEngine",
-            "methods": [
-              { "name": "test_add", "params": ["self"] },
-              { "name": "test_multiply", "params": ["self"] },
-              { "name": "test_factorial", "params": ["self"] }
-            ]
-          }
+        "functions": [
+          { "name": "test_math_engine", "params": [] }
         ]
       },
       "invariants": [
-        "Use unittest framework from standard library.",
-        "Execute assertions with descriptive error messages."
+        "Pure Python 3 standard library only, zero external packages.",
+        "Execute assertions with descriptive messages."
       ],
       "acceptance_tests": [
-        "python3 -m unittest test_calculator.py passes cleanly with 0 failures."
+        "python3 test_calculator.py passes cleanly with exit code 0."
       ]
     }
   ]

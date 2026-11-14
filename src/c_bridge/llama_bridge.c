@@ -19,11 +19,6 @@ static void omni_ensure_backends_loaded(void) {
     if (loaded) return;
     loaded = true;
 
-    const char * force_cpu = getenv("OMNI_FORCE_CPU");
-    if (force_cpu && (strcmp(force_cpu, "1") == 0 || strcmp(force_cpu, "true") == 0 || strcmp(force_cpu, "TRUE") == 0)) {
-        return;
-    }
-
     ggml_backend_load_all();
     ggml_backend_load_all_from_path("bin");
     ggml_backend_load_all_from_path("../bin");
@@ -55,15 +50,6 @@ struct llama_model * omni_llama_load_model(const char * path, int n_gpu_layers) 
     omni_ensure_backends_loaded();
     struct llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;
-
-    static ggml_backend_dev_t cpu_devices[2] = {NULL, NULL};
-    const char * force_cpu = getenv("OMNI_FORCE_CPU");
-    if (force_cpu && (strcmp(force_cpu, "1") == 0 || strcmp(force_cpu, "true") == 0 || strcmp(force_cpu, "TRUE") == 0)) {
-        cpu_devices[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-        cpu_devices[1] = NULL;
-        mparams.devices = cpu_devices;
-    }
-
     return llama_model_load_from_file(path, mparams);
 }
 
@@ -91,6 +77,7 @@ struct llama_context * omni_llama_new_context_ext(
     cparams.n_threads = (n_threads > 0) ? n_threads : 4;
     cparams.n_threads_batch = cparams.n_threads;
     cparams.n_seq_max = (n_seq_max > 0) ? n_seq_max : 1;
+    cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
     return llama_init_from_model(model, cparams);
 }
 

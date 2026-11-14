@@ -41,7 +41,8 @@ impl SovereignScratchWorkspace {
     pub fn create() -> Result<Self, String> {
         #[cfg(target_os = "macos")]
         {
-            if let Ok(ws) = Self::create_macos_ramdisk(128) {
+            let size_mb = Self::determine_ramdisk_size_mb();
+            if let Ok(ws) = Self::create_macos_ramdisk(size_mb) {
                 return Ok(ws);
             }
         }
@@ -55,6 +56,47 @@ impl SovereignScratchWorkspace {
             #[cfg(target_os = "macos")]
             ram_disk_dev: None,
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn determine_ramdisk_size_mb() -> u64 {
+        if let Ok(val) = std::env::var("OMNI_RAMDISK_MB") {
+            if let Ok(parsed) = val.trim().parse::<u64>() {
+                if parsed >= 64 {
+                    return parsed;
+                }
+            }
+        }
+
+        // Query host memory via libc::sysctl (hw.memsize)
+        let total_mem_bytes = unsafe {
+            let mut mib = [libc::CTL_HW, libc::HW_MEMSIZE];
+            let mut mem_size: u64 = 0;
+            let mut len = std::mem::size_of::<u64>();
+            if libc::sysctl(
+                mib.as_mut_ptr(),
+                2,
+                &mut mem_size as *mut u64 as *mut libc::c_void,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            ) == 0 && mem_size > 0 {
+                mem_size
+            } else {
+                0
+            }
+        };
+
+        let total_mem_gb = total_mem_bytes / (1024 * 1024 * 1024);
+        if total_mem_gb >= 32 {
+            4096 // 4 GB on 32GB+ Unified Memory
+        } else if total_mem_gb >= 16 {
+            2048 // 2 GB on 16GB Unified Memory
+        } else if total_mem_gb >= 8 {
+            1024 // 1 GB on 8GB Unified Memory
+        } else {
+            512  // Fallback safe minimum
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -179,6 +221,24 @@ impl IsolatedJail {
             .unwrap_or(false)
     }
 
+    /// Check if Apple Seatbelt sandbox-exec is available on macOS
+    #[cfg(target_os = "macos")]
+    pub fn is_macos_sandbox_available() -> bool {
+        Path::new("/usr/bin/sandbox-exec").exists()
+    }
+
+    /// Cross-platform inquiry whether hardware/kernel isolation sandbox is functioning
+    pub fn is_sandbox_available() -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            Self::is_macos_sandbox_available()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Self::is_bwrap_available()
+        }
+    }
+
     /// Run a command inside an isolated sandbox with the provided virtual files materialized.
     ///
     /// The files in `vfs_files` are written into an ephemeral scratch workspace.
@@ -251,16 +311,29 @@ impl IsolatedJail {
 
         let bwrap_present = Self::is_bwrap_available();
         let is_macos = cfg!(target_os = "macos");
+        let macos_sandbox_present = if is_macos {
+            #[cfg(target_os = "macos")]
+            { Self::is_macos_sandbox_available() }
+            #[cfg(not(target_os = "macos"))]
+            { false }
+        } else {
+            false
+        };
         let allow_unsandboxed = std::env::var("OMNI_ALLOW_UNSANDBOXED")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let use_bwrap = bwrap_present && !allow_unsandboxed;
+        let use_bwrap = !is_macos && bwrap_present && !allow_unsandboxed;
+        let use_macos_sandbox = is_macos && macos_sandbox_present && !allow_unsandboxed;
         let is_macos_ramdisk = workspace.is_ramdisk();
 
         let sandbox_mode = if use_bwrap {
             "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs, new-session)"
+        } else if use_macos_sandbox && is_macos_ramdisk {
+            "macOS Sovereign Seatbelt Sandbox (Kernel read-only root, network blackout, APFS RAM Volume, POSIX rlimit)"
+        } else if use_macos_sandbox {
+            "macOS Sovereign Seatbelt Sandbox (Kernel read-only root, network blackout, Tempdir, POSIX rlimit)"
         } else if is_macos_ramdisk {
-            "macOS Sovereign In-Memory RAM-Disk (Zero-SSD APFS RAM Volume, POSIX rlimit)"
+            "macOS Sovereign In-Memory RAM-Disk (Zero-SSD APFS RAM Volume, POSIX rlimit) [UNISOLATED]"
         } else if is_macos {
             "macOS Isolated Workspace (Host Tempdir, POSIX rlimit) [UNISOLATED]"
         } else {
@@ -278,11 +351,11 @@ impl IsolatedJail {
             return Err("SECURITY VIOLATION [Fail-Closed]: Bubblewrap sandbox unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
         }
 
-        if is_macos && !is_macos_ramdisk && !allow_unsandboxed {
-            eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: macOS In-Memory RAM-Disk allocation failed and unisolated execution is forbidden.".bright_red().bold());
-            eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host SSD.".bright_yellow());
+        if is_macos && !macos_sandbox_present && !allow_unsandboxed {
+            eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: macOS Seatbelt sandbox ('/usr/bin/sandbox-exec') is unavailable.".bright_red().bold());
+            eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host system.".bright_yellow());
             eprintln!("{}", "  │     To explicitly permit unisolated host execution at your own risk, pass --allow-unsandboxed or set OMNI_ALLOW_UNSANDBOXED=1.".dimmed());
-            return Err("SECURITY VIOLATION [Fail-Closed]: macOS RAM-Disk unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
+            return Err("SECURITY VIOLATION [Fail-Closed]: macOS Seatbelt sandbox unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
         }
 
         if allow_unsandboxed {
@@ -294,7 +367,7 @@ impl IsolatedJail {
         }
 
         let start_time = Instant::now();
-        let (exit_code, stdout, stderr, actually_bwrap) = if use_bwrap {
+        let (exit_code, stdout, stderr, actually_sandboxed) = if use_bwrap {
             match Self::run_with_bwrap(cmd, temp_path, timeout, stdin_input) {
                 Ok((code, out, err)) => {
                     if err.contains("Operation not permitted") || err.contains("Failed RTM_NEWADDR") {
@@ -320,6 +393,28 @@ impl IsolatedJail {
                     let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
                     (f_code, f_out, f_err, false)
                 }
+            }
+        } else if use_macos_sandbox {
+            #[cfg(target_os = "macos")]
+            {
+                match Self::run_with_macos_sandbox(cmd, temp_path, timeout, stdin_input) {
+                    Ok((code, out, err)) => (code, out, err, true),
+                    Err(e) => {
+                        if !allow_unsandboxed {
+                            return Err(format!(
+                                "SECURITY VIOLATION [Fail-Closed]: macOS Seatbelt sandbox execution failed: {}. Untrusted execution blocked. Pass --allow-unsandboxed to permit unisolated host fallback.",
+                                e
+                            ));
+                        }
+                        let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
+                        (f_code, f_out, f_err, false)
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
+                (f_code, f_out, f_err, false)
             }
         } else {
             let (f_code, f_out, f_err) = Self::run_fallback(cmd, temp_path, timeout, stdin_input)?;
@@ -360,7 +455,7 @@ impl IsolatedJail {
             stdout,
             stderr,
             missing_dependency: missing_dep,
-            sandboxed_by_bwrap: actually_bwrap || is_macos_ramdisk,
+            sandboxed_by_bwrap: actually_sandboxed || is_macos_ramdisk,
         })
     }
 
@@ -510,6 +605,108 @@ impl IsolatedJail {
         let mut child = bwrap
             .spawn()
             .map_err(|e| format!("Failed to spawn bwrap: {}", e))?;
+
+        if let Some(data) = stdin_input {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(data);
+                let _ = stdin.flush();
+            }
+        }
+
+        let (exit_code, stdout, stderr) = Self::wait_with_timeout(&mut child, cmd, timeout)?;
+        Ok((exit_code, stdout, stderr))
+    }
+
+    /// Isolated execution inside macOS Seatbelt sandbox (kernel read-only root, network blackout, in-memory RAM-disk)
+    #[cfg(target_os = "macos")]
+    fn run_with_macos_sandbox(
+        cmd: &str,
+        workspace: &Path,
+        timeout: Duration,
+        stdin_input: Option<&[u8]>,
+    ) -> Result<(Option<i32>, String, String), String> {
+        let ws_canonical = workspace.canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
+        let ws_str = ws_canonical.to_string_lossy();
+
+        let ws_tmp = workspace.join("tmp");
+        let _ = fs::create_dir_all(&ws_tmp);
+        let ws_tmp_canonical = ws_tmp.canonicalize().unwrap_or_else(|_| ws_tmp.clone());
+        let ws_tmp_str = ws_tmp_canonical.to_string_lossy();
+
+        let profile = format!(
+            r#"(version 1)
+(deny default)
+(allow process-fork)
+(allow process-exec)
+(allow sysctl-read)
+(allow file-read*)
+(deny file-write*)
+(allow file-write* (subpath "{ws}"))
+(allow file-write* (subpath "/private{ws}"))
+(allow file-write* (subpath "{ws_tmp}"))
+(allow file-write* (subpath "/private{ws_tmp}"))
+(allow file-write* (literal "/dev/null"))
+(allow file-write* (literal "/dev/zero"))
+(allow file-write* (literal "/dev/dtracehelper"))
+(allow file-write* (literal "/dev/tty"))
+(allow file-write* (literal "/dev/stdin"))
+(allow file-write* (literal "/dev/stdout"))
+(allow file-write* (literal "/dev/stderr"))
+(allow file-write* (subpath "/dev/fd"))
+(deny network*)
+"#,
+            ws = ws_str,
+            ws_tmp = ws_tmp_str
+        );
+
+        let mut sandbox_cmd = Command::new("/usr/bin/sandbox-exec");
+        sandbox_cmd.args(["-p", &profile, "sh", "-c", cmd]);
+        sandbox_cmd.current_dir(workspace);
+
+        sandbox_cmd.env("DISPLAY", ":99");
+        sandbox_cmd.env("PYTHONUNBUFFERED", "1");
+        sandbox_cmd.env("PYTHONPATH", format!("{}:.", ws_str));
+        sandbox_cmd.env("TMPDIR", ws_tmp_str.as_ref());
+        let host_path = std::env::var("PATH").unwrap_or_else(|_| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string());
+        if let Ok(home) = std::env::var("HOME") {
+            let sandbox_path = format!("{}/.cargo/bin:{}/.local/bin:{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", home, home, host_path);
+            sandbox_cmd.env("PATH", sandbox_path);
+            sandbox_cmd.env("HOME", &home);
+        } else {
+            sandbox_cmd.env("PATH", format!("{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", host_path));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            sandbox_cmd.process_group(0);
+            unsafe {
+                sandbox_cmd.pre_exec(|| {
+                    // Max single file output size: 128MB
+                    let fsize_limit = libc::rlimit {
+                        rlim_cur: 128 * 1024 * 1024,
+                        rlim_max: 128 * 1024 * 1024,
+                    };
+                    let _ = libc::setrlimit(libc::RLIMIT_FSIZE, &fsize_limit);
+                    Ok(())
+                });
+            }
+        }
+
+        sandbox_cmd.stdout(Stdio::piped());
+        sandbox_cmd.stderr(Stdio::piped());
+
+        if stdin_input.is_some() {
+            sandbox_cmd.stdin(Stdio::piped());
+        } else {
+            sandbox_cmd.stdin(Stdio::null());
+        }
+
+        let mut child = sandbox_cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn sandbox-exec: {}", e))?;
 
         if let Some(data) = stdin_input {
             if let Some(mut stdin) = child.stdin.take() {
@@ -813,8 +1010,8 @@ mod tests {
 
     #[test]
     fn test_isolated_filesystem_protection() {
-        // Verify that writing to /usr or /etc is blocked inside bwrap
-        if IsolatedJail::is_bwrap_available() {
+        // Verify that writing to /usr or /etc is blocked inside the active kernel sandbox
+        if IsolatedJail::is_sandbox_available() {
             let res = IsolatedJail::run_in_jail(
                 "touch /usr/bin/should_fail.txt",
                 &[],
@@ -822,7 +1019,7 @@ mod tests {
             ).expect("Should execute with error");
 
             assert!(!res.success);
-            assert!(res.stderr.contains("Read-only") || res.exit_code != Some(0));
+            assert!(res.stderr.contains("Read-only") || res.stderr.contains("Operation not permitted") || res.exit_code != Some(0));
         }
     }
 
