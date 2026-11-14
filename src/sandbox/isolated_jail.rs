@@ -26,6 +26,111 @@ pub struct JailExecutionResult {
     pub sandboxed_by_bwrap: bool,
 }
 
+/// Sovereign in-memory scratch workspace.
+/// On Linux: backed by RAM tmpfs.
+/// On macOS: backed by an in-memory RAM-disk (hdiutil ram:// APFS/HFS+ in RAM) when available,
+/// ensuring zero writes touch the physical APFS SSD container until verified.
+pub struct SovereignScratchWorkspace {
+    path: PathBuf,
+    _temp_dir: Option<tempfile::TempDir>,
+    #[cfg(target_os = "macos")]
+    ram_disk_dev: Option<String>,
+}
+
+impl SovereignScratchWorkspace {
+    pub fn create() -> Result<Self, String> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(ws) = Self::create_macos_ramdisk(128) {
+                return Ok(ws);
+            }
+        }
+
+        let temp_dir = tempfile::tempdir()
+            .map_err(|e| format!("Failed to create isolated tempdir: {}", e))?;
+        let path = temp_dir.path().to_path_buf();
+        Ok(Self {
+            path,
+            _temp_dir: Some(temp_dir),
+            #[cfg(target_os = "macos")]
+            ram_disk_dev: None,
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn create_macos_ramdisk(size_mb: u64) -> Result<Self, String> {
+        let sectors = size_mb * 1024 * 1024 / 512;
+        let ram_spec = format!("ram://{}", sectors);
+
+        let attach = Command::new("hdiutil")
+            .args(["attach", "-nomount", &ram_spec])
+            .output()
+            .map_err(|e| format!("hdiutil attach failed: {}", e))?;
+        if !attach.status.success() {
+            return Err("hdiutil attach failed".to_string());
+        }
+
+        let dev = String::from_utf8_lossy(&attach.stdout).trim().to_string();
+        if dev.is_empty() {
+            return Err("hdiutil returned empty device".to_string());
+        }
+
+        let vol_name = format!("OmniRAM_{}_{}", std::process::id(), rand::random::<u32>());
+        let erase = Command::new("diskutil")
+            .args(["erasevolume", "APFS", &vol_name, &dev])
+            .output();
+
+        let erase_ok = match erase {
+            Ok(ref out) if out.status.success() => true,
+            _ => {
+                Command::new("diskutil")
+                    .args(["erasevolume", "HFS+", &vol_name, &dev])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            }
+        };
+
+        if !erase_ok {
+            let _ = Command::new("hdiutil").args(["detach", &dev, "-force"]).output();
+            return Err("diskutil format RAM disk failed".to_string());
+        }
+
+        let mount_path = PathBuf::from(format!("/Volumes/{}", vol_name));
+        Ok(Self {
+            path: mount_path,
+            _temp_dir: None,
+            ram_disk_dev: Some(dev),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn is_ramdisk(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.ram_disk_dev.is_some()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+}
+
+impl Drop for SovereignScratchWorkspace {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(ref dev) = self.ram_disk_dev {
+            let _ = Command::new("hdiutil")
+                .args(["detach", dev, "-force"])
+                .output();
+        }
+    }
+}
+
 /// Isolated host-grounded execution sandbox.
 /// Uses Bubblewrap (`bwrap`) when available for unprivileged container isolation
 /// with read-only root filesystems, private `/tmp`, and isolated network/PID/IPC namespaces.
@@ -120,9 +225,8 @@ impl IsolatedJail {
         timeout: Duration,
         stdin_input: Option<&[u8]>,
     ) -> Result<JailExecutionResult, String> {
-        let temp_dir = tempfile::tempdir()
-            .map_err(|e| format!("Failed to create isolated tempdir: {}", e))?;
-        let temp_path = temp_dir.path();
+        let workspace = SovereignScratchWorkspace::create()?;
+        let temp_path = workspace.path();
 
         // Materialize VFS files into the isolated scratch directory
         for (rel_path, content) in vfs_files {
@@ -146,20 +250,41 @@ impl IsolatedJail {
         }
 
         let bwrap_present = Self::is_bwrap_available();
+        let is_macos = cfg!(target_os = "macos");
         let allow_unsandboxed = std::env::var("OMNI_ALLOW_UNSANDBOXED")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         let use_bwrap = bwrap_present && !allow_unsandboxed;
+        let is_macos_ramdisk = workspace.is_ramdisk();
+
+        let sandbox_mode = if use_bwrap {
+            "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs, new-session)"
+        } else if is_macos_ramdisk {
+            "macOS Sovereign In-Memory RAM-Disk (Zero-SSD APFS RAM Volume, POSIX rlimit)"
+        } else if is_macos {
+            "macOS Isolated Workspace (Host Tempdir, POSIX rlimit) [UNISOLATED]"
+        } else {
+            "Host tempdir fallback [UNISOLATED]"
+        };
 
         println!("{}", "  ┌── [ISOLATED SANDBOX EXECUTION] ────────────────────────────────────".bright_cyan());
         println!("  │ Command   : {}", cmd.bright_yellow().bold());
-        println!("  │ Sandbox   : {}", if use_bwrap { "Bubblewrap bwrap (Kernel unprivileged namespaces, tmpfs, new-session)" } else { "Host tempdir fallback [UNISOLATED]" });
-        if !bwrap_present && !allow_unsandboxed {
+        println!("  │ Sandbox   : {}", sandbox_mode);
+
+        if !is_macos && !bwrap_present && !allow_unsandboxed {
             eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: Linux Bubblewrap ('bwrap') is missing or namespace creation is blocked.".bright_red().bold());
             eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host system.".bright_yellow());
             eprintln!("{}", "  │     To explicitly permit unisolated host execution at your own risk, pass --allow-unsandboxed or set OMNI_ALLOW_UNSANDBOXED=1.".dimmed());
             return Err("SECURITY VIOLATION [Fail-Closed]: Bubblewrap sandbox unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
         }
+
+        if is_macos && !is_macos_ramdisk && !allow_unsandboxed {
+            eprintln!("{}", "  │ [!] SECURITY ENFORCEMENT [Fail-Closed]: macOS In-Memory RAM-Disk allocation failed and unisolated execution is forbidden.".bright_red().bold());
+            eprintln!("{}", "  │     Untrusted LLM code execution aborted to protect the host SSD.".bright_yellow());
+            eprintln!("{}", "  │     To explicitly permit unisolated host execution at your own risk, pass --allow-unsandboxed or set OMNI_ALLOW_UNSANDBOXED=1.".dimmed());
+            return Err("SECURITY VIOLATION [Fail-Closed]: macOS RAM-Disk unavailable. Untrusted code execution refused. Pass --allow-unsandboxed to override.".to_string());
+        }
+
         if allow_unsandboxed {
             eprintln!("{}", "  │ [!] SECURITY NOTICE: Execution is running unisolated in host tempdir because --allow-unsandboxed is active:".bright_yellow());
         }
@@ -235,7 +360,7 @@ impl IsolatedJail {
             stdout,
             stderr,
             missing_dependency: missing_dep,
-            sandboxed_by_bwrap: actually_bwrap,
+            sandboxed_by_bwrap: actually_bwrap || is_macos_ramdisk,
         })
     }
 
@@ -411,11 +536,11 @@ impl IsolatedJail {
         process.env("DISPLAY", ":99");
         process.env("PYTHONUNBUFFERED", "1");
         process.env("PYTHONPATH", format!("{}:.", workspace.display()));
-        let host_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".to_string());
+        let host_path = std::env::var("PATH").unwrap_or_else(|_| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string());
         let fallback_path = if let Ok(home) = std::env::var("HOME") {
-            format!("{}/.cargo/bin:{}/.local/bin:{}:/usr/local/bin:/usr/bin:/bin", home, home, host_path)
+            format!("/opt/homebrew/bin:{}/.cargo/bin:{}/.local/bin:{}:/usr/local/bin:/usr/bin:/bin", home, home, host_path)
         } else {
-            format!("{}:/usr/local/bin:/usr/bin:/bin", host_path)
+            format!("/opt/homebrew/bin:{}:/usr/local/bin:/usr/bin:/bin", host_path)
         };
         process.env("PATH", fallback_path);
         process.stdout(Stdio::piped());

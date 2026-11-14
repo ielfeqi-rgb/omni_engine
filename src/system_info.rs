@@ -30,6 +30,29 @@ pub fn get_system_specs() -> SystemSpecs {
     let mut free_ram_kb: u64 = 0;
     let mut available_ram_kb: u64 = 0;
 
+    #[cfg(target_os = "macos")]
+    {
+        let mut mib = [libc::CTL_HW, libc::HW_MEMSIZE];
+        let mut mem_size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let ret = unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                2,
+                &mut mem_size as *mut u64 as *mut libc::c_void,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if ret == 0 && mem_size > 0 {
+            total_ram_kb = mem_size / 1024;
+            available_ram_kb = (total_ram_kb as f64 * 0.65) as u64;
+            free_ram_kb = available_ram_kb;
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
         for line in meminfo.lines() {
             if line.starts_with("MemTotal:") {

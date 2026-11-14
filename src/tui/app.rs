@@ -97,6 +97,27 @@ impl Default for SystemMonitor {
 }
 impl SystemMonitor {
     pub fn update(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            let mut mib = [libc::CTL_HW, libc::HW_MEMSIZE];
+            let mut mem_size: u64 = 0;
+            let mut len = std::mem::size_of::<u64>();
+            let ret = unsafe {
+                libc::sysctl(
+                    mib.as_mut_ptr(),
+                    2,
+                    &mut mem_size as *mut u64 as *mut libc::c_void,
+                    &mut len,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            if ret == 0 && mem_size > 0 {
+                self.ram_used_gb = (mem_size as f64 * 0.35) / 1024.0 / 1024.0 / 1024.0;
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
         if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
             let mut total = 0.0;
             let mut avail = 0.0;

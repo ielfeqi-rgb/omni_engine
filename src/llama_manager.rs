@@ -143,7 +143,8 @@ impl LlamaManager {
             let pid_file = self.base_dir.join("config").join("llama_server.pid");
             if let Ok(content) = fs::read_to_string(&pid_file) {
                 if let Ok(file_pid) = content.trim().parse::<u32>() {
-                    if std::path::Path::new(&format!("/proc/{}", file_pid)).exists() {
+                    let pid_alive = unsafe { libc::kill(file_pid as libc::pid_t, 0) == 0 };
+                    if pid_alive {
                         is_running = true;
                         pid = Some(file_pid);
                     } else {

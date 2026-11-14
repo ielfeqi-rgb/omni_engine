@@ -16,26 +16,48 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out_dir);
     println!("cargo:rustc-link-lib=static=omni_llama_bridge");
 
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+
     // Linker directives for libllama and libggml dynamic libraries
     if let Ok(custom_dir) = std::env::var("LLAMA_CPP_DIR") {
         println!("cargo:rustc-link-search=native={}", custom_dir);
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", custom_dir);
     }
-    println!("cargo:rustc-link-search=native=/usr/local/lib");
-    println!("cargo:rustc-link-search=native=/usr/lib");
-    println!("cargo:rustc-link-search=native={}", bin_dir.display());
+
+    if target_os == "macos" {
+        // macOS Apple Silicon (Homebrew /opt/homebrew/lib) and standard /usr/local/lib
+        println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
+        println!("cargo:rustc-link-search=native=/usr/local/lib");
+        println!("cargo:rustc-link-search=native={}", bin_dir.display());
+
+        // macOS native acceleration frameworks
+        println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=Accelerate");
+        println!("cargo:rustc-link-lib=framework=Metal");
+
+        // Mach-O rpaths relative to executable (@loader_path)
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/bin");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/../bin");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/../../bin");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", bin_dir.display());
+    } else {
+        println!("cargo:rustc-link-search=native=/usr/local/lib");
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        println!("cargo:rustc-link-search=native={}", bin_dir.display());
+
+        // Multi-tier $ORIGIN rpaths for Linux ELF sovereign portability
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/bin");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../bin");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../../bin");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", bin_dir.display());
+    }
     
     println!("cargo:rustc-link-lib=dylib=llama");
     println!("cargo:rustc-link-lib=dylib=ggml");
     println!("cargo:rustc-link-lib=dylib=ggml-base");
     println!("cargo:rustc-link-lib=dylib=ggml-cpu");
-
-    // Multi-tier $ORIGIN rpaths for robust sovereign portability
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/bin");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../bin");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../../bin");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", bin_dir.display());
 
     // Invalidation triggers
     println!("cargo:rerun-if-changed=build.rs");
