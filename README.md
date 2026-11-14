@@ -6,24 +6,25 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20x86__64%20%7C%20macOS%20Apple%20Silicon%20(M1--M4)-darkblue.svg)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
+[![Linux Platform](https://img.shields.io/badge/Linux-x86__64%20(Active%20Production)-brightgreen.svg?logo=linux&logoColor=white)](https://github.com/ielfeqi-rgb/omni_engine/releases/latest)
+[![macOS Platform](https://img.shields.io/badge/macOS-Apple%20Silicon%20(v2.2.2%20Frozen%20Snapshot)-critical.svg?logo=apple&logoColor=white)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
+[![Windows Platform](https://img.shields.io/badge/Windows-WSL2%20(Supported)-blue.svg?logo=windows&logoColor=white)](#-quickstart-universal-1-line-sovereign-installer)
 [![Tests](https://img.shields.io/badge/Tests-152%2F152%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
-[![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20Cleanroom%20(W=∅)-purple.svg)](#core-architectural-pillars)
+[![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20%7C%20Apple%20Seatbelt-purple.svg)](#core-architectural-pillars)
 [![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)](#core-architectural-pillars)
 [![License](https://img.shields.io/badge/License-Dual%3A%20AGPLv3%20%2F%20Commercial-red.svg)](LICENSE)
 
 <br/>
 
 [**Overview**](#executive-overview) • 
-[**Google Colab Playground**](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb) • 
+[**Platform Matrix**](#-sovereign-platform-support-matrix) • 
 [**Empirical Benchmarks**](#empirical-benchmarks--showdown) • 
 [**Core Architecture**](#core-architectural-pillars) • 
-[**Quickstart (Standalone)**](#quickstart-standalone-binary) • 
+[**Quickstart (1-Line Installer)**](#-quickstart-universal-1-line-sovereign-installer) • 
 [**CLI Reference**](#cli-reference--usage) • 
-[**License & Commercial**](#license--commercial-use) • 
-[**Master Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md) • 
-[**Technical Whitepaper**](docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md)
+[**Google Colab**](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb) • 
+[**Master Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md)
 
 </div>
 
@@ -42,6 +43,26 @@ Unlike conventional AI coding assistants that rely on unconstrained ReAct loops�
 3. **In-Process C-FFI Inference**: Upstream `llama.cpp` is linked directly in RAM, enabling microsecond token steering, causal KV-cache slicing, and instant state rollback without socket latency.
 4. **Zero-Wipe Invariant ($W = \emptyset$)**: Code modifications are strictly additive or surgical. Previously verified functions, classes, and types are frozen in RAM VFS, making regression erasures mathematically impossible.
 5. **DX Diagnostic Shield**: Compiler diagnostics are captured with zero information loss and surfaced directly in terminal execution cards and `README.md` under `## 🛠️ Unresolved Diagnostics & Fix Hints (For Developer)`.
+
+### 🌐 Sovereign Platform Support Matrix
+
+| Platform | Target Architecture | Maintenance Status | Hardware Acceleration | Sandboxing Primitives | Update Lifecycle |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Linux** 🐧 | `x86_64` | **Active Production Core** | AVX2 / AVX-512 & NVIDIA CUDA | Linux Kernel Namespaces (`bwrap`) | Continuous (Dynamic Latest) |
+| **macOS** 🍏 | Apple Silicon (`arm64`, M1–M4) | **Frozen Hardware Snapshot** | Apple Metal GPU (`libggml-metal`) | Apple Seatbelt (`sandbox-exec`) + RAM VFS | **100% Frozen / Community Handover** ❄️ |
+| **Windows** 🪟 | `x86_64` | **Supported via WSL2** | Native CPU & WSL2 CUDA Passthrough | Linux Kernel Namespaces (`bwrap`) | Continuous via WSL2 |
+
+> [!WARNING]
+> **Official Policy on Apple / macOS (The Automatic "No" Policy & v2.2.2 Freeze)**
+> The macOS Apple Silicon build is delivered strictly as a **frozen hardware snapshot (`v2.2.2`)**. It achieves verified functional parity with the Linux core (in-process inference, Metal GPU acceleration, Apple Seatbelt sandboxing, and autonomous Maestro DAG synthesis). 
+> 
+> **From this second forward, macOS support is 100% abandoned by the author and handed over entirely to the open-source community.** The author will write zero further Apple-related code. If a future macOS update breaks it, fork it and fix it yourselves. Any Apple-related issues, pull requests, or emails will be ignored and closed on sight.
+> 
+> **Gatekeeper & The $99 Apple Tax:**
+> If macOS blocks execution with *"omni_engine cannot be opened because the developer cannot be verified"*: the author is not paying $99/year to Apple for a code-signing certificate for open-source software. To strip Apple's quarantine lock, run:
+> ```bash
+> xattr -cr ~/.omni
+> ```
 
 ---
 
@@ -105,50 +126,70 @@ When environment or compiler issues arise during cleanroom verification, the eng
 
 ---
 
-## ⚡ Quickstart (Standalone Binary)
+## ⚡ Quickstart: Universal 1-Line Sovereign Installer
 
-Omni Engine is distributed as a sovereign, self-contained standalone binary package for **Linux x86_64** and **macOS Apple Silicon (M1, M2, M3, M4)**.
+Install and configure Omni Engine on any supported operating system with a single command:
 
-### 1. Download & Extract Official Standalone Package
-
-#### 🐧 Linux x86_64:
 ```bash
-wget https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz
-tar -xzf omni_engine_v2.2.2_linux_x86_64.tar.gz
-cd omni_engine_v2.2.2_linux_x86_64
-chmod +x bin/omni_engine
-./bin/omni_engine --version
+curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
 ```
 
-#### 🍏 macOS Apple Silicon (M1, M2, M3, M4):
+### What the Universal Installer Does Automatically:
+1. **Host Environment Auto-Detection**:
+   - Detects Linux, macOS Apple Silicon, or Windows WSL2.
+   - For custom Virtual Machines, hypervisors, or unprivileged containers, safely displays an interactive selection menu so you select on your own responsibility.
+2. **Dependency & Sandboxing Audit**:
+   - **Linux**: Audits Python 3.9+ and Bubblewrap (`bwrap`); installs missing dependencies via your package manager (`apt`, `dnf`, `pacman`, `zypper`, `apk`).
+   - **macOS**: Audits Python 3.9+ via Homebrew (`brew`) and configures `DYLD_LIBRARY_PATH`.
+   - **Windows**: Seamlessly launches or instructs setup inside bare-metal WSL2.
+3. **Hardware-Matched Runtime Fetching**:
+   - **Linux**: Queries GitHub API dynamically for the latest production release, auto-selecting CUDA if an NVIDIA GPU is detected or standard universal CPU otherwise.
+   - **macOS**: Downloads the frozen `v2.2.2` Darwin `arm64` snapshot with native Metal GPU acceleration.
+4. **Shell Configuration & Tooling**:
+   - Deploys the universal CLI launcher `omni` to `~/.omni/bin` and updates your shell profile (`~/.bashrc` / `~/.zshrc`).
+   - Seeds the lightweight coding model (`qwen2.5-coder-1.5b-instruct-q4_k_m.gguf`) into `~/.omni/models/`.
+
+---
+
+### 🤖 Non-Interactive / Headless Installation (CI & Automation)
+
+For automated cloud runners, Dockerfiles, or headless agents, pass flags directly:
+
 ```bash
-# Download official Darwin ARM64 standalone release
-curl -LO https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz
-tar -xzf omni_engine_v2.2.2_darwin_arm64.tar.gz
-cd omni_engine_v2.2.2_darwin_arm64
-chmod +x bin/omni_engine
-./bin/omni_engine --version
+# Linux (Dynamic Latest, Auto-approve prompts)
+curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash -s -- --linux -y
+
+# macOS Apple Silicon (v2.2.2 Frozen Snapshot)
+curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash -s -- --macos -y
+
+# Windows (Launch 1-line installation inside WSL2)
+wsl -e bash -c "curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash"
 ```
 
-> [!TIP]
-> **Native Metal GPU Acceleration**: On macOS Apple Silicon, Omni Engine utilizes native `Metal.framework` via `libggml-metal.dylib` across the unified memory architecture (UMA) for high-speed inference without PCIe transfer bottlenecks.
-> 
-> **Zero Physical SSD Writes on macOS**: Test verification executes strictly inside in-memory RAM volumes (`hdiutil attach -nomount ram://`), guaranteeing untrusted code never touches the physical APFS SSD until cleanroom assertions pass 100%.
+---
 
-### 2. Download Recommended Coder Model
+### 📦 Manual Air-Gapped Packages (Offline Environments)
+
+For offline or air-gapped systems without internet access, pre-built standalone archives can be downloaded directly from [GitHub Releases](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2):
+
+| Platform | Archive Asset | SHA-256 Checksum |
+| :--- | :--- | :--- |
+| **Linux x86_64 (CPU)** | [`omni_engine_v2.2.2_linux_x86_64.tar.gz`](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz) | [Checksum](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz.sha256) |
+| **Linux x86_64 (CUDA)** | [`omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz`](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz) | [Checksum](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz.sha256) |
+| **macOS Apple Silicon (M1–M4)** | [`omni_engine_v2.2.2_darwin_arm64.tar.gz`](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz) | [Checksum](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz.sha256) |
+
+---
+
+### 🚀 Running the Engine
+
+Once installed, use the universal `omni` CLI alias from any terminal:
 
 ```bash
-mkdir -p models
-wget -c -O models/qwen2.5-coder-7b.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf
-```
+# 1. Open Sovereign Terminal Dashboard
+omni tui
 
-### 3. Run Autonomous Swarm
-
-```bash
-# Execute multi-goal software synthesis (verified output written hermetically as .tar.gz)
-./bin/omni_engine run "Build an asynchronous rate-limited web scraper in Rust with unit tests" \
-  --model models/qwen2.5-coder-7b.gguf \
+# 2. Run Autonomous Multi-Agent Synthesis
+omni run "Build an asynchronous rate-limited web scraper in Rust with unit tests" \
   --output-dir ./workspace \
   --subgoals 4 \
   --steps 3 \

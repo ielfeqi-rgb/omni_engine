@@ -46,7 +46,8 @@ Our roadmap adheres strictly to the **"Grounded Systems Engineering"** philosoph
 - [x] **Sovereign In-Memory VFS**: Complete decoupling from host disk state; zero host queries during AST verification.
 - [x] **Hermetic Archive Packaging**: All deliverables and partial rescue materials packaged directly from RAM VFS into `.tar.gz` archives.
 - [x] **Hardware Acceleration Split**: Dedicated universal CPU and high-speed CUDA (`libggml-cuda.so`) distribution packages.
-- [x] **Production Verification**: 151/151 library unit tests passing with zero failures and zero compiler warnings.
+- [x] **macOS Apple Silicon Hardware Snapshot (v2.2.2 Freeze)**: Full functional parity for Apple Silicon (M1–M4) with native Metal acceleration; permanently frozen as final snapshot.
+- [x] **Production Verification**: 152/152 library unit tests passing with zero failures and zero compiler warnings.
 
 ---
 

@@ -229,6 +229,10 @@ if [ "${CHOICE}" = "3" ]; then
 
         if command -v wsl.exe >/dev/null 2>&1 || [ -f "/c/Windows/System32/wsl.exe" ]; then
             echo -e "${GREEN}[+] WSL2 is detected on your Windows machine!${RESET}"
+            echo -e "${GREEN}[*] WSL2 Dependency Guarantee:${RESET} Inside WSL2, the installer will automatically"
+            echo -e "    audit and install all required Linux dependencies (Python 3.9+, Bubblewrap,"
+            echo -e "    and sandboxing primitives) using your WSL distribution package manager (apt/dnf)."
+            echo ""
             echo -e "To install and run Omni Engine in 1 line inside WSL, simply run:"
             echo ""
             echo -e "    ${CYAN}${BOLD}wsl -e bash -c \"curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash\"${RESET}"
@@ -268,6 +272,12 @@ if [ "${CHOICE}" = "2" ]; then
     echo -e "    with ${RED}${BOLD}NO future updates${RESET} from the author."
     echo -e "    Support is 100% abandoned and handed to the community."
     echo -e "    If a future macOS update breaks it, fork it and fix it yourselves. 🙂"
+    echo ""
+    echo -e "    ${BOLD}Gatekeeper & The Apple Tax:${RESET}"
+    echo -e "    If macOS whines about 'unverified developer' or Gatekeeper blocks the binary:"
+    echo -e "    No, I am NOT paying \$99/year to a trillion-dollar company for a certificate."
+    echo -e "    If needed, strip Apple's quarantine bureaucracy yourself:"
+    echo -e "        ${CYAN}xattr -cr ~/.omni${RESET}"
     echo -e "${YELLOW}${BOLD}================================================================${RESET}\n"
 
     # Architecture verification
@@ -288,6 +298,34 @@ if [ "${CHOICE}" = "2" ]; then
     echo -e "[*] Metal GPU Acceleration: ${GREEN}libggml-metal runtime ready${RESET}"
     echo -e "[*] Sandbox: ${GREEN}Apple Seatbelt (sandbox-exec) fail-closed profile${RESET}"
 
+    # Dependency audit for macOS
+    MAC_MISSING_PKGS=()
+    if command -v python3 >/dev/null 2>&1; then
+        PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")"
+        PY_MAJOR="$(echo "${PY_VER}" | cut -d. -f1)"
+        PY_MINOR="$(echo "${PY_VER}" | cut -d. -f2)"
+        if [ "${PY_MAJOR}" -ge 3 ] && [ "${PY_MINOR}" -ge 9 ]; then
+            echo -e "[+] Python Runtime: ${GREEN}Python ${PY_VER} (OK)${RESET}"
+        else
+            echo -e "${YELLOW}[!] Python Runtime: Detected Python ${PY_VER} (Recommended: 3.9+)${RESET}"
+            MAC_MISSING_PKGS+=("python@3.11")
+        fi
+    else
+        echo -e "${YELLOW}[!] Python Runtime: Not found.${RESET}"
+        MAC_MISSING_PKGS+=("python@3.11")
+    fi
+
+    if [ ${#MAC_MISSING_PKGS[@]} -gt 0 ]; then
+        if command -v brew >/dev/null 2>&1; then
+            echo -e "\n[*] Homebrew detected: Installing recommended dependencies (${MAC_MISSING_PKGS[*]})..."
+            brew install "${MAC_MISSING_PKGS[@]}" || {
+                echo -e "${YELLOW}[!] Brew installation failed. You can manually run: brew install ${MAC_MISSING_PKGS[*]}${RESET}"
+            }
+        else
+            echo -e "${YELLOW}[!] Notice: Homebrew (brew) not detected. To install Python 3.9+, visit: https://brew.sh${RESET}"
+        fi
+    fi
+
     echo -e "\n[*] Downloading frozen macOS snapshot (${FROZEN_MACOS_VERSION})..."
     TMP_DIR="$(mktemp -d)"
     if command -v curl >/dev/null 2>&1; then
@@ -304,6 +342,29 @@ if [ "${CHOICE}" = "2" ]; then
     rm -rf "${TMP_DIR}"
 
     chmod +x "${BIN_DIR}/omni_engine" 2>/dev/null || true
+
+    # Strip Apple Gatekeeper quarantine flag automatically
+    if command -v xattr >/dev/null 2>&1; then
+        echo -e "[*] Stripping Apple Gatekeeper quarantine attributes (xattr -cr)..."
+        xattr -cr "${INSTALL_DIR}" 2>/dev/null || xattr -d com.apple.quarantine "${BIN_DIR}/omni_engine" 2>/dev/null || true
+    fi
+
+    # Download default offline coding model (Qwen 1.5B)
+    MODEL_NAME="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+    MODEL_PATH="${MODELS_DIR}/${MODEL_NAME}"
+    MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+
+    if [ -f "./models/${MODEL_NAME}" ]; then
+        echo -e "[*] Linking local model from current directory..."
+        ln -sf "$(pwd)/models/${MODEL_NAME}" "${MODEL_PATH}"
+    elif [ ! -f "${MODEL_PATH}" ]; then
+        echo -e "[*] Downloading default offline coding model (${MODEL_NAME}, ~1.1GB)..."
+        if command -v curl >/dev/null 2>&1; then
+            curl -L --progress-bar -o "${MODEL_PATH}" "${MODEL_URL}" || true
+        elif command -v wget >/dev/null 2>&1; then
+            wget --show-progress -O "${MODEL_PATH}" "${MODEL_URL}" || true
+        fi
+    fi
 
     # Create wrapper launcher
     cat << 'EOF' > "${BIN_DIR}/omni"
@@ -341,6 +402,8 @@ EOF
     echo -e "  ${CYAN}omni run --plan-file ./plan.json${RESET}         # Execute Maestro Protocol Blueprint"
     echo -e "\nTo reload your shell right now:"
     echo -e "  ${YELLOW}source ${SHELL_RC}${RESET}\n"
+    echo -e "${DIM}Note: If Gatekeeper ever complains about an unverified developer, run:${RESET}"
+    echo -e "  ${CYAN}xattr -cr ~/.omni${RESET}\n"
     exit 0
 fi
 
