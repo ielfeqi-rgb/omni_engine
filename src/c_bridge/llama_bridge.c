@@ -1,11 +1,11 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-
-
 #include <stdbool.h>
 #include <math.h>
+#include <dlfcn.h>
+#include <libgen.h>
 
 #include "include/llama.h"
 #include "include/ggml-backend.h"
@@ -24,6 +24,22 @@ static void omni_ensure_backends_loaded(void) {
     ggml_backend_load_all_from_path("../bin");
     ggml_backend_load_all_from_path("../../bin");
     ggml_backend_load_all_from_path("target/release");
+
+    Dl_info dl_info;
+    if (dladdr((void*)omni_ensure_backends_loaded, &dl_info) && dl_info.dli_fname) {
+        char path_buf[1024];
+        strncpy(path_buf, dl_info.dli_fname, sizeof(path_buf) - 1);
+        path_buf[sizeof(path_buf) - 1] = '\0';
+        char * dir = dirname(path_buf);
+        if (dir && strlen(dir) > 0) {
+            ggml_backend_load_all_from_path(dir);
+            char sub_buf[1024];
+            snprintf(sub_buf, sizeof(sub_buf), "%s/bin", dir);
+            ggml_backend_load_all_from_path(sub_buf);
+            snprintf(sub_buf, sizeof(sub_buf), "%s/../bin", dir);
+            ggml_backend_load_all_from_path(sub_buf);
+        }
+    }
 }
 
 void omni_llama_backend_load_from_path(const char * path) {
@@ -50,6 +66,20 @@ struct llama_model * omni_llama_load_model(const char * path, int n_gpu_layers) 
     omni_ensure_backends_loaded();
     struct llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = n_gpu_layers;
+
+    static ggml_backend_dev_t cpu_devices[2] = {NULL, NULL};
+    const char * force_cpu = getenv("OMNI_FORCE_CPU");
+    bool is_cpu = (n_gpu_layers <= 0) || (force_cpu && (strcmp(force_cpu, "1") == 0 || strcmp(force_cpu, "true") == 0 || strcmp(force_cpu, "TRUE") == 0));
+
+    if (is_cpu) {
+        ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        if (cpu_dev) {
+            cpu_devices[0] = cpu_dev;
+            cpu_devices[1] = NULL;
+            mparams.devices = cpu_devices;
+        }
+    }
+
     return llama_model_load_from_file(path, mparams);
 }
 
