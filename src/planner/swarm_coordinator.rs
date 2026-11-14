@@ -3260,7 +3260,11 @@ impl SwarmCoordinator {
         let task_id = subgoal.id;
         let subgoal_desc = subgoal.description.clone();
 
-        s.spawn(move || {
+        let builder = std::thread::Builder::new()
+            .name(format!("omni-worker-{}", task_id))
+            .stack_size(8 * 1024 * 1024);
+
+        let _ = builder.spawn_scoped(s, move || {
             let res = catch_unwind(AssertUnwindSafe(|| {
                 // Thread-Local NativeLlamaContext instantiation
                 let mut worker_ctx = coordinator.worker_model
