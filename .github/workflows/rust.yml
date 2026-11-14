@@ -45,7 +45,7 @@ jobs:
 
   macos_apple_silicon:
     name: macOS Apple Silicon (M1-M4) Build & Verify
-    runs-on: macos-14
+    runs-on: macos-latest
     env:
       DYLD_LIBRARY_PATH: ${{ github.workspace }}/bin
     steps:
@@ -54,7 +54,15 @@ jobs:
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Cache Native llama.cpp Libraries
+      id: cache-llama
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: macos-llama-metal-v2.2.2
+
     - name: Compile Native llama.cpp with Metal Acceleration
+      if: steps.cache-llama.outputs.cache-hit != 'true'
       run: |
         mkdir -p bin
         git clone --depth 1 https://github.com/ggerganov/llama.cpp.git llama_src
