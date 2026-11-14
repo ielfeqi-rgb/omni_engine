@@ -109,17 +109,17 @@ fn main() {
             let mut ctx = model.create_context(n_ctx, n_batch, 4).unwrap();
             ctx.eval_tokens(&prefix_tokens, 0).unwrap();
             let start = Instant::now();
-            ctx.eval_tokens(&new_tokens, prefix_tokens.len() as i32).unwrap();
+            ctx.eval_tokens(&new_tokens, 0).unwrap();
             stat_monotonic.add(start.elapsed().as_secs_f64() * 1000.0);
         }
         
         {
             let mut ctx = model.create_context(n_ctx, n_batch, 4).unwrap();
             ctx.eval_tokens(&prefix_tokens, 0).unwrap();
-            ctx.eval_tokens(&wrong_tokens, prefix_tokens.len() as i32).unwrap();
+            ctx.eval_tokens(&wrong_tokens, 0).unwrap();
             let start = Instant::now();
             let _ = ctx.kv_cache_seq_rm(0, prefix_tokens.len() as i32, -1);
-            ctx.eval_tokens(&new_tokens, prefix_tokens.len() as i32).unwrap();
+            ctx.eval_tokens(&new_tokens, 0).unwrap();
             stat_rollback.add(start.elapsed().as_secs_f64() * 1000.0);
         }
         

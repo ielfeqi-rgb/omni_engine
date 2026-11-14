@@ -635,7 +635,6 @@ pub fn detect_and_save_model_tokens(
         if let Ok(tokens) = model.tokenize(&prefill_input, true) {
             if ctx.eval_tokens(&tokens, 0).is_ok() {
                 if let Ok(mut sampler) = NativeLlamaSampler::new(&SamplingConfig::greedy(), model.n_vocab()) {
-                    let mut cursor = tokens.len() as i32;
                     for _ in 0..6 {
                         if let Ok(tok) = ctx.sample(&mut sampler) {
                             if is_valid_special_stop_token(model, tok) {
@@ -654,8 +653,10 @@ pub fn detect_and_save_model_tokens(
                                 }
                                 break;
                             }
-                            let _ = ctx.eval_tokens(&[tok], cursor);
-                            cursor += 1;
+                            sampler.accept(tok);
+                            if ctx.eval_tokens(&[tok], 0).is_err() {
+                                break;
+                            }
                         } else {
                             break;
                         }

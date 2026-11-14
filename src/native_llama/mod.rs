@@ -286,15 +286,16 @@ impl NativeLlamaModel {
 
     /// Tokenize raw text into integer token IDs using the model's native vocabulary.
     pub fn tokenize(&self, text: &str, add_bos: bool) -> Result<Vec<i32>, String> {
+        if text.is_empty() && !add_bos {
+            return Ok(Vec::new());
+        }
         let _guard = self.tokenize_lock.lock().map_err(|e| format!("Tokenize lock poisoned: {}", e))?;
-        let c_text = CString::new(text.as_bytes())
-            .map_err(|e| format!("Invalid text string: {}", e))?;
 
         let mut buffer: Vec<i32> = vec![0; text.len() + 16];
         let count = unsafe {
             omni_llama_tokenize(
                 self.raw_model,
-                c_text.as_ptr(),
+                text.as_ptr() as *const c_char,
                 text.len() as i32,
                 buffer.as_mut_ptr(),
                 buffer.len() as i32,
