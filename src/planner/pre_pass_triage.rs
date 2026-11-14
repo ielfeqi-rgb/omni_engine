@@ -124,7 +124,7 @@ impl PrePassTriage {
                     "terminal.logs(20) -> inspect failure logs and diagnose".to_string(),
                     vec![
                         "terminal only: do NOT write files or use vfs".to_string(),
-                        "linux native only, no windows pe .exe".to_string(),
+                        "POSIX / UNIX native only (Linux & macOS)".to_string(),
                         "safe commands only, check exit codes with terminal.status".to_string(),
                     ],
                 )
@@ -134,7 +134,7 @@ impl PrePassTriage {
                     "terminal.exec(\"install command or portable script\")".to_string(),
                     format!("vfs.write(\"{}\", \"#!/usr/bin/env bash\\n...\") -> synthesize launcher script", target_str),
                     vec![
-                        "linux native only, no windows pe .exe".to_string(),
+                        "POSIX / UNIX native only (Linux & macOS)".to_string(),
                         "safe commands only, check exit codes".to_string(),
                     ],
                 )

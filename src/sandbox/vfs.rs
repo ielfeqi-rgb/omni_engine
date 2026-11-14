@@ -135,7 +135,7 @@ impl StagedDiff {
 
 /// In-Memory Virtual File System (VFS).
 /// Fully isolated inside RAM with zero initial host disk side-effects.
-/// Compatible with Windows and Linux paths.
+/// Compatible with Linux and macOS POSIX paths.
 pub struct MemoryVfs {
     files: RwLock<HashMap<PathBuf, Vec<u8>>>,
     original_snapshots: RwLock<HashMap<PathBuf, Vec<u8>>>,

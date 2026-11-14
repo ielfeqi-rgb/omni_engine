@@ -128,21 +128,12 @@ pub enum HostPackageManager {
     Zypper,
     Apk,
     Brew,
-    Winget,
     Pip,
 }
 
 impl HostPackageManager {
     /// Detect the primary package manager available on the host system dynamically.
     pub fn detect() -> Self {
-        #[cfg(target_os = "windows")]
-        {
-            if std::path::Path::new("C:\\Program Files\\WindowsApps").exists() {
-                return HostPackageManager::Winget;
-            }
-            return HostPackageManager::Pip;
-        }
-
         #[cfg(target_os = "macos")]
         {
             if std::path::Path::new("/opt/homebrew/bin/brew").exists()
@@ -224,9 +215,6 @@ impl HostPackageManager {
                 match self {
                     HostPackageManager::Brew => {
                         format!("brew install {} || python3 -m pip install --user {}", dep, dep)
-                    }
-                    HostPackageManager::Winget => {
-                        format!("python -m pip install --user {} || pip install --user {}", dep, dep)
                     }
                     _ => {
                         format!(

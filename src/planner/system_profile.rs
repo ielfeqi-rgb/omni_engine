@@ -33,18 +33,16 @@ impl GroundedSystemProfile {
     }
 
     pub fn build_tailored_prompt(tools: &[ToolCapability]) -> String {
-        let os_name = if cfg!(target_os = "windows") {
-            "Windows"
-        } else if cfg!(target_os = "macos") {
+        let os_name = if cfg!(target_os = "macos") {
             "macOS"
         } else {
             "Linux"
         };
 
-        let platform_rule = if cfg!(target_os = "windows") {
-            "- Host Platform is Windows. Executable binaries are PE (.exe), PowerShell and CMD are native."
+        let platform_rule = if cfg!(target_os = "macos") {
+            "- Host Platform is macOS (Apple Silicon / Darwin). Use standard POSIX/UNIX tools, Python, Clang, Rust, or Bash."
         } else {
-            "- Host Platform is Linux. Windows PE binaries (.exe) CANNOT run natively here. Always implement Linux/Cross-Platform solutions (Bash, Python, Flatpak, Rust ELF)."
+            "- Host Platform is Linux. Use standard Linux/POSIX utilities (Bash, Python, Rust ELF, etc.)."
         };
 
         if tools.is_empty() {
