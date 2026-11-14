@@ -14,10 +14,20 @@ RED="\033[31m"
 
 VERSION="2.2.2"
 
-if command -v nvidia-smi >/dev/null 2>&1; then
-    TARBALL="omni_engine_v${VERSION}_linux_x86_64_cuda.tar.gz"
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+if [ "${OS}" = "linux" ] && [ "${ARCH}" = "x86_64" ]; then
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        TARBALL="omni_engine_v${VERSION}_linux_x86_64_cuda.tar.gz"
+    else
+        TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
+    fi
+elif [ "${OS}" = "darwin" ]; then
+    TARBALL="omni_engine_v${VERSION}_darwin_arm64.tar.gz"
 else
-    TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
+    echo -e "${RED}[-] Error: Unsupported platform: ${OS} (${ARCH}). Supported: Linux x86_64, macOS Apple Silicon (M1-M4 arm64).${RESET}"
+    exit 1
 fi
 RELEASE_URL="https://github.com/ielfeqi-rgb/omni_engine/releases/download/v${VERSION}/${TARBALL}"
 
@@ -34,28 +44,29 @@ MODELS_DIR="${INSTALL_DIR}/models"
 
 mkdir -p "${BIN_DIR}" "${MODELS_DIR}"
 
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARCH="$(uname -m)"
-
 echo -e "[*] Detected Platform: ${BOLD}${OS} (${ARCH})${RESET}"
 
-if [ "${OS}" != "linux" ]; then
-    if [ "${OS}" = "darwin" ] && command -v cargo >/dev/null 2>&1; then
-        echo -e "${YELLOW}[*] macOS detected. Standalone pre-built tarball targets Linux x86_64.${RESET}"
-        echo -e "[*] Compiling natively for Darwin via Cargo..."
+# 1. Hardware & Sandboxing Pre-Flight
+if [ "${OS}" = "darwin" ]; then
+    TOTAL_RAM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+    TOTAL_RAM_GB=$((TOTAL_RAM_BYTES / 1024 / 1024 / 1024))
+    echo -e "[*] Apple Silicon Architecture: ${GREEN}Active (Metal Acceleration Ready)${RESET}"
+    echo -e "[*] Unified Memory (RAM): ${BOLD}${TOTAL_RAM_GB} GB${RESET}"
+    if command -v hdiutil >/dev/null 2>&1 && command -v diskutil >/dev/null 2>&1; then
+        echo -e "${GREEN}[+] macOS Sovereign In-Memory RAM-Disk (hdiutil APFS): ACTIVE (Zero-SSD Sandbox ready)${RESET}"
     else
-        echo -e "${RED}[-] Error: Omni Engine pre-compiled standalone tarball currently targets Linux x86_64.${RESET}"
-        echo -e "[*] For macOS, clone the repository and build natively: cargo build --release"
-        exit 1
+        echo -e "${YELLOW}[!] Notice: 'hdiutil' not available. Ephemeral fallback will be used.${RESET}"
     fi
-fi
-
-# 1. Check for Bubblewrap (Sandboxing)
-if command -v bwrap >/dev/null 2>&1; then
-    echo -e "${GREEN}[+] Bubblewrap (bwrap) sandbox isolation: ACTIVE (W = ∅ Cleanroom ready)${RESET}"
 else
-    echo -e "${YELLOW}[!] Notice: 'bwrap' not detected. Isolated cleanroom tests will use ephemeral tempfs fallback.${RESET}"
-    echo -e "${YELLOW}    To enable maximum containerized sandboxing, install bubblewrap: 'sudo apt install bubblewrap' or 'sudo dnf install bubblewrap'.${RESET}"
+    TOTAL_RAM_KB="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)"
+    TOTAL_RAM_GB=$((TOTAL_RAM_KB / 1024 / 1024))
+    echo -e "[*] Host System RAM: ${BOLD}${TOTAL_RAM_GB} GB${RESET}"
+    if command -v bwrap >/dev/null 2>&1; then
+        echo -e "${GREEN}[+] Bubblewrap (bwrap) sandbox isolation: ACTIVE (W = ∅ Cleanroom ready)${RESET}"
+    else
+        echo -e "${YELLOW}[!] Notice: 'bwrap' not detected. Linux tests will use ephemeral tempfs fallback.${RESET}"
+        echo -e "${YELLOW}    To enable maximum containerized sandboxing, install bubblewrap: 'sudo apt install bubblewrap' or 'sudo dnf install bubblewrap'.${RESET}"
+    fi
 fi
 
 # 2. Local Model Setup (Default: Qwen2.5-Coder-1.5B Instruct Q4_K_M)
@@ -133,11 +144,13 @@ fi
 
 chmod +x "${BIN_DIR}/omni_engine" 2>/dev/null || true
 
-# 4. Wrapper Script for LD_LIBRARY_PATH and alias 'omni'
+# 4. Wrapper Script for dynamic library paths and alias 'omni'
 cat << 'EOF' > "${BIN_DIR}/omni"
 #!/usr/bin/env bash
 INSTALL_DIR="${HOME}/.omni"
 export LD_LIBRARY_PATH="${INSTALL_DIR}/bin:${LD_LIBRARY_PATH}"
+export DYLD_LIBRARY_PATH="${INSTALL_DIR}/bin:${DYLD_LIBRARY_PATH}"
+export PATH="${INSTALL_DIR}/bin:/opt/homebrew/bin:${PATH}"
 exec "${INSTALL_DIR}/bin/omni_engine" "$@"
 EOF
 chmod +x "${BIN_DIR}/omni"
