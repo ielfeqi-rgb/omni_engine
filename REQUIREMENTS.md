@@ -1,79 +1,89 @@
 # Omni Engine - System Requirements & Dependencies
 
-Omni Engine is completely decoupled from model weights and external library builds. It does not bundle heavy model weights or custom `llama.cpp` builds, preserving full freedom to update upstream libraries.
+Omni Engine is an autonomous, in-process software engineering runtime written in 100% pure Rust. It is completely self-contained and decoupled from model weights, allowing zero-cost local execution without cloud APIs or external daemons.
 
 ---
 
-## 1. System Requirements
+## 1. Operating System & Hardware Requirements
 
-### Host Dependencies
-- **Rust Toolchain**: `rustc` / `cargo` (1.80+ recommended)
-- **C/C++ Compiler**: `clang` or `gcc` (with C11 / C++17 support)
-- **CMake & Ninja**: (for building upstream `llama.cpp`)
-- **Bubblewrap (`bwrap`)**: Linux user namespace container isolation for zero-write sandbox cleanrooms (`sudo apt install bubblewrap` / `sudo dnf install bubblewrap`)
+### 🐧 Linux (x86_64) — Active Production Core
+- **Architecture**: `x86_64` / `amd64` (with AVX2 or AVX-512 support)
+- **Kernel**: Linux 5.4+ with unprivileged user namespaces enabled
+- **Cleanroom Sandboxing**: Bubblewrap (`bwrap`) for hermetic zero-host-write VFS execution (`apt install bubblewrap` / `dnf install bubblewrap`)
+- **Acceleration**:
+  - **CPU**: Universal CPU binary with AVX2 vectorization
+  - **GPU**: NVIDIA GPU (Compute Capability 7.0+, e.g. Tesla T4, RTX 3000/4000 series) with CUDA drivers (`libggml-cuda.so`)
+- **Shared Libraries**: `libllama.so`, `libggml.so`, `libggml-base.so`, `libggml-cpu.so` (pre-bundled in release tarballs)
+- **Lifecycle**: Continuous production updates (Dynamic Latest)
 
-### ⚠️ Important Notice: Source Repository vs. Release Bundles
-To keep the git source repository lightweight, raw model weights (`.gguf`) and compiled binaries are excluded from the git tree. However:
-1. **Official Release Bundles (`v2.2.2` tar.gz):** Come pre-bundled with verified `llama.cpp` shared libraries inside `bin/` for instant, zero-compile execution (available in both standalone CPU and CUDA GPU acceleration variants).
-2. **Source Builds:** Developers building from source can either drop pre-compiled `.so` files into `./bin/` or compile upstream `llama.cpp` manually for custom hardware flags (AVX-512, CUDA, Vulkan).
+### 🍏 macOS Apple Silicon (M1–M4, arm64) — Frozen Hardware Snapshot (v2.2.2)
+- **Architecture**: Native Apple Silicon (`arm64`, M1, M2, M3, M4)
+- **OS**: macOS 12.0+ (Monterey, Ventura, Sonoma, Sequoia)
+- **RAM**: 8 GB minimum unified memory (16 GB+ recommended for 7B models)
+- **Cleanroom Sandboxing**: Apple Seatbelt (`sandbox-exec`) fail-closed profile with ephemeral APFS RAM disk
+- **Acceleration**: Native Apple Metal framework (`libggml-metal.dylib`)
+- **Gatekeeper & Apple Tax**:
+  - Unsigned/unnotarized open-source build: The author will **not** pay $99/year to Apple for a code-signing certificate.
+  - If macOS blocks execution with *"developer cannot be verified"*, strip Apple's quarantine flag:
+    ```bash
+    xattr -cr ~/.omni
+    ```
+- **Lifecycle**: **Permanently Frozen Snapshot (`v2.2.2`)**. Handed over 100% to the open-source community. Zero further author updates.
 
-### Verified Upstream llama.cpp Build
-The current production release (`v2.2.2`) is verified against:
-- **Upstream Version:** `v0.6.0-dev`
-- **Build Number:** `11429`
-- **Git Commit:** `d81235049`
-- **Dynamic Libraries Required:** `libllama.so.0.6.0`, `libggml.so.0.26.0`, `libggml-base.so.0.26.0`, `libggml-cpu.so`
+### 🪟 Windows (x86_64) — Supported via WSL2
+- **Architecture**: `x86_64`
+- **Subsystem**: Windows Subsystem for Linux (WSL2) with Ubuntu or Debian
+- **Requirements**: WSL2 enabled via `wsl --install` in PowerShell
+- **Performance**: 100% bare-metal Linux kernel performance with native GPU passthrough
 
-### llama.cpp Shared Libraries Setup
+---
 
-Omni Engine dynamically links against `llama.cpp` (`libllama.so`, `libggml.so`, `libggml-base.so`, `libggml-cpu.so`).
+## 2. Clarification on Target Language Runtimes
 
-#### Option A: Quick Build from Source (Recommended, ~2 minutes)
+> [!IMPORTANT]
+> **Omni Engine is NOT a Python application.** It is written in **100% pure Rust** and compiled to a native ELF/Mach-O executable. It requires **zero external language runtimes** to boot, run, and infer.
+>
+> Runtimes like Python, Cargo (Rust), and Node.js are **Optional Target Compilers**:
+> - If you instruct Omni Engine to generate a **Python** project (`omni run "Build a FastAPI backend"`), the sandbox invokes `python3` to run tests and verify AST syntax.
+> - If you instruct Omni Engine to build a **Rust** project, it invokes `cargo` and `rustc`.
+> - If you instruct Omni Engine to build a **Node.js** project, it invokes `node` or `npm`.
+>
+> If you do not intend to synthesize Python projects, Python is **not required** on your system.
+
+---
+
+## 3. Official Upstream llama.cpp Dynamic Linkage
+
+Omni Engine links upstream `llama.cpp` directly in-process via C-FFI for microsecond causal KV-cache steering:
+
+- **Upstream Version**: `v0.6.0-dev`
+- **Build Number**: `11429`
+- **Git Commit**: `d81235049`
+
+### Pre-Bundled Release Assets:
+End-users do **not** need to compile `llama.cpp`. The universal 1-line installer and official GitHub release tarballs bundle pre-verified shared libraries inside `bin/`:
+- **Linux CPU**: `libllama.so`, `libggml.so`, `libggml-cpu.so`
+- **Linux CUDA**: `libllama.so`, `libggml.so`, `libggml-cuda.so`
+- **macOS Metal**: `libllama.dylib`, `libggml.dylib`, `libggml-metal.dylib`
+
+### Building from Source (Custom Flags / Contributors Only):
 ```bash
-# 1. Clone official upstream llama.cpp
 git clone https://github.com/ggerganov/llama.cpp.git
 cd llama.cpp
-
-# 2. Build shared libraries (CPU or with GPU acceleration flags)
 cmake -B build -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release -j$(nproc)
-
-# 3. Export LLAMA_CPP_DIR or copy shared libraries
-export LLAMA_CPP_DIR=$(pwd)/build/bin
-export LD_LIBRARY_PATH="${LLAMA_CPP_DIR}:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$(pwd)/build/bin:${LD_LIBRARY_PATH}"
 ```
 
-#### Option B: Local Project Directory
-Place your compiled shared libraries directly into `./bin/` or `~/.omni/bin/`:
-- `libllama.so`
-- `libggml.so`
-- `libggml-base.so`
-- `libggml-cpu.so`
-
-#### Option C: System-Wide Installation
-Install the shared libraries into `/usr/local/lib` or `/usr/lib`, where Omni Engine's linker searches automatically.
-
 ---
 
-## 2. Recommended GGUF Models
+## 4. Supported GGUF Model Families
 
-Omni Engine automatically detects model vocabulary, prompt framing (ChatML, Llama-3, Phi-4, Gemma, Spark-X2.5, or fallback), stop tokens, and FIM infill capabilities using its **Universal Triangulated Detection Protocol & Empirical Chamber Verification**.
+Omni Engine automatically probes model vocabulary, prompt templates, stop tokens, and FIM code infill signatures at runtime:
 
-You can run Omni Engine with any of the following models:
-
-| Model Architecture | Recommended GGUF File | Family | Strengths |
+| Model Architecture | Recommended Quant | Context Window | Best Use Case |
 | :--- | :--- | :--- | :--- |
-| **Qwen 2.5 Coder** | `qwen2.5-coder-1.5b-instruct-q4_k_m.gguf` | ChatML | Ultrafast 1.5B agent, native FIM infill, highly accurate syntax generation |
-| **Microsoft Phi-4** | `phi-4-mini-instruct-q4_k_m.gguf` | Phi-4 | High reasoning density, compact math and logic |
-| **iFlytek Spark-X** | `spark-x2.5-4b-instruct-q4_k_m.gguf` | Spark / Hybrid | Sliding-window hybrid attention |
-| **Google Gemma 2** | `gemma-2-2b-it-q4_k_m.gguf` | Gemma | Clean instruction adherence, lightweight footprint |
-
----
-
-## 3. How Omni Engine Adapts Dynamically
-
-When a model is loaded:
-1. **Layer 1: Structural Vocabulary Signature Probing**: Probes tokenizer single-token IDs for signature tokens (`<|im_start|>`, `<|start_header_id|>`, `<|user|>`, `<start_of_turn>`, `<｜start·of·sentence｜>`).
-2. **Layer 2: Assistant-Prefill Chamber Verification**: Executes a zero-temperature prefill test (`Echo exactly: TEST`) to empirically capture the model's exact native EOT / EOS token ID.
-3. **Layer 3: FIM Code Infill Signature**: Identifies code infilling tokens (`<|fim_prefix|>` vs `<fim_prefix>`).
-4. **Layer 4: Manifest Caching**: Writes a cached descriptor to `<model_path>.omni.json` for zero-overhead subsequent startups.
+| **Qwen 2.5 Coder** (1.5B / 7B) | `Q4_K_M` / `Q6_K` | 4,096 – 16,384 tokens | Native FIM code infill, high AST accuracy |
+| **Microsoft Phi-4** (Mini) | `Q4_K_M` | 4,096 – 8,192 tokens | High logic density, compact reasoning |
+| **Google Gemma 2** (2B / 9B) | `Q4_K_M` | 4,096 – 8,192 tokens | Precise instruction following |
+| **DeepSeek Coder v2** | `Q4_K_M` | 4,096 – 16,384 tokens | Multi-file algorithmic architecture |

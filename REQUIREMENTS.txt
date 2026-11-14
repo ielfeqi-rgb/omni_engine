@@ -1,0 +1,90 @@
+================================================================================
+  OMNI ENGINE - SYSTEM REQUIREMENTS & RUNTIME DEPENDENCIES
+================================================================================
+
+Omni Engine is an autonomous, in-process software engineering runtime written
+in 100% pure Rust. It is completely self-contained and decoupled from model
+weights, allowing zero-cost local execution without cloud APIs or external
+daemons.
+
+--------------------------------------------------------------------------------
+1. OPERATING SYSTEM & HARDWARE REQUIREMENTS
+--------------------------------------------------------------------------------
+
+[A] LINUX (x86_64) - Active Production Core
+  - Architecture: x86_64 / amd64 (AVX2 or AVX-512 vectorization)
+  - Kernel: Linux 5.4+ with unprivileged user namespaces enabled
+  - Cleanroom Sandboxing: Bubblewrap (bwrap) for zero-host-write execution
+    Install: 'sudo apt install bubblewrap' or 'sudo dnf install bubblewrap'
+  - Acceleration:
+    * CPU: Universal CPU binary with AVX2 vectorization
+    * GPU: NVIDIA GPU (Compute Capability 7.0+, Tesla T4, RTX series) with CUDA
+  - Bundled Libraries: libllama.so, libggml.so, libggml-base.so, libggml-cpu.so
+  - Lifecycle: Continuous production updates (Dynamic Latest)
+
+[B] macOS APPLE SILICON (M1-M4, arm64) - Frozen Hardware Snapshot (v2.2.2)
+  - Architecture: Native Apple Silicon (arm64, M1, M2, M3, M4)
+  - OS: macOS 12.0+ (Monterey, Ventura, Sonoma, Sequoia)
+  - RAM: 8 GB minimum unified memory (16 GB+ recommended for 7B models)
+  - Cleanroom Sandboxing: Apple Seatbelt (sandbox-exec) with APFS RAM disk
+  - Acceleration: Native Apple Metal GPU framework (libggml-metal.dylib)
+  - Gatekeeper & Apple Tax:
+    Unsigned/unnotarized open-source build: The author will NOT pay $99/year
+    to Apple for a code-signing certificate.
+    If macOS blocks execution with "developer cannot be verified", run:
+        xattr -cr ~/.omni
+  - Lifecycle: Permanently Frozen Snapshot (v2.2.2). Handed over 100% to the
+    open-source community. Zero further author updates.
+
+[C] WINDOWS (x86_64) - Supported via WSL2
+  - Architecture: x86_64
+  - Subsystem: Windows Subsystem for Linux (WSL2) with Ubuntu or Debian
+  - Setup: Enable via 'wsl --install' in an Administrator PowerShell
+  - Performance: 100% bare-metal Linux performance with native GPU passthrough
+
+--------------------------------------------------------------------------------
+2. CLARIFICATION ON TARGET LANGUAGE RUNTIMES
+--------------------------------------------------------------------------------
+
+IMPORTANT:
+Omni Engine is NOT a Python application. It is written in 100% pure Rust and
+compiled to a native ELF/Mach-O executable. It requires ZERO external language
+runtimes to boot, run, and infer.
+
+Runtimes like Python, Cargo (Rust), and Node.js are OPTIONAL TARGET COMPILERS:
+  - If you instruct Omni Engine to generate a Python project
+    ('omni run "Build a FastAPI backend"'), the sandbox invokes 'python3'
+    to run tests and verify AST syntax.
+  - If you instruct Omni Engine to build a Rust project, it invokes 'cargo'.
+  - If you instruct Omni Engine to build a Node.js project, it invokes 'node'.
+
+If you do not intend to synthesize Python projects, Python is NOT required
+on your system.
+
+--------------------------------------------------------------------------------
+3. UPSTREAM LLAMA.CPP DYNAMIC LINKAGE
+--------------------------------------------------------------------------------
+
+Omni Engine links upstream llama.cpp directly in-process via C-FFI:
+  - Upstream Version: v0.6.0-dev
+  - Build Number: 11429
+  - Git Commit: d81235049
+
+Pre-Bundled Release Assets:
+End-users do NOT need to compile llama.cpp. Release tarballs bundle verified
+libraries inside bin/:
+  - Linux CPU: libllama.so, libggml.so, libggml-cpu.so
+  - Linux CUDA: libllama.so, libggml.so, libggml-cuda.so
+  - macOS Metal: libllama.dylib, libggml.dylib, libggml-metal.dylib
+
+--------------------------------------------------------------------------------
+4. SUPPORTED GGUF MODEL FAMILIES
+--------------------------------------------------------------------------------
+
+Omni Engine automatically detects model vocabulary, prompt framing, and stop
+tokens at runtime:
+
+  - Qwen 2.5 Coder (1.5B / 7B): Q4_K_M / Q6_K (Native FIM code infill)
+  - Microsoft Phi-4 (Mini):     Q4_K_M (High logic density)
+  - Google Gemma 2 (2B / 9B):   Q4_K_M (Instruction adherence)
+  - DeepSeek Coder v2:          Q4_K_M (Multi-file algorithmic architecture)
