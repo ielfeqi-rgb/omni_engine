@@ -23,6 +23,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
+    // CPU-only execution override
+    if args.iter().any(|a| a == "--cpu" || a == "--force-cpu") {
+        std::env::set_var("OMNI_FORCE_CPU", "1");
+    }
+
     let base_dir = omni_engine::resolve_base_dir();
 
     // TUI Opt-in Layer (Full-Screen Graphical Terminal Dashboard)

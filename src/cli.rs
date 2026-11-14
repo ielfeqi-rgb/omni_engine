@@ -33,6 +33,10 @@ pub async fn handle_cli(args: &[String], base_dir: &PathBuf) -> Result<bool, Box
         std::env::set_var("OMNI_ALLOW_UNSANDBOXED", "1");
     }
 
+    if args.iter().any(|a| a == "--cpu" || a == "--force-cpu") {
+        std::env::set_var("OMNI_FORCE_CPU", "1");
+    }
+
     let cmd = args[1].as_str();
 
     match cmd {
@@ -1144,6 +1148,7 @@ SWARM OPTIONS:
     --models-dir <DIR>          Directory containing GGUF models (default: ./models).
     -y, --yes                   Auto-approve missing dependency triage during healing.
     --no                        Auto-reject external dependencies (forces standard library).
+    --cpu, --force-cpu          Force pure CPU execution (disables Metal/GPU offloading).
     --bwrap                     Enforce Linux Bubblewrap sandbox isolation for tests.
 
 CORE INVARIANTS:
@@ -1207,6 +1212,10 @@ EXAMPLES:
             }
             "--no" => {
                 auto_approve_deps = Some(false);
+                i += 1;
+            }
+            "--cpu" | "--force-cpu" => {
+                std::env::set_var("OMNI_FORCE_CPU", "1");
                 i += 1;
             }
             "--input-dir" | "--project-dir" | "--dir" | "-i" if i + 1 < args.len() => {

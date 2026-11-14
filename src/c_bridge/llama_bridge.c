@@ -18,6 +18,12 @@ static void omni_ensure_backends_loaded(void) {
     static bool loaded = false;
     if (loaded) return;
     loaded = true;
+
+    const char * force_cpu = getenv("OMNI_FORCE_CPU");
+    if (force_cpu && (strcmp(force_cpu, "1") == 0 || strcmp(force_cpu, "true") == 0 || strcmp(force_cpu, "TRUE") == 0)) {
+        return;
+    }
+
     ggml_backend_load_all();
     ggml_backend_load_all_from_path("bin");
     ggml_backend_load_all_from_path("../bin");

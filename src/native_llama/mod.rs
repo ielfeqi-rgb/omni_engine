@@ -176,14 +176,14 @@ impl NativeLlamaModel {
         let c_path = CString::new(path_str.as_bytes())
             .map_err(|e| format!("Invalid model path string: {}", e))?;
 
-        let effective_gpu_layers = if n_gpu_layers > 0 {
+        let effective_gpu_layers = if std::env::var("OMNI_FORCE_CPU").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false) {
+            0
+        } else if n_gpu_layers > 0 {
             n_gpu_layers
         } else if let Ok(val) = std::env::var("OMNI_GPU_LAYERS") {
             val.parse::<i32>().unwrap_or(0)
         } else if let Ok(val) = std::env::var("LLAMA_GPU_LAYERS") {
             val.parse::<i32>().unwrap_or(0)
-        } else if std::env::var("OMNI_FORCE_CPU").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false) {
-            0
         } else {
             99
         };
