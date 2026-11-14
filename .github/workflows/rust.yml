@@ -127,14 +127,18 @@ jobs:
       run: |
         export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
         mkdir -p macos_test_workspace
-        ./bin/omni_engine run "Synthesize mathematical helper in Python and run smoke tests" \
-          --plan-file examples/macos_smoke_test_plan.json \
-          --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
-          -y \
-          --cpu \
-          --subgoals 2 \
-          --steps 2 \
-          --dir ./macos_test_workspace
+        lldb --batch \
+          -o "run" \
+          -o "thread backtrace all" \
+          -o "quit" \
+          -- ./bin/omni_engine run "Synthesize mathematical helper in Python and run smoke tests" \
+            --plan-file examples/macos_smoke_test_plan.json \
+            --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
+            -y \
+            --cpu \
+            --subgoals 2 \
+            --steps 2 \
+            --dir ./macos_test_workspace
 
     - name: Verify Synthesized Deliverable Artifacts
       run: |
