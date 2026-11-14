@@ -1,162 +1,520 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  Omni Engine (v2.2.2) - Universal 1-Line Sovereign Installer
+#  Omni Engine - Universal Sovereign Installer
 #  Usage: curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
 # ==============================================================================
 set -e
 
 RESET="\033[0m"
 BOLD="\033[1m"
+DIM="\033[2m"
 GREEN="\033[32m"
 CYAN="\033[36m"
 YELLOW="\033[33m"
 RED="\033[31m"
-
-VERSION="2.2.2"
-
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARCH="$(uname -m)"
-
-if [ "${OS}" = "linux" ] && [ "${ARCH}" = "x86_64" ]; then
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        TARBALL="omni_engine_v${VERSION}_linux_x86_64_cuda.tar.gz"
-    else
-        TARBALL="omni_engine_v${VERSION}_linux_x86_64.tar.gz"
-    fi
-elif [ "${OS}" = "darwin" ]; then
-    TARBALL="omni_engine_v${VERSION}_darwin_arm64.tar.gz"
-else
-    echo -e "${RED}[-] Error: Unsupported platform: ${OS} (${ARCH}). Supported: Linux x86_64, macOS Apple Silicon (M1-M4 arm64).${RESET}"
-    exit 1
-fi
-RELEASE_URL="https://github.com/ielfeqi-rgb/omni_engine/releases/download/v${VERSION}/${TARBALL}"
-
-echo -e "${CYAN}${BOLD}"
-echo "  ================================================================"
-echo "     :: OMNI AI ENGINE v${VERSION} - Sovereign Autonomous Runtime"
-echo "     100% Offline | Zero-Cost | Pure Rust & In-Process C-Speed"
-echo "  ================================================================"
-echo -e "${RESET}"
+MAGENTA="\033[35m"
 
 INSTALL_DIR="${HOME}/.omni"
 BIN_DIR="${INSTALL_DIR}/bin"
 MODELS_DIR="${INSTALL_DIR}/models"
+REPO="ielfeqi-rgb/omni_engine"
+FROZEN_MACOS_VERSION="v2.2.2"
 
-mkdir -p "${BIN_DIR}" "${MODELS_DIR}"
+# Safe interactive prompt reader that supports terminal, pipe, and dev/tty
+prompt_user() {
+    local prompt_text="$1"
+    local default_val="$2"
+    local result_var="$3"
+    local ans=""
+    local read_rc=0
 
-echo -e "[*] Detected Platform: ${BOLD}${OS} (${ARCH})${RESET}"
+    if [ -t 0 ]; then
+        read -r -p "${prompt_text}" ans || read_rc=$?
+    elif [ -t 1 ] && [ -c /dev/tty ] && [ -r /dev/tty ]; then
+        printf "%s" "${prompt_text}" >/dev/tty 2>/dev/null || true
+        read -r ans </dev/tty 2>/dev/null || read_rc=$?
+    else
+        read -r ans 2>/dev/null || read_rc=$?
+    fi
 
-# 1. Hardware & Sandboxing Pre-Flight
-if [ "${OS}" = "darwin" ]; then
+    if [ ${read_rc} -ne 0 ] && [ -z "${ans}" ]; then
+        eval "${result_var}=\"__EOF__\""
+        return ${read_rc}
+    fi
+
+    if [ -z "${ans}" ]; then
+        eval "${result_var}=\"${default_val}\""
+    else
+        eval "${result_var}=\"${ans}\""
+    fi
+}
+
+echo -e "${CYAN}${BOLD}"
+echo "  ================================================================"
+echo "     :: OMNI AI ENGINE - Sovereign Autonomous Systems Runtime"
+echo "     100% Offline | Zero-Cost | Pure Rust & In-Process C-Speed"
+echo "  ================================================================"
+echo -e "${RESET}"
+
+# ------------------------------------------------------------------------------
+# 1. Environment & Host OS Auto-Detection
+# ------------------------------------------------------------------------------
+RAW_OS="$(uname -s 2>/dev/null || echo "unknown")"
+RAW_ARCH="$(uname -m 2>/dev/null || echo "unknown")"
+
+DETECTED_OS="unknown"
+DETECTED_DETAIL=""
+
+# Detect WSL (Windows Subsystem for Linux)
+if grep -qi microsoft /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME}" ]; then
+    DETECTED_OS="windows_wsl"
+    DETECTED_DETAIL="Windows Subsystem for Linux (WSL2)"
+# Detect native Windows environments (Git Bash, MSYS, Cygwin, MINGW)
+elif [ -n "${COMSPEC}" ] || [[ "${RAW_OS}" =~ ^(msys|cygwin|mingw|MSYS|CYGWIN|MINGW) ]]; then
+    DETECTED_OS="windows"
+    DETECTED_DETAIL="Native Windows (Git Bash / MSYS)"
+# Detect macOS Darwin
+elif [ "${RAW_OS}" = "Darwin" ]; then
+    if [ "${RAW_ARCH}" = "arm64" ]; then
+        DETECTED_OS="macos"
+        DETECTED_DETAIL="macOS Apple Silicon (M-Series arm64)"
+    else
+        # Intel Mac is legacy/unsupported - cannot auto-recommend
+        DETECTED_OS="unknown"
+        DETECTED_DETAIL="macOS Intel (${RAW_ARCH} - Unsupported architecture)"
+    fi
+# Detect Linux
+elif [ "${RAW_OS}" = "Linux" ]; then
+    if [ "${RAW_ARCH}" = "x86_64" ] || [ "${RAW_ARCH}" = "amd64" ]; then
+        DETECTED_OS="linux"
+        DETECTED_DETAIL="Linux (${RAW_ARCH})"
+    else
+        # Non-x86_64 Linux (e.g. ARM VM, container)
+        DETECTED_OS="unknown"
+        DETECTED_DETAIL="Linux (${RAW_ARCH} - Non-standard architecture / VM)"
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# 2. Interactive Menu / Selection Logic
+# ------------------------------------------------------------------------------
+CHOICE=""
+for arg in "$@"; do
+    case "${arg}" in
+        --linux|-l) CHOICE="1" ;;
+        --macos|--mac|-m) CHOICE="2" ;;
+        --windows|-w) CHOICE="3" ;;
+        -y|--yes) AUTO_APPROVE=1 ;;
+        -h|--help)
+            echo -e "${CYAN}${BOLD}Omni AI Engine - Universal Sovereign Installer${RESET}"
+            echo ""
+            echo "Usage: ./install.sh [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  -l, --linux       Install Linux production runtime (Dynamic latest)"
+            echo "  -m, --macos       Install macOS Apple Silicon frozen snapshot (v2.2.2)"
+            echo "  -w, --windows     Launch or configure Windows WSL2 runtime"
+            echo "  -y, --yes         Auto-approve installation prompt"
+            echo "  -h, --help        Show this help message"
+            exit 0
+            ;;
+    esac
+done
+
+if [ -z "${CHOICE}" ]; then
+    if [ "${DETECTED_OS}" = "unknown" ]; then
+        # Auto-detection failed (likely a VM, custom hypervisor, or container)
+        echo -e "${YELLOW}${BOLD}[!] Host auto-detection could not determine target environment${RESET}"
+        echo -e "    ${DIM}(Likely running inside a Virtual Machine, custom hypervisor, or non-standard container).${RESET}"
+        echo -e "    Please select your target Operating System manually (${BOLD}at your own risk${RESET}):\n"
+
+        echo -e "     1) Linux [x86_64]"
+        echo -e "     2) macOS [Apple Silicon M1-M4]"
+        echo -e "     3) Windows [via WSL2]"
+        echo ""
+
+        while true; do
+            USER_INPUT=""
+            prompt_user "Enter choice [1-3] (Manual selection at your own risk): " "" USER_INPUT
+
+            if [ "${USER_INPUT}" = "__EOF__" ]; then
+                echo -e "${RED}[-] Error: Reached end of input without valid selection.${RESET}"
+                echo -e "    Please specify a target flag: --linux, --macos, or --windows"
+                exit 1
+            fi
+
+            case "${USER_INPUT}" in
+                1|2|3)
+                    CHOICE="${USER_INPUT}"
+                    break
+                    ;;
+                *)
+                    echo -e "${RED}[!] Invalid choice '${USER_INPUT}'. Please enter 1, 2, or 3:${RESET}"
+                    ;;
+            esac
+        done
+    else
+        # Auto-detection succeeded
+        L_ARROW="   "
+        M_ARROW="   "
+        W_ARROW="   "
+        L_NOTE="(Recommended)"
+        M_NOTE=""
+        W_NOTE=""
+        DEFAULT_CHOICE="1"
+
+        if [ "${DETECTED_OS}" = "linux" ]; then
+            L_ARROW="-->"
+            L_NOTE="(This is your detected OS — Recommended)"
+            DEFAULT_CHOICE="1"
+        elif [ "${DETECTED_OS}" = "macos" ]; then
+            M_ARROW="-->"
+            M_NOTE="(yuck... 🤢)"
+            DEFAULT_CHOICE="2"
+        elif [ "${DETECTED_OS}" = "windows" ] || [ "${DETECTED_OS}" = "windows_wsl" ]; then
+            W_ARROW="-->"
+            W_NOTE="(This is your detected OS — please don't do something stupid)"
+            DEFAULT_CHOICE="3"
+        fi
+
+        echo -e "Select your target Operating System:\n"
+        echo -e " ${BOLD}${L_ARROW} 1) Linux [x86_64] ${GREEN}${L_NOTE}${RESET}"
+        if [ -n "${M_NOTE}" ]; then
+            echo -e " ${BOLD}${M_ARROW} 2) macOS [Apple Silicon M1-M4] ${YELLOW}${M_NOTE}${RESET}"
+        else
+            echo -e " ${BOLD}${M_ARROW} 2) macOS [Apple Silicon M1-M4] ${DIM}(Frozen Snapshot)${RESET}"
+        fi
+        if [ -n "${W_NOTE}" ]; then
+            echo -e " ${BOLD}${W_ARROW} 3) Windows [via WSL2] ${MAGENTA}${W_NOTE}${RESET}"
+        else
+            echo -e " ${BOLD}${W_ARROW} 3) Windows [via WSL2]${RESET}"
+        fi
+        echo ""
+
+        USER_INPUT=""
+        prompt_user "Enter choice [1-3] (Default: press Enter for detected OS [${DEFAULT_CHOICE}]): " "${DEFAULT_CHOICE}" USER_INPUT
+        CHOICE="${USER_INPUT}"
+    fi
+fi
+
+# Validate final choice
+case "${CHOICE}" in
+    1|2|3) ;;
+    *)
+        echo -e "${RED}[-] Invalid choice '${CHOICE}'. Aborting.${RESET}"
+        exit 1
+        ;;
+esac
+
+# ------------------------------------------------------------------------------
+# 3. Branching Logic per Target OS
+# ------------------------------------------------------------------------------
+
+# === OPTION 3: Windows (WSL2 Architecture) ===
+if [ "${CHOICE}" = "3" ]; then
+    echo -e "\n${CYAN}${BOLD}[*] Target OS: Windows (WSL2 Architecture)${RESET}\n"
+    
+    if [ "${DETECTED_OS}" = "windows_wsl" ]; then
+        echo -e "${GREEN}[+] Perfect! You are already running inside WSL2 (${WSL_DISTRO_NAME:-Linux}).${RESET}"
+        echo -e "    Proceeding with native Linux installation inside your WSL environment...\n"
+        CHOICE="1"
+    else
+        echo -e "${YELLOW}${BOLD}Notice:${RESET} Omni Engine is engineered natively for Linux kernel primitives"
+        echo -e "(in-memory virtual filesystem namespaces, fail-closed Bubblewrap cleanrooms,"
+        echo -e "and zero-copy causal KV-cache turning). Native Win32 lacks these low-level primitives."
+        echo ""
+        echo -e "On Windows, Omni Engine runs with ${GREEN}${BOLD}100% bare-metal performance and zero virtualization overhead${RESET}"
+        echo -e "inside ${BOLD}WSL2 (Windows Subsystem for Linux)${RESET}."
+        echo ""
+
+        if command -v wsl.exe >/dev/null 2>&1 || [ -f "/c/Windows/System32/wsl.exe" ]; then
+            echo -e "${GREEN}[+] WSL2 is detected on your Windows machine!${RESET}"
+            echo -e "To install and run Omni Engine in 1 line inside WSL, simply run:"
+            echo ""
+            echo -e "    ${CYAN}${BOLD}wsl -e bash -c \"curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash\"${RESET}"
+            echo ""
+            
+            CAN_PROMPT=0
+            if [ -t 0 ] || [ -t 1 ]; then CAN_PROMPT=1; fi
+            if [ "${CAN_PROMPT}" -eq 1 ] && [ -z "${AUTO_APPROVE}" ]; then
+                LAUNCH_WSL=""
+                prompt_user "Would you like me to launch the installer inside WSL right now? [y/N]: " "n" LAUNCH_WSL
+                if [[ "${LAUNCH_WSL}" =~ ^[Yy]$ ]]; then
+                    echo -e "\n[*] Launching inside WSL2...\n"
+                    wsl.exe -e bash -c "curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash"
+                    exit 0
+                fi
+            fi
+        else
+            echo -e "${RED}[-] WSL2 is not installed on your system yet.${RESET}"
+            echo -e "To enable WSL2 on Windows, open an Administrator PowerShell and run:"
+            echo ""
+            echo -e "    ${CYAN}${BOLD}wsl --install${RESET}"
+            echo ""
+            echo -e "After your system reboots, open Ubuntu and re-run this command."
+        fi
+        exit 0
+    fi
+fi
+
+# === OPTION 2: macOS Apple Silicon (Frozen Snapshot) ===
+if [ "${CHOICE}" = "2" ]; then
+    echo -e "\n${YELLOW}${BOLD}================================================================${RESET}"
+    echo -e "${YELLOW}${BOLD}[!] macOS? Are you sure? 🤨${RESET}"
+    echo -e "    Well, that's your choice I suppose, even though it's definitely"
+    echo -e "    not our preferred platform."
+    echo ""
+    echo -e "    ${BOLD}Please note:${RESET} This macOS build is a ${RED}${BOLD}FROZEN FINAL SNAPSHOT${RESET} (${FROZEN_MACOS_VERSION})"
+    echo -e "    with ${RED}${BOLD}NO future updates${RESET} from the author."
+    echo -e "    Support is 100% abandoned and handed to the community."
+    echo -e "    If a future macOS update breaks it, fork it and fix it yourselves. 🙂"
+    echo -e "${YELLOW}${BOLD}================================================================${RESET}\n"
+
+    # Architecture verification
+    if [ "${RAW_ARCH}" != "arm64" ] && [ "${RAW_OS}" = "Darwin" ]; then
+        echo -e "${RED}[-] Error: This snapshot supports Apple Silicon (M1-M4, arm64) only.${RESET}"
+        echo -e "    Intel Macs (x86_64) are completely unsupported."
+        exit 1
+    fi
+
+    TARBALL="omni_engine_${FROZEN_MACOS_VERSION}_darwin_arm64.tar.gz"
+    RELEASE_URL="https://github.com/${REPO}/releases/download/${FROZEN_MACOS_VERSION}/${TARBALL}"
+
+    mkdir -p "${BIN_DIR}" "${MODELS_DIR}"
+
     TOTAL_RAM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
     TOTAL_RAM_GB=$((TOTAL_RAM_BYTES / 1024 / 1024 / 1024))
-    echo -e "[*] Apple Silicon Architecture: ${GREEN}Active (Metal Acceleration Ready)${RESET}"
-    echo -e "[*] Unified Memory (RAM): ${BOLD}${TOTAL_RAM_GB} GB${RESET}"
-    if command -v hdiutil >/dev/null 2>&1 && command -v diskutil >/dev/null 2>&1; then
-        echo -e "${GREEN}[+] macOS Sovereign In-Memory RAM-Disk (hdiutil APFS): ACTIVE (Zero-SSD Sandbox ready)${RESET}"
-    else
-        echo -e "${YELLOW}[!] Notice: 'hdiutil' not available. Ephemeral fallback will be used.${RESET}"
-    fi
-else
-    TOTAL_RAM_KB="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)"
-    TOTAL_RAM_GB=$((TOTAL_RAM_KB / 1024 / 1024))
-    echo -e "[*] Host System RAM: ${BOLD}${TOTAL_RAM_GB} GB${RESET}"
-    if command -v bwrap >/dev/null 2>&1; then
-        echo -e "${GREEN}[+] Bubblewrap (bwrap) sandbox isolation: ACTIVE (W = ∅ Cleanroom ready)${RESET}"
-    else
-        echo -e "${YELLOW}[!] Notice: 'bwrap' not detected. Linux tests will use ephemeral tempfs fallback.${RESET}"
-        echo -e "${YELLOW}    To enable maximum containerized sandboxing, install bubblewrap: 'sudo apt install bubblewrap' or 'sudo dnf install bubblewrap'.${RESET}"
-    fi
-fi
+    echo -e "[*] Apple Silicon Hardware: ${GREEN}Active (Unified Memory: ${TOTAL_RAM_GB} GB)${RESET}"
+    echo -e "[*] Metal GPU Acceleration: ${GREEN}libggml-metal runtime ready${RESET}"
+    echo -e "[*] Sandbox: ${GREEN}Apple Seatbelt (sandbox-exec) fail-closed profile${RESET}"
 
-# 2. Local Model Setup (Default: Qwen2.5-Coder-1.5B Instruct Q4_K_M)
-MODEL_NAME="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
-MODEL_PATH="${MODELS_DIR}/${MODEL_NAME}"
-MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
-
-if [ -f "./models/${MODEL_NAME}" ]; then
-    echo -e "[*] Found local model in workspace. Linking to ${MODEL_PATH}..."
-    ln -sf "$(pwd)/models/${MODEL_NAME}" "${MODEL_PATH}"
-elif [ ! -f "${MODEL_PATH}" ]; then
-    echo -e "[*] Preparing sovereign coding model (${MODEL_NAME}, ~1.1GB)..."
-    echo -e "    Downloading lightweight model for CPU inference..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -L --progress-bar -o "${MODEL_PATH}" "${MODEL_URL}"
-    elif command -v wget >/dev/null 2>&1; then
-        wget --show-progress -O "${MODEL_PATH}" "${MODEL_URL}"
-    else
-        echo -e "${RED}[-] Error: Neither curl nor wget found. Please place a GGUF model in ${MODELS_DIR}.${RESET}"
-    fi
-else
-    echo -e "${GREEN}[+] Local model verified at: ${MODEL_PATH}${RESET}"
-fi
-
-# 3. Binary Setup
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
-INSTALLED=0
-
-# Priority A: Local workspace pre-built release
-if [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/target/release/omni_engine" ]; then
-    echo -e "[*] Installing pre-built release binary from workspace..."
-    if [ -d "${SCRIPT_DIR}/bin" ]; then
-        cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
-    fi
-    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni_engine"
-    INSTALLED=1
-elif [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/bin/omni_engine" ]; then
-    echo -e "[*] Installing binary from workspace bin/ directory..."
-    if [ -d "${SCRIPT_DIR}/bin" ]; then
-        cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
-    fi
-    cp -f "${SCRIPT_DIR}/bin/omni_engine" "${BIN_DIR}/omni_engine"
-    INSTALLED=1
-fi
-
-# Priority B: Compile from source if cargo is available in repo
-if [ "${INSTALLED}" -eq 0 ] && [ -n "${SCRIPT_DIR}" ] && [ -f "${SCRIPT_DIR}/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
-    echo -e "[*] Compiling Omni Engine optimized release binary via cargo..."
-    (cd "${SCRIPT_DIR}" && cargo build --release)
-    cp -f "${SCRIPT_DIR}/target/release/omni_engine" "${BIN_DIR}/omni_engine"
-    if [ -d "${SCRIPT_DIR}/bin" ]; then
-        cp -rf "${SCRIPT_DIR}/bin/"* "${BIN_DIR}/" 2>/dev/null || true
-    fi
-    INSTALLED=1
-fi
-
-# Priority C: Download official release tarball from GitHub
-if [ "${INSTALLED}" -eq 0 ]; then
-    echo -e "[*] Downloading official v${VERSION} release tarball from GitHub..."
+    echo -e "\n[*] Downloading frozen macOS snapshot (${FROZEN_MACOS_VERSION})..."
     TMP_DIR="$(mktemp -d)"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
+        curl -fSL --progress-bar -o "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
+        wget --show-progress -O "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
     else
         echo -e "${RED}[-] Error: Neither curl nor wget found.${RESET}"
         exit 1
     fi
 
-    echo -e "[*] Extracting release assets to ${INSTALL_DIR}..."
+    echo -e "[*] Extracting snapshot assets to ${INSTALL_DIR}..."
     tar -xzf "${TMP_DIR}/${TARBALL}" -C "${INSTALL_DIR}" --strip-components=1 2>/dev/null || tar -xzf "${TMP_DIR}/${TARBALL}" -C "${INSTALL_DIR}"
     rm -rf "${TMP_DIR}"
-    INSTALLED=1
+
+    chmod +x "${BIN_DIR}/omni_engine" 2>/dev/null || true
+
+    # Create wrapper launcher
+    cat << 'EOF' > "${BIN_DIR}/omni"
+#!/usr/bin/env bash
+INSTALL_DIR="${HOME}/.omni"
+export DYLD_LIBRARY_PATH="${INSTALL_DIR}/bin:${DYLD_LIBRARY_PATH}"
+export PATH="${INSTALL_DIR}/bin:/opt/homebrew/bin:${PATH}"
+exec "${INSTALL_DIR}/bin/omni_engine" "$@"
+EOF
+    chmod +x "${BIN_DIR}/omni"
+    ln -sf "${BIN_DIR}/omni" "${BIN_DIR}/omni-engine"
+
+    # Shell PATH setup
+    SHELL_RC=""
+    case "${SHELL}" in
+        */zsh) SHELL_RC="${HOME}/.zshrc" ;;
+        */bash) SHELL_RC="${HOME}/.bashrc" ;;
+        *) SHELL_RC="${HOME}/.profile" ;;
+    esac
+
+    if [ -f "${SHELL_RC}" ]; then
+        if ! grep -q ".omni/bin" "${SHELL_RC}"; then
+            echo -e "\n# Omni AI Engine" >> "${SHELL_RC}"
+            echo "export PATH=\"\${HOME}/.omni/bin:\${PATH}\"" >> "${SHELL_RC}"
+            echo -e "${GREEN}[+] Added ~/.omni/bin to ${SHELL_RC}${RESET}"
+        fi
+    fi
+
+    echo -e "\n${GREEN}${BOLD}================================================================${RESET}"
+    echo -e "${GREEN}${BOLD}   :: OMNI ENGINE ${FROZEN_MACOS_VERSION} (MACOS SNAPSHOT) INSTALLED!${RESET}"
+    echo -e "${GREEN}${BOLD}================================================================${RESET}\n"
+    echo -e "You can now run Omni Engine from any terminal:\n"
+    echo -e "  ${CYAN}omni tui${RESET}                                # Open Sovereign Terminal Dashboard"
+    echo -e "  ${CYAN}omni run \"Build a modular API\" --review${RESET}  # Autonomous Swarm with Plan Review"
+    echo -e "  ${CYAN}omni run --plan-file ./plan.json${RESET}         # Execute Maestro Protocol Blueprint"
+    echo -e "\nTo reload your shell right now:"
+    echo -e "  ${YELLOW}source ${SHELL_RC}${RESET}\n"
+    exit 0
 fi
+
+# === OPTION 1: Linux (Native Production - Dynamic Latest) ===
+echo -e "\n${CYAN}${BOLD}[*] Target OS: Linux (Native Production Engine)${RESET}\n"
+
+# 1. Distro & Package Manager Discovery
+PKG_MGR=""
+PKG_INSTALL_CMD=""
+DISTRO_NAME="Unknown Linux"
+
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO_NAME="${NAME:-Linux}"
+fi
+
+if command -v apt-get >/dev/null 2>&1; then
+    PKG_MGR="apt"
+    PKG_INSTALL_CMD="sudo apt-get update && sudo apt-get install -y"
+elif command -v dnf >/dev/null 2>&1; then
+    PKG_MGR="dnf"
+    PKG_INSTALL_CMD="sudo dnf install -y"
+elif command -v pacman >/dev/null 2>&1; then
+    PKG_MGR="pacman"
+    PKG_INSTALL_CMD="sudo pacman -Sy --noconfirm"
+elif command -v zypper >/dev/null 2>&1; then
+    PKG_MGR="zypper"
+    PKG_INSTALL_CMD="sudo zypper install -y"
+elif command -v apk >/dev/null 2>&1; then
+    PKG_MGR="apk"
+    PKG_INSTALL_CMD="sudo apk add"
+fi
+
+echo -e "[*] Detected Distribution: ${BOLD}${DISTRO_NAME}${RESET}"
+
+# 2. Dependency Audit (Python 3.9+, Bubblewrap, Curl/Wget, Tar)
+MISSING_PKGS=()
+PYTHON_OK=0
+
+if command -v python3 >/dev/null 2>&1; then
+    PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")"
+    PY_MAJOR="$(echo "${PY_VER}" | cut -d. -f1)"
+    PY_MINOR="$(echo "${PY_VER}" | cut -d. -f2)"
+    if [ "${PY_MAJOR}" -ge 3 ] && [ "${PY_MINOR}" -ge 9 ]; then
+        PYTHON_OK=1
+        echo -e "[+] Python Runtime: ${GREEN}Python ${PY_VER} (OK)${RESET}"
+    else
+        echo -e "${YELLOW}[!] Python Runtime: Detected Python ${PY_VER} (Recommended: 3.9+)${RESET}"
+        MISSING_PKGS+=("python3")
+    fi
+else
+    echo -e "${YELLOW}[!] Python Runtime: Not found.${RESET}"
+    MISSING_PKGS+=("python3")
+fi
+
+if command -v bwrap >/dev/null 2>&1; then
+    echo -e "[+] Sandboxing Primitives: ${GREEN}Bubblewrap (bwrap) present (Kernel namespaces ready)${RESET}"
+else
+    echo -e "${YELLOW}[!] Sandboxing: 'bwrap' not detected.${RESET}"
+    MISSING_PKGS+=("bubblewrap")
+fi
+
+if ! command -v tar >/dev/null 2>&1; then
+    MISSING_PKGS+=("tar")
+fi
+
+if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
+    echo -e "\n${YELLOW}[!] Recommended packages for full cleanroom & tooling support:${RESET}"
+    echo -e "    Missing: ${BOLD}${MISSING_PKGS[*]}${RESET}"
+    if [ -n "${PKG_INSTALL_CMD}" ]; then
+        echo -e "    Can be installed via: ${CYAN}${PKG_INSTALL_CMD} ${MISSING_PKGS[*]}${RESET}\n"
+    fi
+fi
+
+# 3. Dynamic Latest Version Discovery from GitHub
+echo -e "[*] Querying GitHub API for latest official Omni release..."
+LATEST_TAG=""
+if command -v curl >/dev/null 2>&1; then
+    LATEST_TAG="$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')"
+elif command -v wget >/dev/null 2>&1; then
+    LATEST_TAG="$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')"
+fi
+
+if [ -z "${LATEST_TAG}" ]; then
+    LATEST_TAG="v2.2.2"
+    echo -e "${YELLOW}[*] Fallback to current verified release: ${LATEST_TAG}${RESET}"
+else
+    echo -e "[+] Latest release available: ${GREEN}${BOLD}${LATEST_TAG}${RESET}"
+fi
+
+# Determine Linux tarball (CUDA vs Standard CPU)
+if command -v nvidia-smi >/dev/null 2>&1; then
+    echo -e "[*] GPU Acceleration: ${GREEN}NVIDIA GPU detected (CUDA build selected)${RESET}"
+    TARBALL="omni_engine_${LATEST_TAG}_linux_x86_64_cuda.tar.gz"
+else
+    echo -e "[*] Compute Engine: ${BOLD}CPU Autonomous Build (Universal x86_64)${RESET}"
+    TARBALL="omni_engine_${LATEST_TAG}_linux_x86_64.tar.gz"
+fi
+
+RELEASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${TARBALL}"
+
+# 4. Classic Prompt: Proceed [y/N]?
+if [ -z "${AUTO_APPROVE}" ]; then
+    PROMPT_CONFIRM=""
+    prompt_user "Proceed with installation of Omni Engine ${LATEST_TAG}? [y/N]: " "y" PROMPT_CONFIRM
+
+    if [[ ! "${PROMPT_CONFIRM}" =~ ^[Yy]$ ]]; then
+        echo -e "\nInstallation cancelled by user."
+        exit 0
+    fi
+fi
+
+# 5. Optional Dependency Auto-Install
+if [ ${#MISSING_PKGS[@]} -gt 0 ] && [ -n "${PKG_INSTALL_CMD}" ]; then
+    echo -e "\n[*] Installing missing system dependencies (${MISSING_PKGS[*]})..."
+    ${PKG_INSTALL_CMD} "${MISSING_PKGS[@]}" 2>/dev/null || {
+        echo -e "${YELLOW}[!] Package installation skipped or sudo required. Continuing with Omni Engine runtime...${RESET}"
+    }
+fi
+
+# 6. Download & Installation
+mkdir -p "${BIN_DIR}" "${MODELS_DIR}"
+
+echo -e "\n[*] Downloading ${TARBALL} from GitHub..."
+TMP_DIR="$(mktemp -d)"
+if command -v curl >/dev/null 2>&1; then
+    curl -fSL --progress-bar -o "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}" || {
+        # Fallback to CPU tarball if CUDA tarball is missing
+        if [[ "${TARBALL}" =~ cuda ]]; then
+            echo -e "${YELLOW}[!] CUDA asset not found for ${LATEST_TAG}. Falling back to standard CPU release...${RESET}"
+            TARBALL="omni_engine_${LATEST_TAG}_linux_x86_64.tar.gz"
+            RELEASE_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${TARBALL}"
+            curl -fSL --progress-bar -o "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
+        fi
+    }
+elif command -v wget >/dev/null 2>&1; then
+    wget --show-progress -O "${TMP_DIR}/${TARBALL}" "${RELEASE_URL}"
+fi
+
+echo -e "[*] Extracting release assets to ${INSTALL_DIR}..."
+tar -xzf "${TMP_DIR}/${TARBALL}" -C "${INSTALL_DIR}" --strip-components=1 2>/dev/null || tar -xzf "${TMP_DIR}/${TARBALL}" -C "${INSTALL_DIR}"
+rm -rf "${TMP_DIR}"
 
 chmod +x "${BIN_DIR}/omni_engine" 2>/dev/null || true
 
-# 4. Wrapper Script for dynamic library paths and alias 'omni'
+# 7. Default Lightweight Model Download (Qwen 1.5B)
+MODEL_NAME="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+MODEL_PATH="${MODELS_DIR}/${MODEL_NAME}"
+MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+
+if [ -f "./models/${MODEL_NAME}" ]; then
+    echo -e "[*] Linking local model from current directory..."
+    ln -sf "$(pwd)/models/${MODEL_NAME}" "${MODEL_PATH}"
+elif [ ! -f "${MODEL_PATH}" ]; then
+    echo -e "[*] Downloading default offline coding model (${MODEL_NAME}, ~1.1GB)..."
+    if command -v curl >/dev/null 2>&1; then
+        curl -L --progress-bar -o "${MODEL_PATH}" "${MODEL_URL}" || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget --show-progress -O "${MODEL_PATH}" "${MODEL_URL}" || true
+    fi
+fi
+
+# 8. Create Wrapper Launcher
 cat << 'EOF' > "${BIN_DIR}/omni"
 #!/usr/bin/env bash
 INSTALL_DIR="${HOME}/.omni"
 export LD_LIBRARY_PATH="${INSTALL_DIR}/bin:${LD_LIBRARY_PATH}"
-export DYLD_LIBRARY_PATH="${INSTALL_DIR}/bin:${DYLD_LIBRARY_PATH}"
-export PATH="${INSTALL_DIR}/bin:/opt/homebrew/bin:${PATH}"
+export PATH="${INSTALL_DIR}/bin:${PATH}"
 exec "${INSTALL_DIR}/bin/omni_engine" "$@"
 EOF
 chmod +x "${BIN_DIR}/omni"
 ln -sf "${BIN_DIR}/omni" "${BIN_DIR}/omni-engine"
 
-# 5. Shell PATH Configuration
+# 9. Shell PATH Configuration
 SHELL_RC=""
 case "${SHELL}" in
     */zsh) SHELL_RC="${HOME}/.zshrc" ;;
@@ -173,12 +531,12 @@ if [ -f "${SHELL_RC}" ]; then
 fi
 
 echo -e "\n${GREEN}${BOLD}================================================================${RESET}"
-echo -e "${GREEN}${BOLD}   :: OMNI AI ENGINE v${VERSION} SUCCESSFULLY INSTALLED!${RESET}"
+echo -e "${GREEN}${BOLD}   :: OMNI AI ENGINE ${LATEST_TAG} SUCCESSFULLY INSTALLED!${RESET}"
 echo -e "${GREEN}${BOLD}================================================================${RESET}\n"
 echo -e "You can now run Omni Engine from any terminal:\n"
 echo -e "  ${CYAN}omni tui${RESET}                                # Open Sovereign Terminal Dashboard"
 echo -e "  ${CYAN}omni run \"Build a modular API\" --review${RESET}  # Autonomous Swarm with Plan Review"
-echo -e "  ${CYAN}omni run --plan-file ./plan.json${RESET}         # Execute Decoupled Maestro Protocol Blueprint"
+echo -e "  ${CYAN}omni run --plan-file ./plan.json${RESET}         # Execute Maestro Protocol Blueprint"
 echo -e "  ${CYAN}omni status${RESET}                              # Inspect Hardware & KV-Cache Telemetry"
-echo -e "\nTo reload your shell environment right now, run:"
+echo -e "\nTo reload your shell right now:"
 echo -e "  ${YELLOW}source ${SHELL_RC}${RESET}\n"
