@@ -330,6 +330,7 @@ pub async fn handle_download(args: &[String], base_dir: &PathBuf) {
         println!("  omni_engine download <preset|URL> [destination_filename.gguf]");
         println!();
         println!("Presets:");
+        println!("  --qwen-0.5b | qwen-0.5b Qwen2.5-Coder-0.5B-Instruct Q4_K_M (397 MB) [Ultra-Lightweight Testing]");
         println!("  --qwen      | qwen       Qwen2.5-Coder-1.5B-Instruct Q4_K_M (1.04 GB) [Recommended Baseline]");
         println!("  --qwen-7b   | qwen-7b    Qwen2.5-Coder-7B-Instruct Q4_K_M (4.68 GB) [High Performance]");
         println!("  --phi-4     | phi-4      Phi-4-mini-Instruct Q4_K_M (2.49 GB) [Lightweight Reasoning]");
@@ -343,6 +344,11 @@ pub async fn handle_download(args: &[String], base_dir: &PathBuf) {
     let first_arg = args[0].as_str();
     let first_arg_lower = first_arg.to_lowercase();
     let (url, default_filename, desc): (&str, &str, &str) = match first_arg_lower.as_str() {
+        "--qwen-0.5b" | "qwen-0.5b" => (
+            "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+            "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+            "Qwen2.5-Coder-0.5B-Instruct Q4_K_M (Ultra-Lightweight ~390MB Testing)",
+        ),
         "--qwen" | "qwen" | "--qwen-1.5b" | "qwen-1.5b" => (
             "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
             "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",

@@ -1,0 +1,62 @@
+{
+  "project": "OmniMacSmokeTest (Python)",
+  "language": "python",
+  "concurrency_limit": 1,
+  "zero_dependencies": true,
+  "nodes": [
+    {
+      "id": 1,
+      "entity": "calculator.py",
+      "kind": "CREATE",
+      "responsibility": "Author a high-precision arithmetic utility module containing MathEngine class with add, multiply, and factorial methods.",
+      "depends_on": [],
+      "command": "python3 -c 'import calculator; m = calculator.MathEngine(); assert m.add(2, 3) == 5; print(\"MathEngine OK\")'",
+      "symbols": {
+        "classes": [
+          {
+            "name": "MathEngine",
+            "methods": [
+              { "name": "add", "params": ["self", "a", "b"] },
+              { "name": "multiply", "params": ["self", "a", "b"] },
+              { "name": "factorial", "params": ["self", "n"] }
+            ]
+          }
+        ]
+      },
+      "invariants": [
+        "Pure Python 3 standard library only, zero external packages.",
+        "Include docstrings and input validation."
+      ],
+      "acceptance_tests": [
+        "Import and unit assertions must succeed with exit code 0."
+      ]
+    },
+    {
+      "id": 2,
+      "entity": "test_calculator.py",
+      "kind": "CREATE",
+      "responsibility": "Author automated unit test suite verifying MathEngine correctness across addition, multiplication, and factorial invariants.",
+      "depends_on": ["calculator.py"],
+      "command": "python3 -m unittest test_calculator.py",
+      "symbols": {
+        "classes": [
+          {
+            "name": "TestMathEngine",
+            "methods": [
+              { "name": "test_add", "params": ["self"] },
+              { "name": "test_multiply", "params": ["self"] },
+              { "name": "test_factorial", "params": ["self"] }
+            ]
+          }
+        ]
+      },
+      "invariants": [
+        "Use unittest framework from standard library.",
+        "Execute assertions with descriptive error messages."
+      ],
+      "acceptance_tests": [
+        "python3 -m unittest test_calculator.py passes cleanly with 0 failures."
+      ]
+    }
+  ]
+}

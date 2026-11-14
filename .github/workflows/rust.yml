@@ -1,21 +1,22 @@
-name: Omni Engine CI
+name: Omni Engine Multi-Platform CI
 
 on:
   push:
-    branches: [ "main", "release/**" ]
+    branches: [ "main", "release/**", "feat/**" ]
     tags: [ "v*" ]
   pull_request:
     branches: [ "main", "release/**" ]
 
 env:
   CARGO_TERM_COLOR: always
-  LD_LIBRARY_PATH: ${{ github.workspace }}/bin
   OMNI_ALLOW_UNSANDBOXED: "1"
 
 jobs:
-  build_and_test:
-    name: Build & Verify Suite
+  linux_build_and_test:
+    name: Linux x86_64 Build & Test
     runs-on: ubuntu-latest
+    env:
+      LD_LIBRARY_PATH: ${{ github.workspace }}/bin
     steps:
     - uses: actions/checkout@v4
 
@@ -41,3 +42,102 @@ jobs:
         ln -sf libggml-base.so bin/libggml-base.so.0 2>/dev/null || true
         ln -sf libggml-cpu.so bin/libggml-cpu.so.0 2>/dev/null || true
         LD_LIBRARY_PATH="${{ github.workspace }}/bin:$LD_LIBRARY_PATH" cargo test --lib --verbose
+
+  macos_apple_silicon:
+    name: macOS Apple Silicon (M1-M4) Build & Verify
+    runs-on: macos-14
+    env:
+      DYLD_LIBRARY_PATH: ${{ github.workspace }}/bin
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Compile Native llama.cpp with Metal Acceleration
+      run: |
+        mkdir -p bin
+        git clone --depth 1 https://github.com/ggerganov/llama.cpp.git llama_src
+        cmake -B llama_src/build -S llama_src \
+          -DBUILD_SHARED_LIBS=ON \
+          -DGGML_METAL=ON \
+          -DGGML_METAL_EMBED_LIBRARY=ON \
+          -DLLAMA_BUILD_EXAMPLES=OFF \
+          -DLLAMA_BUILD_TESTS=OFF \
+          -DLLAMA_BUILD_SERVER=OFF \
+          -DCMAKE_BUILD_TYPE=Release
+        cmake --build llama_src/build --config Release -j 3
+        find llama_src/build -name "*.dylib" -exec cp -f {} bin/ \;
+        chmod +x bin/* 2>/dev/null || true
+        for f in bin/*.dylib; do
+          [ -e "$f" ] || continue
+          base="$(basename "$f")"
+          stem="$(echo "$base" | sed -E 's/\.[0-9]+\.dylib$/.dylib/')"
+          if [ "$base" != "$stem" ]; then
+            ln -sf "$base" "bin/$stem" 2>/dev/null || true
+          fi
+        done
+        ls -la bin/
+
+    - name: Build Debug & Release Binaries
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        cargo build --verbose
+        cargo build --release --verbose
+        cp -f target/release/omni_engine bin/omni_engine
+        chmod +x bin/omni_engine
+
+    - name: Execute Full Invariant & Unit Test Suite (152 Tests)
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        cargo test --lib --verbose
+
+    - name: Verify Sovereign Binary Execution
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        ./bin/omni_engine --version
+        ./bin/omni_engine --help
+
+    - name: Cache Qwen2.5-Coder-0.5B Model
+      id: cache-model
+      uses: actions/cache@v4
+      with:
+        path: models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        key: qwen2.5-coder-0.5b-q4_k_m
+
+    - name: Download Lightweight Qwen 0.5B Model (~397MB)
+      if: steps.cache-model.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p models
+        curl -L -C - "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" -o models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        ls -lh models/
+
+    - name: End-to-End Autonomous Maestro Test on Apple Silicon
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        mkdir -p macos_test_workspace
+        ./bin/omni_engine run "Synthesize mathematical helper in Python and run smoke tests" \
+          --plan-file examples/macos_smoke_test_plan.json \
+          --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
+          -y \
+          --subgoals 2 \
+          --steps 2 \
+          --dir ./macos_test_workspace
+
+    - name: Package Darwin ARM64 Sovereign Release Asset
+      run: |
+        mkdir -p dist_darwin/omni_engine_v2.2.2_darwin_arm64/bin
+        cp -f bin/omni_engine dist_darwin/omni_engine_v2.2.2_darwin_arm64/bin/
+        cp -f bin/*.dylib dist_darwin/omni_engine_v2.2.2_darwin_arm64/bin/ 2>/dev/null || true
+        cp -f install.sh dist_darwin/omni_engine_v2.2.2_darwin_arm64/
+        cp -f README.md dist_darwin/omni_engine_v2.2.2_darwin_arm64/
+        cp -f LICENSE dist_darwin/omni_engine_v2.2.2_darwin_arm64/
+        tar -czf omni_engine_v2.2.2_darwin_arm64.tar.gz -C dist_darwin omni_engine_v2.2.2_darwin_arm64
+        shasum -a 256 omni_engine_v2.2.2_darwin_arm64.tar.gz > omni_engine_v2.2.2_darwin_arm64.tar.gz.sha256
+        ls -lh omni_engine_v2.2.2_darwin_arm64.tar.gz
+
+    - name: Upload Darwin Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: omni_engine_v2.2.2_darwin_arm64
+        path: omni_engine_v2.2.2_darwin_arm64.tar.gz
