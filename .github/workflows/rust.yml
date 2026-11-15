@@ -56,8 +56,6 @@ jobs:
     runs-on: macos-latest
     env:
       DYLD_LIBRARY_PATH: ${{ github.workspace }}/bin
-      OMNI_FORCE_CPU: "1"
-      OMNI_ALLOW_UNSANDBOXED: "1"
     steps:
     - uses: actions/checkout@v4
 
@@ -145,7 +143,7 @@ jobs:
           --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
           -y \
           --cpu \
-          --subgoals 1 \
+          --subgoals 2 \
           --steps 2 \
           --dir ./macos_test_workspace
 
@@ -160,6 +158,7 @@ jobs:
         fi
         test -f macos_test_workspace/calculator.py
         echo "[+] Executing generated calculator.py live with Python 3 on macOS..."
+        python3 macos_test_workspace/calculator.py
         python3 -c "import sys; sys.path.insert(0, './macos_test_workspace'); from calculator import MathEngine; m = MathEngine(); print(f'>>> Live MathEngine Test on macOS: 2+3={m.add(2, 3)}, 6*7={m.multiply(6, 7)}'); assert m.add(2, 3) == 5; assert m.multiply(6, 7) == 42"
         echo "[+] Apple Silicon Model Generation & Live Python Execution 100% VERIFIED!"
 

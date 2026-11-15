@@ -5455,31 +5455,18 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
                 let filled = (ratio * gauge_width as f64).round() as usize;
                 let bar: String = "█".repeat(filled) + &"░".repeat(gauge_width.saturating_sub(filled));
 
-                if io::stdout().is_terminal() {
-                    print!(
-                        "\r   {} Worker #{}: Token #{} ({:.1} t/s) │ KV: [{}] {}/{} │ {:.0}s   ",
-                        frame.to_string().bright_cyan().bold(),
-                        subgoal.id,
-                        gen_tokens_count.to_string().bright_yellow().bold(),
-                        speed,
-                        bar.bright_magenta(),
-                        used_cells,
-                        n_ctx,
-                        elapsed
-                    );
-                    let _ = io::stdout().flush();
-                } else if std::env::var("CI").is_ok() && (gen_tokens_count % 10 == 0 || gen_tokens_count == 1) {
-                    println!(
-                        "   [*] Worker #{}: Token #{} ({:.1} t/s) | KV: {}/{} | {:.1}s",
-                        subgoal.id,
-                        gen_tokens_count,
-                        speed,
-                        used_cells,
-                        n_ctx,
-                        elapsed
-                    );
-                    let _ = io::stdout().flush();
-                }
+                print!(
+                    "\r   {} Worker #{}: Token #{} ({:.1} t/s) │ KV: [{}] {}/{} │ {:.0}s   ",
+                    frame.to_string().bright_cyan().bold(),
+                    subgoal.id,
+                    gen_tokens_count.to_string().bright_yellow().bold(),
+                    speed,
+                    bar.bright_magenta(),
+                    used_cells,
+                    n_ctx,
+                    elapsed
+                );
+                let _ = io::stdout().flush();
 
                 // Dynamic Thinker State Analysis
                 let has_open_think = generated_text.contains("<think>") || generated_text.contains("<thought>");
@@ -6959,7 +6946,7 @@ pub fn infer_task_kind(text: &str) -> TaskKind {
         let prompt = Self::format_prompt(&self.orchestrator_model, system_msg, &user_msg);
 
         let mut model_overview: Option<String> = None;
-        if let Ok(summary) = ctx.generate(&prompt, 96) {
+        if let Ok(summary) = ctx.generate(&prompt, 768) {
             let mut clean_summary = Self::strip_thought(&summary);
             if clean_summary.matches("```").count() % 2 != 0 {
                 clean_summary.push_str("\n```\n");

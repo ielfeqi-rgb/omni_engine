@@ -896,7 +896,6 @@ impl NativeLlamaContext {
         F: FnMut(&str, &str) -> bool,
     {
         let is_term = io::stdout().is_terminal();
-        let is_ci = std::env::var("CI").is_ok();
         let prompt_tokens = self.model.tokenize(prompt, true)?;
 
         let mut sampler = NativeLlamaSampler::new(config, self.model.n_vocab())?;
@@ -909,9 +908,6 @@ impl NativeLlamaContext {
         let start_time = std::time::Instant::now();
         if is_term {
             print!("     [*] Evaluating context ({} tokens)...", prompt_tokens.len());
-            let _ = io::stdout().flush();
-        } else if is_ci {
-            println!("     [*] Evaluating context ({} tokens)...", prompt_tokens.len());
             let _ = io::stdout().flush();
         }
 
@@ -949,10 +945,9 @@ impl NativeLlamaContext {
                 break;
             }
 
-            let elapsed = start_time.elapsed().as_secs_f64();
-            let speed = if elapsed > 0.1 { (i + 1) as f64 / elapsed } else { 0.0 };
-
             if is_term {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.1 { (i + 1) as f64 / elapsed } else { 0.0 };
                 let frame = spinner_frames[i % spinner_frames.len()];
                 let used_cells = self.kv_cache_used_cells();
 
@@ -970,16 +965,6 @@ impl NativeLlamaContext {
                     speed,
                     bar.bright_magenta(),
                     used_cells,
-                    self.n_ctx,
-                    elapsed
-                );
-                let _ = io::stdout().flush();
-            } else if is_ci && ((i + 1) % 10 == 0 || i == 0) {
-                println!(
-                    "     [*] Token #{} ({:.1} t/s) | KV: {}/{} | {:.1}s",
-                    i + 1,
-                    speed,
-                    self.kv_cache_used_cells(),
                     self.n_ctx,
                     elapsed
                 );
@@ -1026,12 +1011,10 @@ impl NativeLlamaContext {
             }
         }
 
-        if is_term || is_ci {
+        if is_term {
             let total_time = start_time.elapsed().as_secs_f64();
             let final_speed = if total_time > 0.1 { (generated.len()) as f64 / total_time } else { 0.0 };
-            if is_term {
-                print!("\r                                                                                         \r");
-            }
+            print!("\r                                                                                         \r");
             println!(
                 "     [+] {} ({:.1}s, {:.1} chars/s, {} KV cells)",
                 "Generation pass complete".bright_green().bold(),

@@ -793,32 +793,24 @@ pub fn handle_keys(args: &[String], base_dir: &PathBuf) {
 }
 
 pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
-    if args.iter().any(|a| a == "--cpu" || a == "--force-cpu") {
-        std::env::set_var("OMNI_FORCE_CPU", "1");
-    }
-
-    let model_name = args.iter()
-        .find(|a| !a.starts_with("--"))
-        .cloned()
-        .unwrap_or_else(|| "qwen-0.5b.gguf".to_string());
-
-    let model_path = if Path::new(&model_name).exists() {
-        PathBuf::from(&model_name)
+    let model_name = if !args.is_empty() {
+        args[0].clone()
     } else {
-        base_dir.join("models").join(&model_name)
+        "qwen-0.5b.gguf".to_string()
     };
+
+    let model_path = base_dir.join("models").join(&model_name);
     if !model_path.exists() {
         eprintln!("[-] Model not found: {:?}", model_path);
         eprintln!("Available models can be viewed with: omni_engine models");
         return;
     }
 
-    let lib_name = if cfg!(target_os = "macos") { "libllama.dylib" } else { "libllama.so" };
     println!("================================================================================");
     println!("             [TEST] OMNI ENGINE - REAL NATIVE KV-CACHE BENCHMARK                   ");
     println!("================================================================================");
     println!("  Model:   {:?}", model_path);
-    println!("  Backend: Direct in-process C FFI ({})", lib_name);
+    println!("  Backend: Direct in-process C FFI (libllama.so)");
     println!("================================================================================\n");
 
     println!("[*] Loading model weights into memory...");
@@ -831,8 +823,8 @@ pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
     };
     println!("[+] Model loaded successfully.\n");
 
-    println!("[*] Creating execution context (2048 tokens)...");
-    let mut ctx = match model.create_context(2048, 512, 4) {
+    println!("[*] Creating execution context (512 tokens)...");
+    let mut ctx = match model.create_context(512, 512, 4) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[-] Failed to create context: {}", e);
@@ -891,32 +883,24 @@ pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
 }
 
 pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
-    if args.iter().any(|a| a == "--cpu" || a == "--force-cpu") {
-        std::env::set_var("OMNI_FORCE_CPU", "1");
-    }
-
-    let model_name = args.iter()
-        .find(|a| !a.starts_with("--"))
-        .cloned()
-        .unwrap_or_else(|| "qwen-0.5b.gguf".to_string());
-
-    let model_path = if Path::new(&model_name).exists() {
-        PathBuf::from(&model_name)
+    let model_name = if !args.is_empty() {
+        args[0].clone()
     } else {
-        base_dir.join("models").join(&model_name)
+        "qwen-0.5b.gguf".to_string()
     };
+
+    let model_path = base_dir.join("models").join(&model_name);
     if !model_path.exists() {
         eprintln!("[-] Model not found: {:?}", model_path);
         eprintln!("Available models can be viewed with: omni_engine models");
         return;
     }
 
-    let lib_name = if cfg!(target_os = "macos") { "libllama.dylib" } else { "libllama.so" };
     println!("================================================================================");
     println!("        [TEST] OMNI ENGINE - CAUSAL DAG & ATOMIC SELF-HEALING BENCHMARK             ");
     println!("================================================================================");
     println!("  Model:   {:?}", model_path);
-    println!("  Backend: Direct in-process C FFI ({})", lib_name);
+    println!("  Backend: Direct in-process C FFI (libllama.so)");
     println!("================================================================================\n");
 
     println!("[*] Loading model weights into memory...");
@@ -929,8 +913,8 @@ pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
     };
     println!("[+] Model loaded successfully (Vocab Size: {} tokens).\n", model.n_vocab());
 
-    println!("[*] Initializing execution context (2048 tokens)...");
-    let mut ctx = match model.create_context(2048, 512, 4) {
+    println!("[*] Initializing execution context (512 tokens)...");
+    let mut ctx = match model.create_context(512, 512, 4) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[-] Failed to create context: {}", e);
