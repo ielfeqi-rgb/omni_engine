@@ -1195,7 +1195,12 @@ EXAMPLES:
                 i += 2;
             }
             "--plan" if i + 1 < args.len() => {
-                plan_spec = Some(args[i + 1].clone());
+                let candidate = args[i + 1].clone();
+                if std::path::Path::new(&candidate).exists() {
+                    plan_file = Some(PathBuf::from(candidate));
+                } else {
+                    plan_spec = Some(candidate);
+                }
                 i += 2;
             }
             "--concurrency" if i + 1 < args.len() => {
