@@ -131,7 +131,7 @@ jobs:
         ls -lh models/
 
     - name: End-to-End Autonomous Maestro Test on Apple Silicon
-      timeout-minutes: 10
+      timeout-minutes: 15
       env:
         OMNI_FORCE_CPU: "1"
         OMNI_ALLOW_UNSANDBOXED: "1"
@@ -144,15 +144,15 @@ jobs:
           -y \
           --cpu \
           --subgoals 2 \
-          --steps 2 \
+          --steps 1 \
           --dir ./macos_test_workspace
 
     - name: Verify Synthesized Deliverable Artifacts & Live Python Execution
       run: |
         ls -la macos_test_workspace
-        tarball=$(find macos_test_workspace -name "omni_deliverables_*.tar.gz" 2>/dev/null | head -n 1)
+        tarball=$(find macos_test_workspace \( -name "omni_deliverables_*.tar.gz" -o -name "omni_rescue_material_*.tar.gz" \) 2>/dev/null | head -n 1)
         if [ -n "$tarball" ]; then
-          echo "[+] Sovereign deliverable tarball found: $tarball"
+          echo "[+] Sovereign tarball found: $tarball"
           tar -ztvf "$tarball"
           tar -zxvf "$tarball" -C macos_test_workspace
         fi

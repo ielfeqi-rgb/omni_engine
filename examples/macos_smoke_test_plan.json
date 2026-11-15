@@ -33,14 +33,9 @@
       "id": 2,
       "entity": "test_calculator.py",
       "kind": "CREATE",
-      "responsibility": "Author smoke test script importing MathEngine from calculator and verifying add and multiply methods.",
+      "responsibility": "Author smoke test script importing MathEngine from calculator and verifying add and multiply methods with assertions.",
       "depends_on": ["calculator.py"],
       "command": "python3 test_calculator.py",
-      "symbols": {
-        "functions": [
-          { "name": "test_math_engine", "params": [] }
-        ]
-      },
       "invariants": [
         "Pure Python 3 standard library only, zero external packages."
       ],
