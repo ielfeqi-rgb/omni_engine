@@ -831,8 +831,8 @@ pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
     };
     println!("[+] Model loaded successfully.\n");
 
-    println!("[*] Creating execution context (512 tokens)...");
-    let mut ctx = match model.create_context(512, 512, 4) {
+    println!("[*] Creating execution context (2048 tokens)...");
+    let mut ctx = match model.create_context(2048, 512, 4) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[-] Failed to create context: {}", e);
@@ -929,8 +929,8 @@ pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
     };
     println!("[+] Model loaded successfully (Vocab Size: {} tokens).\n", model.n_vocab());
 
-    println!("[*] Initializing execution context (512 tokens)...");
-    let mut ctx = match model.create_context(512, 512, 4) {
+    println!("[*] Initializing execution context (2048 tokens)...");
+    let mut ctx = match model.create_context(2048, 512, 4) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[-] Failed to create context: {}", e);

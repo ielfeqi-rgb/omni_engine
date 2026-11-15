@@ -132,15 +132,6 @@ jobs:
         curl -L -C - "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" -o models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
         ls -lh models/
 
-    - name: Verify Live Native C-FFI Inference & KV Cache Manipulation
-      env:
-        OMNI_FORCE_CPU: "1"
-      run: |
-        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
-        ./bin/omni_engine kv-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --cpu
-        ./bin/omni_engine causal-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --cpu
-        echo "[+] Direct Native C-FFI Inference, KV Rollback & Self-Healing 100% VERIFIED!"
-
     - name: End-to-End Autonomous Maestro Test on Apple Silicon
       timeout-minutes: 10
       env:
@@ -171,6 +162,15 @@ jobs:
         echo "[+] Executing generated calculator.py live with Python 3 on macOS..."
         python3 -c "import sys; sys.path.insert(0, './macos_test_workspace'); from calculator import MathEngine; m = MathEngine(); print(f'>>> Live MathEngine Test on macOS: 2+3={m.add(2, 3)}, 6*7={m.multiply(6, 7)}'); assert m.add(2, 3) == 5; assert m.multiply(6, 7) == 42"
         echo "[+] Apple Silicon Model Generation & Live Python Execution 100% VERIFIED!"
+
+    - name: Verify Live Native C-FFI Inference & KV Cache Manipulation
+      env:
+        OMNI_FORCE_CPU: "1"
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        ./bin/omni_engine kv-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --cpu
+        ./bin/omni_engine causal-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --cpu
+        echo "[+] Direct Native C-FFI Inference, KV Rollback & Self-Healing 100% VERIFIED!"
 
     - name: Package Darwin ARM64 Sovereign Release Asset
       run: |

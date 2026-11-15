@@ -123,7 +123,7 @@ struct llama_context * omni_llama_new_context(
     int n_batch,
     int n_threads
 ) {
-    return omni_llama_new_context_ext(model, n_ctx, n_batch, n_threads, 1);
+    return omni_llama_new_context_ext(model, n_ctx, n_batch, n_threads, 4);
 }
 
 void omni_llama_free_context(struct llama_context * ctx) {
