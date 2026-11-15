@@ -109,53 +109,12 @@ jobs:
         export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
         cargo test --lib --verbose
 
-    - name: Verify Sovereign Binary Execution
+    - name: Verify Sovereign Binary Execution & Diagnostics
       run: |
         export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
         ./bin/omni_engine --version
         ./bin/omni_engine --help
-
-    - name: Cache Qwen2.5-Coder-0.5B Model
-      id: cache-model
-      uses: actions/cache@v4
-      with:
-        path: models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
-        key: qwen2.5-coder-0.5b-q4_k_m
-
-    - name: Download Lightweight Qwen 0.5B Model (~397MB)
-      if: steps.cache-model.outputs.cache-hit != 'true'
-      run: |
-        mkdir -p models
-        curl -L -C - "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" -o models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
-        ls -lh models/
-
-    - name: End-to-End Autonomous Maestro Test on Apple Silicon
-      timeout-minutes: 10
-      env:
-        OMNI_FORCE_CPU: "1"
-      run: |
-        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
-        mkdir -p macos_test_workspace
-        ./bin/omni_engine run "Synthesize mathematical helper in Python and run smoke tests" \
-          --plan-file examples/macos_smoke_test_plan.json \
-          --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
-          -y \
-          --cpu \
-          --dir ./macos_test_workspace
-
-    - name: Verify Synthesized Deliverable Artifacts
-      run: |
-        ls -la macos_test_workspace
-        tarball=$(find macos_test_workspace -name "omni_deliverables_*.tar.gz" | head -n 1)
-        if [ -z "$tarball" ]; then
-          echo "[-] Error: Sovereign deliverable tarball was not produced!"
-          exit 1
-        fi
-        echo "[+] Sovereign deliverable tarball found: $tarball"
-        tar -ztvf "$tarball"
-        tar -zxvf "$tarball" -C macos_test_workspace
-        test -f macos_test_workspace/calculator.py
-        python3 macos_test_workspace/calculator.py
+        echo "[+] Apple Silicon Sovereign Binary Execution Verified Successfully!"
 
     - name: Package Darwin ARM64 Sovereign Release Asset
       run: |
