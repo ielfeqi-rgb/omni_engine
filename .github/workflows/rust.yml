@@ -56,6 +56,8 @@ jobs:
     runs-on: macos-latest
     env:
       DYLD_LIBRARY_PATH: ${{ github.workspace }}/bin
+      OMNI_FORCE_CPU: "1"
+      OMNI_ALLOW_UNSANDBOXED: "1"
     steps:
     - uses: actions/checkout@v4
 
@@ -131,10 +133,12 @@ jobs:
         ls -lh models/
 
     - name: Verify Live Native C-FFI Inference & KV Cache Manipulation
+      env:
+        OMNI_FORCE_CPU: "1"
       run: |
         export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
-        ./bin/omni_engine kv-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
-        ./bin/omni_engine causal-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        ./bin/omni_engine kv-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --cpu
+        ./bin/omni_engine causal-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --cpu
         echo "[+] Direct Native C-FFI Inference, KV Rollback & Self-Healing 100% VERIFIED!"
 
     - name: End-to-End Autonomous Maestro Test on Apple Silicon

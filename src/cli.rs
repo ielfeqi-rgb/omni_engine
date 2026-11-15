@@ -793,11 +793,14 @@ pub fn handle_keys(args: &[String], base_dir: &PathBuf) {
 }
 
 pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
-    let model_name = if !args.is_empty() {
-        args[0].clone()
-    } else {
-        "qwen-0.5b.gguf".to_string()
-    };
+    if args.iter().any(|a| a == "--cpu" || a == "--force-cpu") {
+        std::env::set_var("OMNI_FORCE_CPU", "1");
+    }
+
+    let model_name = args.iter()
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .unwrap_or_else(|| "qwen-0.5b.gguf".to_string());
 
     let model_path = if Path::new(&model_name).exists() {
         PathBuf::from(&model_name)
@@ -888,11 +891,14 @@ pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
 }
 
 pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
-    let model_name = if !args.is_empty() {
-        args[0].clone()
-    } else {
-        "qwen-0.5b.gguf".to_string()
-    };
+    if args.iter().any(|a| a == "--cpu" || a == "--force-cpu") {
+        std::env::set_var("OMNI_FORCE_CPU", "1");
+    }
+
+    let model_name = args.iter()
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .unwrap_or_else(|| "qwen-0.5b.gguf".to_string());
 
     let model_path = if Path::new(&model_name).exists() {
         PathBuf::from(&model_name)
