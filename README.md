@@ -52,17 +52,6 @@ Unlike conventional AI coding assistants that rely on unconstrained ReAct loops�
 | **macOS** 🍏 | Apple Silicon (`arm64`, M1–M4) | **Frozen Hardware Snapshot** | Apple Metal GPU (`libggml-metal`) | Apple Seatbelt (`sandbox-exec`) + RAM VFS | **100% Frozen / Community Handover** ❄️ |
 | **Windows** 🪟 | `x86_64` | **Supported via WSL2** | Native CPU & WSL2 CUDA Passthrough | Linux Kernel Namespaces (`bwrap`) | Continuous via WSL2 |
 
-> [!WARNING]
-> **Official Policy on Apple / macOS (The Automatic "No" Policy & v2.2.2 Freeze)**
-> The macOS Apple Silicon build is delivered strictly as a **frozen hardware snapshot (`v2.2.2`)**. It achieves verified functional parity with the Linux core (in-process inference, Metal GPU acceleration, Apple Seatbelt sandboxing, and autonomous Maestro DAG synthesis). 
-> 
-> **From this second forward, macOS support is 100% abandoned by the author and handed over entirely to the open-source community.** The author will write zero further Apple-related code. If a future macOS update breaks it, fork it and fix it yourselves. Any Apple-related issues, pull requests, or emails will be ignored and closed on sight.
-> 
-> **Gatekeeper & The $99 Apple Tax:**
-> If macOS blocks execution with *"omni_engine cannot be opened because the developer cannot be verified"*: the author is not paying $99/year to Apple for a code-signing certificate for open-source software. To strip Apple's quarantine lock, run:
-> ```bash
-> xattr -cr ~/.omni
-> ```
 
 ---
 

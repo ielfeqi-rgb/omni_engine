@@ -49,8 +49,8 @@ This `v2.2.2` Apple Silicon snapshot was built and verified strictly to satisfy 
 
 **From this second forward, macOS support is 100% abandoned by the author and handed over entirely to the open-source community.** If a future macOS update breaks it, fork it and fix it yourselves. Any Apple-related issues, pull requests, or emails will be ignored and closed on sight.
 
-### Gatekeeper & The $99 Apple Tax:
-If macOS blocks execution with *"omni_engine cannot be opened because the developer cannot be verified"*: the author is not paying $99/year to Apple for a code-signing certificate for open-source software. To strip Apple's quarantine lock, run:
+### Gatekeeper & Quarantine Removal:
+If macOS blocks execution with *"omni_engine cannot be opened because the developer cannot be verified"*: this occurs because standalone binaries distributed outside the Mac App Store carry Apple's quarantine flag. To strip the quarantine lock, run:
 ```bash
 xattr -cr ~/.omni
 ```
