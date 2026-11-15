@@ -116,6 +116,58 @@ jobs:
         ./bin/omni_engine --help
         echo "[+] Apple Silicon Sovereign Binary Execution Verified Successfully!"
 
+    - name: Cache Qwen2.5-Coder-0.5B Model
+      id: cache-qwen-model
+      uses: actions/cache@v4
+      with:
+        path: models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        key: qwen2.5-coder-0.5b-q4_k_m
+
+    - name: Download Lightweight Qwen 0.5B Model (~397MB)
+      if: steps.cache-qwen-model.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p models
+        curl -L -C - "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" -o models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        ls -lh models/
+
+    - name: Verify Live Native C-FFI Inference & KV Cache Manipulation
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        ./bin/omni_engine kv-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        ./bin/omni_engine causal-test models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf
+        echo "[+] Direct Native C-FFI Inference, KV Rollback & Self-Healing 100% VERIFIED!"
+
+    - name: End-to-End Autonomous Maestro Test on Apple Silicon
+      timeout-minutes: 10
+      env:
+        OMNI_FORCE_CPU: "1"
+        OMNI_ALLOW_UNSANDBOXED: "1"
+      run: |
+        export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
+        mkdir -p macos_test_workspace
+        ./bin/omni_engine run "Synthesize mathematical helper in Python and run smoke tests" \
+          --plan-file examples/macos_smoke_test_plan.json \
+          --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
+          -y \
+          --cpu \
+          --subgoals 1 \
+          --steps 2 \
+          --dir ./macos_test_workspace
+
+    - name: Verify Synthesized Deliverable Artifacts & Live Python Execution
+      run: |
+        ls -la macos_test_workspace
+        tarball=$(find macos_test_workspace -name "omni_deliverables_*.tar.gz" 2>/dev/null | head -n 1)
+        if [ -n "$tarball" ]; then
+          echo "[+] Sovereign deliverable tarball found: $tarball"
+          tar -ztvf "$tarball"
+          tar -zxvf "$tarball" -C macos_test_workspace
+        fi
+        test -f macos_test_workspace/calculator.py
+        echo "[+] Executing generated calculator.py live with Python 3 on macOS..."
+        python3 -c "import sys; sys.path.insert(0, './macos_test_workspace'); from calculator import MathEngine; m = MathEngine(); print(f'>>> Live MathEngine Test on macOS: 2+3={m.add(2, 3)}, 6*7={m.multiply(6, 7)}'); assert m.add(2, 3) == 5; assert m.multiply(6, 7) == 42"
+        echo "[+] Apple Silicon Model Generation & Live Python Execution 100% VERIFIED!"
+
     - name: Package Darwin ARM64 Sovereign Release Asset
       run: |
         mkdir -p dist_darwin/omni_engine_v2.2.2_darwin_arm64/bin

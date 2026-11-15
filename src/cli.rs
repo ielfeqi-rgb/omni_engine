@@ -799,18 +799,23 @@ pub fn handle_kv_test(args: &[String], base_dir: &PathBuf) {
         "qwen-0.5b.gguf".to_string()
     };
 
-    let model_path = base_dir.join("models").join(&model_name);
+    let model_path = if Path::new(&model_name).exists() {
+        PathBuf::from(&model_name)
+    } else {
+        base_dir.join("models").join(&model_name)
+    };
     if !model_path.exists() {
         eprintln!("[-] Model not found: {:?}", model_path);
         eprintln!("Available models can be viewed with: omni_engine models");
         return;
     }
 
+    let lib_name = if cfg!(target_os = "macos") { "libllama.dylib" } else { "libllama.so" };
     println!("================================================================================");
     println!("             [TEST] OMNI ENGINE - REAL NATIVE KV-CACHE BENCHMARK                   ");
     println!("================================================================================");
     println!("  Model:   {:?}", model_path);
-    println!("  Backend: Direct in-process C FFI (libllama.so)");
+    println!("  Backend: Direct in-process C FFI ({})", lib_name);
     println!("================================================================================\n");
 
     println!("[*] Loading model weights into memory...");
@@ -889,18 +894,23 @@ pub fn handle_causal_test(args: &[String], base_dir: &PathBuf) {
         "qwen-0.5b.gguf".to_string()
     };
 
-    let model_path = base_dir.join("models").join(&model_name);
+    let model_path = if Path::new(&model_name).exists() {
+        PathBuf::from(&model_name)
+    } else {
+        base_dir.join("models").join(&model_name)
+    };
     if !model_path.exists() {
         eprintln!("[-] Model not found: {:?}", model_path);
         eprintln!("Available models can be viewed with: omni_engine models");
         return;
     }
 
+    let lib_name = if cfg!(target_os = "macos") { "libllama.dylib" } else { "libllama.so" };
     println!("================================================================================");
     println!("        [TEST] OMNI ENGINE - CAUSAL DAG & ATOMIC SELF-HEALING BENCHMARK             ");
     println!("================================================================================");
     println!("  Model:   {:?}", model_path);
-    println!("  Backend: Direct in-process C FFI (libllama.so)");
+    println!("  Backend: Direct in-process C FFI ({})", lib_name);
     println!("================================================================================\n");
 
     println!("[*] Loading model weights into memory...");
