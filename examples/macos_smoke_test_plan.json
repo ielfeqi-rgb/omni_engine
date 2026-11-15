@@ -28,25 +28,6 @@
       "acceptance_tests": [
         "Import and unit assertions must succeed with exit code 0."
       ]
-    },
-    {
-      "id": 2,
-      "entity": "test_calculator.py",
-      "kind": "CREATE",
-      "responsibility": "Author smoke test script importing MathEngine from calculator and verifying add and multiply methods.",
-      "depends_on": ["calculator.py"],
-      "command": "python3 test_calculator.py",
-      "symbols": {
-        "functions": [
-          { "name": "test_math_engine", "params": [] }
-        ]
-      },
-      "invariants": [
-        "Pure Python 3 standard library only, zero external packages."
-      ],
-      "acceptance_tests": [
-        "python3 test_calculator.py passes cleanly with exit code 0."
-      ]
     }
   ]
 }
