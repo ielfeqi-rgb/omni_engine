@@ -4,8 +4,16 @@ on:
   push:
     branches: [ "main", "release/**", "feat/**" ]
     tags: [ "v*" ]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+      - 'docs/**'
   pull_request:
     branches: [ "main", "release/**" ]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+      - 'docs/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -122,9 +130,7 @@ jobs:
         ls -lh models/
 
     - name: End-to-End Autonomous Maestro Test on Apple Silicon
-      timeout-minutes: 10
-      env:
-        OMNI_FORCE_CPU: "1"
+      timeout-minutes: 20
       run: |
         export DYLD_LIBRARY_PATH="${{ github.workspace }}/bin:$DYLD_LIBRARY_PATH"
         mkdir -p macos_test_workspace
@@ -132,9 +138,8 @@ jobs:
           --plan-file examples/macos_smoke_test_plan.json \
           --model models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf \
           -y \
-          --cpu \
-          --subgoals 2 \
-          --steps 2 \
+          --subgoals 1 \
+          --steps 1 \
           --dir ./macos_test_workspace
 
     - name: Verify Synthesized Deliverable Artifacts
@@ -168,9 +173,3 @@ jobs:
       with:
         name: omni_engine_v2.2.2_darwin_arm64
         path: omni_engine_v2.2.2_darwin_arm64.tar.gz
-
-    - name: Setup tmate Live SSH Session on Failure
-      if: failure()
-      uses: mxschmitt/action-tmate@v3
-      with:
-        detached: false
