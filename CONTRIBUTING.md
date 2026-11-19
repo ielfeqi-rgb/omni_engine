@@ -72,4 +72,4 @@ cargo build --release
 For questions regarding contributions, architecture, or commercial licensing:
 - **Founder & Maintainer:** Ibrahim El Feqi
 - **Email:** [omni.engine@proton.me](mailto:omni.engine@proton.me)
-- **GitHub Discussions / Issues:** [https://github.com/ielfeqi-rgb/omni_engine](https://github.com/ielfeqi-rgb/omni_engine)
+- **GitHub Discussions / Issues:** [https://github.com/omni-engine-ai/omni_engine](https://github.com/omni-engine-ai/omni_engine)

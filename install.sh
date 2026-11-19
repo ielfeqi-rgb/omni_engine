@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  Omni Engine - Universal Sovereign Installer
-#  Usage: curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
+#  Usage: curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash
 # ==============================================================================
 set -e
 
@@ -17,7 +17,7 @@ MAGENTA="\033[35m"
 INSTALL_DIR="${HOME}/.omni"
 BIN_DIR="${INSTALL_DIR}/bin"
 MODELS_DIR="${INSTALL_DIR}/models"
-REPO="ielfeqi-rgb/omni_engine"
+REPO="omni-engine-ai/omni_engine"
 FROZEN_MACOS_VERSION="v2.2.2"
 
 # Safe interactive prompt reader that supports terminal, pipe, and dev/tty

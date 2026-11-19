@@ -71,5 +71,5 @@ xattr -cr ~/.omni
 
 ```bash
 # Universal 1-line installer (Auto-detects Linux, WSL2, or macOS)
-curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash
 ```

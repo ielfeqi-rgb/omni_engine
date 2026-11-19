@@ -10,12 +10,15 @@
 *100% Offline • Zero Cloud Subscriptions • Direct In-Process C-FFI • Deterministic Cleanroom Sandboxing*
 
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
-[![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
-[![Linux Platform](https://img.shields.io/badge/Linux-x86__64%20(Active%20Production)-brightgreen.svg?logo=linux&logoColor=white)](https://github.com/ielfeqi-rgb/omni_engine/releases/latest)
-[![macOS Platform](https://img.shields.io/badge/macOS-Apple%20Silicon%20(v2.2.2%20Frozen%20Snapshot)-critical.svg?logo=apple&logoColor=white)](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2)
+[![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/omni-engine-ai/omni_engine/releases/tag/v2.2.2)
+[![Linux Platform](https://img.shields.io/badge/Linux-x86__64%20(Active%20Production)-brightgreen.svg?logo=linux&logoColor=white)](https://github.com/omni-engine-ai/omni_engine/releases/latest)
+[![macOS Platform](https://img.shields.io/badge/macOS-Apple%20Silicon%20(v2.2.2%20Frozen%20Snapshot)-critical.svg?logo=apple&logoColor=white)](https://github.com/omni-engine-ai/omni_engine/releases/tag/v2.2.2)
 [![Windows Platform](https://img.shields.io/badge/Windows-WSL2%20(Supported)-blue.svg?logo=windows&logoColor=white)](#-quickstart-universal-1-line-sovereign-installer)
-[![Tests](https://img.shields.io/badge/Tests-152%2F152%20Passing%20(100%25)-brightgreen.svg)](https://github.com/ielfeqi-rgb/omni_engine/actions)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
+[![Tests](https://img.shields.io/badge/Tests-152%2F152%20Passing%20(100%25)-brightgreen.svg)](https://github.com/omni-engine-ai/omni_engine/actions)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/omni-engine-ai/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
+[![Reddit](https://img.shields.io/badge/Reddit-r%2FLocalLLaMA-FF4500.svg?logo=reddit&logoColor=white)](https://www.reddit.com/r/LocalLLaMA/comments/1y0ibsm/we_built_omni_engine_inprocess_software_runtime/)
+[![X Follow](https://img.shields.io/badge/X-Follow%20%40ielfeqi-000000.svg?logo=x&logoColor=white)](https://x.com/ielfeqi)
+[![Email](https://img.shields.io/badge/Contact-omni.engine%40proton.me-6d4aff.svg?logo=protonmail&logoColor=white)](mailto:omni.engine@proton.me)
 [![Sandbox](https://img.shields.io/badge/Sandbox-Bubblewrap%20%7C%20Apple%20Seatbelt-purple.svg)](#core-architectural-pillars)
 [![Inference](https://img.shields.io/badge/Inference-Direct%20In--Process%20C--FFI-red.svg)](#core-architectural-pillars)
 [![License](https://img.shields.io/badge/License-Dual%3A%20AGPLv3%20%2F%20Commercial-red.svg)](LICENSE)
@@ -28,7 +31,7 @@
 [**Core Architecture**](#core-architectural-pillars) • 
 [**Quickstart (1-Line Installer)**](#-quickstart-universal-1-line-sovereign-installer) • 
 [**CLI Reference**](#cli-reference--usage) • 
-[**Google Colab**](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb) • 
+[**Google Colab**](https://colab.research.google.com/github/omni-engine-ai/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb) • 
 [**Master Dossier**](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md)
 
 </div>
@@ -133,7 +136,7 @@ When environment or compiler issues arise during cleanroom verification, the eng
 Install and configure Omni Engine on any supported operating system with a single command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash
 ```
 
 ### What the Universal Installer Does Automatically:
@@ -158,26 +161,26 @@ For automated cloud runners, Dockerfiles, or headless agents, pass flags directl
 
 ```bash
 # Linux (Dynamic Latest, Auto-approve prompts)
-curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash -s -- --linux -y
+curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash -s -- --linux -y
 
 # macOS Apple Silicon (v2.2.2 Frozen Snapshot)
-curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash -s -- --macos -y
+curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash -s -- --macos -y
 
 # Windows (Launch 1-line installation inside WSL2)
-wsl -e bash -c "curl -fsSL https://raw.githubusercontent.com/ielfeqi-rgb/omni_engine/main/install.sh | bash"
+wsl -e bash -c "curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash"
 ```
 
 ---
 
 ### 📦 Manual Air-Gapped Packages (Offline Environments)
 
-For offline or air-gapped systems without internet access, pre-built standalone archives can be downloaded directly from [GitHub Releases](https://github.com/ielfeqi-rgb/omni_engine/releases/tag/v2.2.2):
+For offline or air-gapped systems without internet access, pre-built standalone archives can be downloaded directly from [GitHub Releases](https://github.com/omni-engine-ai/omni_engine/releases/tag/v2.2.2):
 
 | Platform | Archive Asset | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| **Linux x86_64 (CPU)** | [`omni_engine_v2.2.2_linux_x86_64.tar.gz`](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz) | [Checksum](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz.sha256) |
-| **Linux x86_64 (CUDA)** | [`omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz`](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz) | [Checksum](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz.sha256) |
-| **macOS Apple Silicon (M1–M4)** | [`omni_engine_v2.2.2_darwin_arm64.tar.gz`](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz) | [Checksum](https://github.com/ielfeqi-rgb/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz.sha256) |
+| **Linux x86_64 (CPU)** | [`omni_engine_v2.2.2_linux_x86_64.tar.gz`](https://github.com/omni-engine-ai/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz) | [Checksum](https://github.com/omni-engine-ai/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64.tar.gz.sha256) |
+| **Linux x86_64 (CUDA)** | [`omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz`](https://github.com/omni-engine-ai/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz) | [Checksum](https://github.com/omni-engine-ai/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_linux_x86_64_cuda.tar.gz.sha256) |
+| **macOS Apple Silicon (M1–M4)** | [`omni_engine_v2.2.2_darwin_arm64.tar.gz`](https://github.com/omni-engine-ai/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz) | [Checksum](https://github.com/omni-engine-ai/omni_engine/releases/download/v2.2.2/omni_engine_v2.2.2_darwin_arm64.tar.gz.sha256) |
 
 ---
 
@@ -203,7 +206,7 @@ omni run "Build an asynchronous rate-limited web scraper in Rust with unit tests
 
 Want to test **Omni Engine v2.2.2 (CUDA)** without local hardware setup? Launch our official interactive notebook on Google Colab with one click:
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ielfeqi-rgb/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/omni-engine-ai/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
 
 * **Notebook:** [`notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb`](notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
 * **Runtime Setup:** Select **`Runtime -> Change runtime type -> T4 GPU`** in Colab.

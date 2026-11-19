@@ -4,7 +4,7 @@
 **Release Date:** November 10, 2026  
 **Official Release:** `v2.2.1` (Production Frozen Release)  
 **Quality Level:** 0 errors, 0 warnings, 150/150 unit tests passing (100%)  
-**Main Repository:** `https://github.com/ielfeqi-rgb/omni_engine.git` (Official Tag: `v2.2.1`)  
+**Main Repository:** `https://github.com/omni-engine-ai/omni_engine.git` (Official Tag: `v2.2.1`)  
 **Governing Directive:** *«Execute all contenders. Do not intervene to rescue any. Let the compiler decide.»*
 
 ---
