@@ -266,4 +266,4 @@ Omni Engine is dual-licensed under the **GNU Affero General Public License v3.0 
 
 Using Omni Engine inside closed-source corporate infrastructure, commercial products, or internal SaaS/server pipelines without disclosing your proprietary source code requires a paid commercial license.
 
-For commercial licensing, enterprise SLAs, and private deployment inquiries, contact: **[ielfeqi@gmail.com](mailto:ielfeqi@gmail.com)**.
+For commercial licensing, enterprise SLAs, and private deployment inquiries, contact: **[omni.engine@proton.me](mailto:omni.engine@proton.me)**.
