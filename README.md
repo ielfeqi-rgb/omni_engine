@@ -64,6 +64,14 @@ Unlike conventional AI coding assistants that rely on unconstrained ReAct loopsâ
 
 Omni Engine was subjected to the **Atomic Transaction Ledger in Rust (ATLR)** high-concurrency challenge: building a 50-thread concurrent financial ledger with canonical deadlock lock ordering, atomic fee deductions, and total liquidity conservation.
 
+<br/>
+
+<div align="center">
+  <img src="atlr_benchmark_card.png" alt="ATLR Concurrency Benchmark Showdown" width="100%" />
+</div>
+
+<br/>
+
 ### The ATLR Tri-Party & Scaling Matrix
 
 | Metric | Omni Engine (Local 4B) | Aider Local (4B Ollama) | Aider Cloud (Gemini 2.5 Flash) | **Omni Engine (7B Scaling)** ðŸš€ |
