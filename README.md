@@ -1,5 +1,10 @@
 <div align="center">
 
+<img src="banner.png" alt="Omni Engine Hero Banner" width="100%" />
+
+<br/>
+<br/>
+
 # ⚡ OMNI ENGINE
 ### **Sovereign, In-Process Autonomous Software Engineering Runtime**
 *100% Offline • Zero Cloud Subscriptions • Direct In-Process C-FFI • Deterministic Cleanroom Sandboxing*
