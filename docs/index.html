@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omni Engine ⚡ Sovereign, In-Process Software Engineering Runtime in Rust</title>
+    <meta name="description" content="Omni Engine v2.2.2: Sovereign, 100% offline software engineering runtime in pure Rust linking llama.cpp in RAM. Zero cloud subscriptions, sub-6ms KV slicing, zero wipes.">
+    
+    <!-- OpenGraph / Twitter Cards -->
+    <meta property="og:title" content="Omni Engine ⚡ Sovereign Autonomous Software Engineering Runtime">
+    <meta property="og:description" content="100% offline, in-process C-FFI linking against llama.cpp. Zero cloud. Zero wipes. Beating Aider on the 50-thread ATLR challenge.">
+    <meta property="og:image" content="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/atlr_benchmark_card.png">
+    <meta property="og:url" content="https://omni-engine-ai.github.io/omni_engine/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@ielfeqi">
+    <meta name="twitter:creator" content="@ielfeqi">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-base: #06080d;
+            --bg-surface: #0c1017;
+            --bg-card: rgba(16, 22, 34, 0.75);
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --border-glow: rgba(0, 240, 255, 0.25);
+            --cyan: #00f0ff;
+            --cyan-glow: rgba(0, 240, 255, 0.4);
+            --purple: #a855f7;
+            --purple-glow: rgba(168, 85, 247, 0.35);
+            --amber: #f59e0b;
+            --emerald: #10b981;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            overflow-x: hidden;
+            position: relative;
+            line-height: 1.6;
+        }
+
+        /* Ambient animated background grid & glows */
+        .ambient-grid {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 48px 48px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .ambient-glow-1 {
+            position: fixed;
+            top: -150px;
+            left: 20%;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(0, 240, 255, 0.12) 0%, transparent 70%);
+            filter: blur(80px);
+            pointer-events: none;
+            z-index: 0;
+            animation: pulseGlow 12s ease-in-out infinite alternate;
+        }
+
+        .ambient-glow-2 {
+            position: fixed;
+            top: 400px;
+            right: 15%;
+            width: 550px;
+            height: 550px;
+            background: radial-gradient(circle, rgba(168, 85, 247, 0.12) 0%, transparent 70%);
+            filter: blur(80px);
+            pointer-events: none;
+            z-index: 0;
+            animation: pulseGlow 14s ease-in-out infinite alternate-reverse;
+        }
+
+        @keyframes pulseGlow {
+            0% { transform: scale(1) translate(0, 0); opacity: 0.7; }
+            100% { transform: scale(1.15) translate(30px, 40px); opacity: 1; }
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Glassmorphism Navigation */
+        nav {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(20px);
+            background: rgba(6, 8, 13, 0.85);
+            border-bottom: 1px solid var(--border-subtle);
+            padding: 16px 0;
+        }
+
+        .nav-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: #fff;
+            font-weight: 800;
+            font-size: 1.25rem;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--cyan), var(--purple));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 16px var(--cyan-glow);
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 28px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.925rem;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+
+        .nav-links a:hover {
+            color: #fff;
+        }
+
+        .btn-glow {
+            background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(168, 85, 247, 0.15));
+            border: 1px solid rgba(0, 240, 255, 0.4);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.25s ease;
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+        }
+
+        .btn-glow:hover {
+            background: linear-gradient(135deg, rgba(0, 240, 255, 0.3), rgba(168, 85, 247, 0.3));
+            border-color: var(--cyan);
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.35);
+            transform: translateY(-1px);
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 90px 0 70px;
+            text-align: center;
+        }
+
+        .badge-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 240, 255, 0.08);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            border-radius: 999px;
+            padding: 6px 16px;
+            font-size: 0.825rem;
+            font-weight: 600;
+            color: var(--cyan);
+            margin-bottom: 28px;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
+        }
+
+        .badge-pulse {
+            width: 8px;
+            height: 8px;
+            background: var(--cyan);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--cyan);
+            animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        @keyframes ping {
+            0% { transform: scale(0.9); opacity: 1; }
+            75%, 100% { transform: scale(2.2); opacity: 0; }
+        }
+
+        .hero h1 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 900;
+            font-size: clamp(2.5rem, 5.5vw, 4.25rem);
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+            margin-bottom: 24px;
+            text-transform: uppercase;
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, #ffffff 20%, var(--cyan) 60%, var(--purple) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero-desc {
+            max-width: 760px;
+            margin: 0 auto 36px;
+            font-size: 1.15rem;
+            color: var(--text-muted);
+            line-height: 1.7;
+        }
+
+        /* Installer Box */
+        .installer-container {
+            max-width: 680px;
+            margin: 0 auto 40px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            position: relative;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.2s ease;
+        }
+
+        .installer-container:hover {
+            border-color: rgba(0, 240, 255, 0.4);
+        }
+
+        .installer-cmd {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: #38bdf8;
+            overflow-x: auto;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .installer-prompt {
+            color: #64748b;
+            user-select: none;
+        }
+
+        .btn-copy {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border-subtle);
+            color: #fff;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .btn-copy:hover {
+            background: var(--cyan);
+            color: #000;
+            border-color: var(--cyan);
+        }
+
+        /* Action Buttons */
+        .hero-actions {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 60px;
+        }
+
+        .btn-primary {
+            background: #fff;
+            color: #000;
+            padding: 12px 26px;
+            border-radius: 10px;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 20px rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-primary:hover {
+            background: var(--cyan);
+            box-shadow: 0 6px 25px rgba(0, 240, 255, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-subtle);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+        }
+
+        /* Live Terminal Simulator */
+        .terminal-window {
+            max-width: 960px;
+            margin: 0 auto 100px;
+            background: #080c14;
+            border: 1px solid rgba(0, 240, 255, 0.2);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 35px rgba(0, 240, 255, 0.1);
+        }
+
+        .terminal-header {
+            background: #0e1422;
+            padding: 12px 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .terminal-dots {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .dot-red { background: #ef4444; }
+        .dot-yellow { background: #f59e0b; }
+        .dot-green { background: #10b981; }
+
+        .terminal-tabs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .term-tab {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 0.775rem;
+            font-family: 'JetBrains Mono', monospace;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .term-tab.active {
+            background: rgba(0, 240, 255, 0.1);
+            color: var(--cyan);
+            border-color: rgba(0, 240, 255, 0.3);
+        }
+
+        .terminal-body {
+            padding: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.7;
+            text-align: left;
+            min-height: 320px;
+            color: #e2e8f0;
+        }
+
+        .term-prompt { color: #10b981; }
+        .term-cyan { color: #38bdf8; }
+        .term-yellow { color: #fbbf24; }
+        .term-purple { color: #c084fc; }
+        .term-gray { color: #64748b; }
+        .term-bold { font-weight: 700; }
+
+        .cursor-blink {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background: var(--cyan);
+            vertical-align: middle;
+            animation: blink 1s step-start infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        /* 4 Pillars Section */
+        .section-title-wrap {
+            text-align: center;
+            max-width: 720px;
+            margin: 0 auto 56px;
+        }
+
+        .section-subtitle {
+            color: var(--cyan);
+            text-transform: uppercase;
+            font-size: 0.825rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .section-h2 {
+            font-family: 'Montserrat', sans-serif;
+            font-size: clamp(1.8rem, 3.5vw, 2.5rem);
+            font-weight: 800;
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
+        }
+
+        .pillars-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 24px;
+            margin-bottom: 100px;
+        }
+
+        .pillar-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 30px;
+            position: relative;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+
+        .pillar-card:hover {
+            border-color: rgba(0, 240, 255, 0.4);
+            transform: translateY(-4px);
+            box-shadow: 0 16px 36px rgba(0, 240, 255, 0.08);
+        }
+
+        .pillar-icon-box {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: rgba(0, 240, 255, 0.1);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            margin-bottom: 20px;
+        }
+
+        .pillar-card h3 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #fff;
+        }
+
+        .pillar-card p {
+            color: var(--text-muted);
+            font-size: 0.925rem;
+            line-height: 1.6;
+        }
+
+        .pillar-metric {
+            display: inline-block;
+            margin-top: 18px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-subtle);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--cyan);
+        }
+
+        /* Benchmark Showdown Section */
+        .benchmark-section {
+            background: linear-gradient(180deg, transparent, rgba(16, 22, 34, 0.6) 30%, rgba(16, 22, 34, 0.6) 70%, transparent);
+            padding: 60px 0 100px;
+            margin-bottom: 60px;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            background: #080c14;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.925rem;
+        }
+
+        th {
+            background: #0e1422;
+            padding: 18px 24px;
+            color: var(--text-muted);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-subtle);
+            text-transform: uppercase;
+            font-size: 0.775rem;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            padding: 20px 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            color: #e2e8f0;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .highlight-col {
+            background: rgba(0, 240, 255, 0.03);
+            border-left: 1px solid rgba(0, 240, 255, 0.15);
+            border-right: 1px solid rgba(0, 240, 255, 0.15);
+            font-weight: 600;
+            color: #fff;
+        }
+
+        th.highlight-col {
+            background: rgba(0, 240, 255, 0.08);
+            color: var(--cyan);
+        }
+
+        .badge-pass {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge-fail {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border-subtle);
+            padding: 50px 0 30px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .footer-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+            margin-bottom: 30px;
+        }
+
+        .footer-socials {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .footer-socials a {
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        .footer-socials a:hover {
+            color: var(--cyan);
+        }
+
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            .hero h1 { font-size: 2.2rem; }
+            .hero-desc { font-size: 1rem; }
+            .installer-container { flex-direction: column; align-items: stretch; }
+            .btn-copy { justify-content: center; }
+            .footer-content { flex-direction: column; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="ambient-grid"></div>
+    <div class="ambient-glow-1"></div>
+    <div class="ambient-glow-2"></div>
+
+    <!-- Navigation -->
+    <nav>
+        <div class="container nav-content">
+            <a href="#" class="brand-logo">
+                <div class="brand-icon">⚡</div>
+                <span>OMNI ENGINE</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="#features">Architecture</a></li>
+                <li><a href="#benchmark">ATLR Benchmark</a></li>
+                <li><a href="https://github.com/omni-engine-ai/omni_engine" target="_blank">GitHub</a></li>
+                <li><a href="https://colab.research.google.com/github/omni-engine-ai/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb" target="_blank">Colab Benchmark</a></li>
+                <li><a href="mailto:omni.engine@proton.me">Contact</a></li>
+            </ul>
+            <a href="https://github.com/omni-engine-ai/omni_engine" target="_blank" class="btn-glow">
+                <span>⭐ Star on GitHub</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="badge-pill">
+                <span class="badge-pulse"></span>
+                <span>Omni Engine v2.2.2 Released • Dual AGPLv3 / Commercial</span>
+            </div>
+
+            <h1>
+                The Sovereign, In-Process<br>
+                <span class="gradient-text">Software Engineering Runtime</span>
+            </h1>
+
+            <p class="hero-desc">
+                Transform small open-weights coder models (3B to 7B) into verified software compilers. Linking <code>llama.cpp</code> directly in native RAM. Zero cloud subscriptions, zero telemetry, and mathematical zero-wipe invariants.
+            </p>
+
+            <!-- 1-Click Installer Box -->
+            <div class="installer-container">
+                <div class="installer-cmd">
+                    <span class="installer-prompt">$</span>
+                    <span id="cmd-text">curl -sSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash</span>
+                </div>
+                <button class="btn-copy" onclick="copyInstaller()">
+                    <span id="copy-icon">📋</span>
+                    <span id="copy-text">Copy</span>
+                </button>
+            </div>
+
+            <!-- CTA Actions -->
+            <div class="hero-actions">
+                <a href="https://github.com/omni-engine-ai/omni_engine" target="_blank" class="btn-primary">
+                    <span>View Repository</span>
+                    <span>→</span>
+                </a>
+                <a href="https://colab.research.google.com/github/omni-engine-ai/omni_engine/blob/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb" target="_blank" class="btn-secondary">
+                    <span>⚡ Run Colab Benchmark</span>
+                </a>
+            </div>
+
+            <!-- Live Terminal Simulator -->
+            <div class="terminal-window">
+                <div class="terminal-header">
+                    <div class="terminal-dots">
+                        <div class="dot dot-red"></div>
+                        <div class="dot dot-yellow"></div>
+                        <div class="dot dot-green"></div>
+                    </div>
+                    <div class="terminal-tabs">
+                        <button class="term-tab active" onclick="switchTab('benchmark')">bench_atlr.sh</button>
+                        <button class="term-tab" onclick="switchTab('cffi')">in_process_cffi.rs</button>
+                        <button class="term-tab" onclick="switchTab('bwrap')">cleanroom_jail.rs</button>
+                    </div>
+                </div>
+                <div class="terminal-body" id="term-content">
+                    <!-- Streamed dynamically via JS -->
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 4 Architectural Pillars -->
+    <section class="container" id="features">
+        <div class="section-title-wrap">
+            <span class="section-subtitle">Core Invariants</span>
+            <h2 class="section-h2">Architected for Sovereign Systems</h2>
+            <p style="color: var(--text-muted);">Eliminating the fragility, amnesia, and recurring costs of HTTP-based cloud coding loops.</p>
+        </div>
+
+        <div class="pillars-grid">
+            <div class="pillar-card">
+                <div class="pillar-icon-box">🧠</div>
+                <h3>Direct In-Process C-FFI</h3>
+                <p>Links directly against upstream <code>llama.cpp</code> in RAM. Token streams bypass network sockets and IPC serialization, writing straight to native memory buffers.</p>
+                <span class="pillar-metric">0 Socket Latency</span>
+            </div>
+
+            <div class="pillar-card">
+                <div class="pillar-icon-box">⚡</div>
+                <h3>Sub-6ms Context Slicing</h3>
+                <p>Maintains persistent in-memory KV-cache arenas across turns. By slicing tokens rather than re-evaluating prompt prefixes, reasoning switch costs collapse to $O(1)$.</p>
+                <span class="pillar-metric">5.8ms per Turn</span>
+            </div>
+
+            <div class="pillar-card">
+                <div class="pillar-icon-box">🛡️</div>
+                <h3>Zero-Wipe Invariant (W = ∅)</h3>
+                <p>Strict structural AST validation ensures previously verified types, functions, and tests are immutable in RAM VFS. Destructive agent erasures are rejected at compile time.</p>
+                <span class="pillar-metric">W = ∅ Enforced</span>
+            </div>
+
+            <div class="pillar-card">
+                <div class="pillar-icon-box">🔒</div>
+                <h3>Hermetic Bubblewrap Jail</h3>
+                <p>Every tool execution, compile cycle, and test suite executes inside isolated Linux namespace jails (<code>bwrap</code>) with read-only host mounts and zero network egress.</p>
+                <span class="pillar-metric">Air-Gapped Security</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Benchmark Showdown Table -->
+    <section class="benchmark-section" id="benchmark">
+        <div class="container">
+            <div class="section-title-wrap">
+                <span class="section-subtitle">Empirical Validation</span>
+                <h2 class="section-h2">50-Thread ATLR Concurrency Showdown</h2>
+                <p style="color: var(--text-muted);">Stress-tested under 50 simultaneous multi-turn agent refactoring cleanrooms on a single Tesla T4 GPU.</p>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Metric / Invariant</th>
+                            <th class="highlight-col">⚡ Omni Engine v2.2.2 (7B)</th>
+                            <th>Aider + Ollama (4B Q4_K_M)</th>
+                            <th>Aider + Gemini 2.5 Flash</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Execution Mode</strong></td>
+                            <td class="highlight-col">In-Process C-FFI (RAM)</td>
+                            <td>Local HTTP Daemon (11434)</td>
+                            <td>Cloud API (Network)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Concurrency</strong></td>
+                            <td class="highlight-col">50 Parallel Cleanrooms</td>
+                            <td>Sequential Local</td>
+                            <td>Parallel Cloud</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Total Wall-Clock</strong></td>
+                            <td class="highlight-col"><span style="color: var(--cyan); font-weight:700;">37m 58s</span></td>
+                            <td>5h 24m (Timeout/Kill)</td>
+                            <td>12m 41s</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Completed Threads</strong></td>
+                            <td class="highlight-col"><span class="badge-pass">✓ 50 / 50 (100%)</span></td>
+                            <td><span class="badge-fail">✗ 11 / 50 (Aborted)</span></td>
+                            <td><span class="badge-fail">✗ 38 / 50 (Failed)</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Regression File Wipes</strong></td>
+                            <td class="highlight-col"><span style="color: var(--emerald); font-weight:700;">0 (W = ∅)</span></td>
+                            <td>14 partial wipes</td>
+                            <td>3 structural truncations</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Exit Status</strong></td>
+                            <td class="highlight-col"><span class="badge-pass">Exit Code 0 (Clean)</span></td>
+                            <td><span class="badge-fail">SIGKILL (137)</span></td>
+                            <td><span class="badge-fail">Panic 101</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="color: var(--cyan); font-weight:800;">⚡ OMNI ENGINE</span>
+                    <span>• Developed by Ibrahim El Feqi</span>
+                </div>
+                <div class="footer-socials">
+                    <a href="https://github.com/omni-engine-ai/omni_engine" target="_blank">GitHub</a>
+                    <a href="https://x.com/ielfeqi" target="_blank">X (@ielfeqi)</a>
+                    <a href="https://www.reddit.com/r/LocalLLaMA/comments/1y0ibsm/we_built_omni_engine_inprocess_software_runtime/" target="_blank">Reddit</a>
+                    <a href="mailto:omni.engine@proton.me">omni.engine@proton.me</a>
+                </div>
+            </div>
+            <p style="text-align: center; color: #475569; font-size: 0.8rem;">
+                © 2026 Omni Engine Team. Dual Licensed under AGPLv3 & Enterprise Commercial License.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Interactive Scripts -->
+    <script>
+        // Copy Installer Command
+        function copyInstaller() {
+            const cmd = document.getElementById('cmd-text').innerText;
+            navigator.clipboard.writeText(cmd).then(() => {
+                const copyText = document.getElementById('copy-text');
+                const copyIcon = document.getElementById('copy-icon');
+                copyText.innerText = 'Copied!';
+                copyIcon.innerText = '✓';
+                setTimeout(() => {
+                    copyText.innerText = 'Copy';
+                    copyIcon.innerText = '📋';
+                }, 2000);
+            });
+        }
+
+        // Terminal Content Simulators
+        const termData = {
+            benchmark: [
+                `<span class="term-prompt">$</span> <span class="term-bold">omni run --benchmark atlr-50 --model qwen2.5-coder-7b-q4_k_m.gguf</span>`,
+                `<span class="term-gray">[INFO]</span> Initializing Omni Engine v2.2.2 Sovereign Runtime...`,
+                `<span class="term-gray">[C-FFI]</span> Linked libllama.so into RAM: <span class="term-cyan">4,382 MB allocated</span>`,
+                `<span class="term-gray">[VFS]</span> Staged 50 concurrent bwrap namespaces with read-only root mounts`,
+                `<span class="term-purple">[ATLR]</span> Spawning 50 concurrent refactoring threads...`,
+                `<span class="term-cyan">▸ Thread #01..#10:</span> AST validated in 4.2ms | KV-cache sliced | <span class="term-prompt">PASS (Code 0)</span>`,
+                `<span class="term-cyan">▸ Thread #11..#30:</span> AST validated in 5.8ms | Invariant W = ∅ checked | <span class="term-prompt">PASS (Code 0)</span>`,
+                `<span class="term-cyan">▸ Thread #31..#50:</span> AST validated in 5.1ms | Cleanroom isolation verified | <span class="term-prompt">PASS (Code 0)</span>`,
+                `----------------------------------------------------------------------`,
+                `<span class="term-bold term-prompt">✓ ALL 50 THREADS COMPLETED (100% Success)</span>`,
+                `<span class="term-yellow">Total Wall-Clock: 37m 58s | Regression Wipes: 0 | Exit Status: 0</span> <span class="cursor-blink"></span>`
+            ],
+            cffi: [
+                `<span class="term-prompt">$</span> <span class="term-bold">cat src/inference/in_process_cffi.rs</span>`,
+                `<span class="term-purple">pub unsafe fn</span> <span class="term-cyan">stream_token_in_process</span>(ctx: *mut llama_context, token: llama_token) -> <span class="term-yellow">Result&lt;TokenSlice, FFIError&gt;</span> {`,
+                `    <span class="term-gray">// Direct zero-copy memory write into RAM buffer (Bypassing HTTP/IPC)</span>`,
+                `    <span class="term-purple">let</span> piece = llama_token_to_piece(ctx, token);`,
+                `    <span class="term-purple">let</span> kv_arena = <span class="term-cyan">slice_kv_cache_arena</span>(ctx, 5.8 <span class="term-gray">/* ms */</span>);`,
+                `    <span class="term-bold term-prompt">Ok</span>(TokenSlice { piece, kv_arena, latency_us: 142 })`,
+                `}`,
+                `<span class="term-gray">[DIAGNOSTIC]</span> Zero socket latency confirmed. Buffer throughput: <span class="term-cyan">18.4 GB/s</span> <span class="cursor-blink"></span>`
+            ],
+            bwrap: [
+                `<span class="term-prompt">$</span> <span class="term-bold">omni sandbox inspect --pid 4821</span>`,
+                `<span class="term-gray">[BWRAP]</span> Hermetic Linux Namespace Jail Status:`,
+                `  ├── <span class="term-cyan">PID / Network Namespace:</span> <span class="term-prompt">CLONE_NEWNET (Network disabled)</span>`,
+                `  ├── <span class="term-cyan">Filesystem Mounts:</span> <span class="term-yellow">ro-bind /usr, ro-bind /lib64, tmpfs /workspace</span>`,
+                `  ├── <span class="term-cyan">Host System Protection:</span> <span class="term-prompt">100% Read-Only, Sealed</span>`,
+                `  └── <span class="term-cyan">AST Verification Engine:</span> <span class="term-prompt">Zero-Wipe Invariant (W = ∅) Active</span> <span class="cursor-blink"></span>`
+            ]
+        };
+
+        let currentTab = 'benchmark';
+        let lineIndex = 0;
+        let timer = null;
+
+        function renderTab(tabKey) {
+            clearInterval(timer);
+            const container = document.getElementById('term-content');
+            container.innerHTML = '';
+            const lines = termData[tabKey];
+            lineIndex = 0;
+
+            timer = setInterval(() => {
+                if (lineIndex < lines.length) {
+                    const p = document.createElement('div');
+                    p.innerHTML = lines[lineIndex];
+                    container.appendChild(p);
+                    lineIndex++;
+                } else {
+                    clearInterval(timer);
+                }
+            }, 120);
+        }
+
+        function switchTab(tabKey) {
+            document.querySelectorAll('.term-tab').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            renderTab(tabKey);
+        }
+
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', () => {
+            renderTab('benchmark');
+        });
+    </script>
+</body>
+</html>
