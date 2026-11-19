@@ -1,19 +1,24 @@
 name: Omni Engine Multi-Platform CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [ "main", "release/**", "feat/**" ]
     tags: [ "v*" ]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-      - 'docs/**'
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
   pull_request:
     branches: [ "main", "release/**" ]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-      - 'docs/**'
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
 
 env:
   CARGO_TERM_COLOR: always
