@@ -25,7 +25,7 @@ We strongly recommend all users and organizations maintain deployment on the lat
 If you discover a security vulnerability or potential attack vector in Omni Engine, please disclose it responsibly:
 
 - **Primary Security Contact:** Ibrahim El Feqi
-- **Email:** [ielfeqi@gmail.com](mailto:ielfeqi@gmail.com)
+- **Email:** [omni.engine@proton.me](mailto:omni.engine@proton.me)
 - **Subject Line:** `[SECURITY] Omni Engine Vulnerability Report - <Brief Component Description>`
 
 ### Information to Include in Your Report
