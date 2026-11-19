@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMNI ENGINE • Sovereign In-Process Autonomous Runtime</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #030508;
+            --surface: #070c14;
+            --surface-raised: #0c1420;
+            --border: #16202e;
+            --border-hover: #26384f;
+            --emerald: #10b981;
+            --emerald-bright: #34d399;
+            --emerald-dim: rgba(16, 185, 129, 0.1);
+            --emerald-border: rgba(16, 185, 129, 0.3);
+            --cyan: #38bdf8;
+            --text-main: #f1f5f9;
+            --text-muted: #64748b;
+            --text-sub: #94a3b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: 'Space Grotesk', -apple-system, sans-serif;
+            line-height: 1.5;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Ambient Background Matrix Canvas */
+        #matrix-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            opacity: 0.16;
+        }
+
+        .page-wrap {
+            position: relative;
+            z-index: 10;
+            max-width: 1140px;
+            margin: 0 auto;
+            padding: 40px 24px 80px 24px;
+        }
+
+        /* 3D Puffy ASCII OMNI Hero Container */
+        .omni-3d-wrapper {
+            position: relative;
+            width: 100%;
+            height: 380px;
+            margin: 16px 0 28px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #omni-3d-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+        }
+
+        #omni-3d-canvas:active {
+            cursor: grabbing;
+        }
+
+        .hero-meta-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 12px;
+            border: 1px solid var(--emerald-border);
+            background: var(--emerald-dim);
+            color: var(--emerald-bright);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 2px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--emerald-bright);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--emerald-bright);
+        }
+
+        .version-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            letter-spacing: 0.08em;
+        }
+
+        .version-badge strong {
+            color: var(--text-sub);
+        }
+
+        /* Hero Text Content */
+        .hero-desc {
+            font-size: 18px;
+            color: var(--text-sub);
+            max-width: 760px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .hero-desc strong {
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        /* Handcrafted Mechanical Buttons */
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 60px;
+        }
+
+        .omni-btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--emerald);
+            color: #020407;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            font-weight: 700;
+            padding: 12px 24px;
+            border: 1px solid #10b981;
+            border-radius: 3px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .omni-btn-primary:hover {
+            background: #34d399;
+            border-color: #34d399;
+            transform: translateY(-1px);
+        }
+
+        .omni-btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface);
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            font-weight: 500;
+            padding: 12px 22px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .omni-btn-secondary:hover {
+            border-color: var(--border-hover);
+            background: var(--surface-raised);
+            color: #ffffff;
+        }
+
+        /* Section Headings */
+        .section-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            margin: 64px 0 20px 0;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .section-header h2 {
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--text-main);
+        }
+
+        .section-header span {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Platform Grid */
+        .platform-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+            gap: 16px;
+        }
+
+        .platform-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 22px;
+            border-radius: 4px;
+            transition: border-color 0.2s ease;
+        }
+
+        .platform-card:hover {
+            border-color: var(--border-hover);
+        }
+
+        .platform-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .platform-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .platform-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9.5px;
+            padding: 2px 7px;
+            border-radius: 2px;
+        }
+
+        .badge-active {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--emerald);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-frozen {
+            background: rgba(56, 189, 248, 0.12);
+            color: var(--cyan);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+        }
+
+        .badge-wsl {
+            background: rgba(148, 163, 184, 0.12);
+            color: var(--text-sub);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+
+        .platform-spec {
+            list-style: none;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            color: var(--text-sub);
+        }
+
+        .platform-spec li {
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            padding-bottom: 4px;
+            border-bottom: 1px dotted rgba(255, 255, 255, 0.05);
+        }
+
+        .platform-spec li span:first-child {
+            color: var(--text-muted);
+        }
+
+        /* Terminal Window */
+        .terminal-box {
+            background: #020306;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 18px;
+        }
+
+        .terminal-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .terminal-tabs {
+            display: flex;
+            gap: 2px;
+        }
+
+        .t-tab {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            padding: 4px 12px;
+            cursor: pointer;
+            border-radius: 2px;
+        }
+
+        .t-tab.active {
+            background: var(--surface-raised);
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
+        .terminal-code {
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            line-height: 1.7;
+            color: var(--text-sub);
+            overflow-x: auto;
+            min-height: 220px;
+        }
+
+        .terminal-code .c-green { color: var(--emerald); }
+        .terminal-code .c-cyan { color: var(--cyan); }
+        .terminal-code .c-dim { color: #475569; }
+        .terminal-code .c-white { color: #ffffff; font-weight: 600; }
+
+        /* Architecture Pillars */
+        .pillars-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .pillar-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 22px;
+            border-radius: 4px;
+        }
+
+        .pillar-idx {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--emerald);
+            margin-bottom: 8px;
+            letter-spacing: 0.1em;
+        }
+
+        .pillar-item h3 {
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 10px;
+        }
+
+        .pillar-item p {
+            font-size: 13px;
+            color: var(--text-sub);
+            line-height: 1.55;
+        }
+
+        /* Benchmark Table */
+        .bench-table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--surface);
+            margin-top: 20px;
+        }
+
+        .bench-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            text-align: left;
+        }
+
+        .bench-table th, .bench-table td {
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .bench-table th {
+            background: var(--surface-raised);
+            color: var(--text-sub);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .bench-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .bench-table td.highlight {
+            color: var(--emerald);
+            font-weight: 600;
+        }
+
+        .bench-table td.failed {
+            color: #ef4444;
+        }
+
+        /* Footer */
+        footer {
+            margin-top: 80px;
+            padding-top: 32px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .license-tag strong {
+            color: var(--text-main);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Unified Matrix Texture Background -->
+    <canvas id="matrix-canvas"></canvas>
+
+    <div class="page-wrap">
+
+        <!-- Top Status Meta -->
+        <div class="hero-meta-bar">
+            <div class="status-chip">
+                <span class="status-dot"></span>
+                <span>SOVEREIGN RUNTIME • 100% AIR-GAPPED</span>
+            </div>
+            <div class="version-badge">
+                RELEASE: <strong>v2.2.2 (Production Freeze)</strong> • RUST <strong>1.80+</strong>
+            </div>
+        </div>
+
+        <!-- Hero Section: Prominent 3D Puffy ASCII 'OMNI' -->
+        <section class="hero">
+            <div class="omni-3d-wrapper">
+                <canvas id="omni-3d-canvas"></canvas>
+            </div>
+
+            <p class="hero-desc">
+                <strong>Sovereign, in-process autonomous software engineering runtime.</strong> Transforms open-weights SLMs (3B to 7B) into verified compilers. Executes completely offline without cloud API tokens, external daemons, or telemetry.
+            </p>
+
+            <div class="btn-group">
+                <button onclick="copyInstall()" class="omni-btn-primary mono">
+                    <span id="install-text">curl -fsSL https://omni.sh | bash</span>
+                    <span id="copy-badge" style="opacity: 0.6; font-size: 10px;">[COPY]</span>
+                </button>
+                <a href="#cli" class="omni-btn-secondary mono">
+                    <span>INSPECT VERIFICATION KERNEL</span>
+                </a>
+                <a href="#matrix" class="omni-btn-secondary mono">
+                    <span>PLATFORM MATRIX</span>
+                </a>
+            </div>
+        </section>
+
+        <!-- Platform Matrix Section (Real Cross-Platform Facts) -->
+        <section id="matrix">
+            <div class="section-header">
+                <h2>Sovereign Platform Support Matrix</h2>
+                <span>Cross-Platform Execution Invariants</span>
+            </div>
+
+            <div class="platform-grid">
+                <!-- Linux -->
+                <div class="platform-card">
+                    <div class="platform-top">
+                        <div class="platform-title">Linux (x86_64)</div>
+                        <span class="platform-badge badge-active">ACTIVE PRODUCTION CORE</span>
+                    </div>
+                    <ul class="platform-spec">
+                        <li><span>Sandboxing</span> <span>bwrap (Kernel Namespaces)</span></li>
+                        <li><span>Hardware</span> <span>AVX2 / AVX-512 & NVIDIA CUDA</span></li>
+                        <li><span>Inference</span> <span>In-Process C-FFI (RAM link)</span></li>
+                        <li><span>Lifecycle</span> <span>Continuous Production Release</span></li>
+                    </ul>
+                </div>
+
+                <!-- macOS -->
+                <div class="platform-card">
+                    <div class="platform-top">
+                        <div class="platform-title">macOS (Apple Silicon)</div>
+                        <span class="platform-badge badge-frozen">v2.2.2 FROZEN SNAPSHOT</span>
+                    </div>
+                    <ul class="platform-spec">
+                        <li><span>Sandboxing</span> <span>Apple Seatbelt + RAM VFS</span></li>
+                        <li><span>Hardware</span> <span>Metal GPU (libggml-metal)</span></li>
+                        <li><span>Architecture</span> <span>arm64 (M1–M4 Native)</span></li>
+                        <li><span>Lifecycle</span> <span>Stable Frozen Hardware Snapshot</span></li>
+                    </ul>
+                </div>
+
+                <!-- Windows -->
+                <div class="platform-card">
+                    <div class="platform-top">
+                        <div class="platform-title">Windows (x86_64)</div>
+                        <span class="platform-badge badge-wsl">WSL2 SUPPORTED</span>
+                    </div>
+                    <ul class="platform-spec">
+                        <li><span>Sandboxing</span> <span>WSL2 Linux Cleanrooms</span></li>
+                        <li><span>Hardware</span> <span>Native CPU & CUDA Passthrough</span></li>
+                        <li><span>Inference</span> <span>Zero-Copy VFS Mount</span></li>
+                        <li><span>Lifecycle</span> <span>Continuous via WSL2 Integration</span></li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Mechanical Terminal Execution Block -->
+        <section id="cli">
+            <div class="section-header">
+                <h2>Deterministic Cleanroom Execution</h2>
+                <span>Live Verification Daemon Spec</span>
+            </div>
+
+            <div class="terminal-box">
+                <div class="terminal-bar">
+                    <div class="terminal-tabs">
+                        <button class="t-tab active" onclick="setTerminalTab('exec')">Execution Trace</button>
+                        <button class="t-tab" onclick="setTerminalTab('cffi')">C-FFI Linkage</button>
+                        <button class="t-tab" onclick="setTerminalTab('bwrap')">Cleanroom Gate</button>
+                    </div>
+                    <span>PID: 49201 // CLEANROOM ISOLATED</span>
+                </div>
+
+                <div class="terminal-code" id="terminal-content">
+                    <div class="c-dim">// Omni Engine CLI v2.2.2 — Autonomous Multi-File Compiler</div>
+                    <div><span class="c-green">$</span> <span class="c-white">omni run --target atlr_ledger --cleanroom --isolated</span></div>
+                    <div class="c-dim mt-2">[1/4] Initializing In-Process C-FFI RAM model (Qwen2.5-Coder-7B)...</div>
+                    <div><span class="c-cyan">&gt; C-FFI:</span> linked llama.cpp directly in RAM. Zero network socket overhead.</div>
+                    <div><span class="c-cyan">&gt; VFS:</span> initialized RAM Virtual File System at /dev/shm/omni_vfs_gate</div>
+                    <div class="c-dim mt-2">[2/4] Topological Directed Acyclic Graph (DAG) construction...</div>
+                    <div><span class="c-green">&gt; DAG:</span> planned dependencies: models.rs → ledger.rs → lib.rs</div>
+                    <div><span class="c-green">&gt; Gate:</span> Zero-Wipe Invariant (W = ∅) enforced. Regressions strictly prohibited.</div>
+                    <div class="c-dim mt-2">[3/4] Spawning unprivileged cleanroom sandbox...</div>
+                    <div><span class="c-cyan">&gt; Sandbox:</span> unshare-all + --unshare-net (0 physical network access)</div>
+                    <div><span class="c-cyan">&gt; Compiler:</span> cargo check --lib --tests completed in cleanroom (Exit Code: 0)</div>
+                    <div class="c-dim mt-2">[4/4] 50-thread concurrent ATLR stress test verification...</div>
+                    <div class="c-green font-bold">✓ EXIT CODE: 0 (Pristine). All 50 threads completed with total liquidity conservation.</div>
+                    <div class="c-green font-bold">✓ 3 modules committed to host disk: [models.rs, ledger.rs, lib.rs]</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Core Architectural Pillars -->
+        <section id="architecture">
+            <div class="section-header">
+                <h2>Mathematical Governance Pillars</h2>
+                <span>Replacing ReAct Token Loops with Invariants</span>
+            </div>
+
+            <div class="pillars-grid">
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 01</div>
+                    <h3>Direct In-Process C-FFI</h3>
+                    <p>
+                        Upstream inference is linked directly into engine memory. Eliminates HTTP/TCP socket latency, unlocking sub-millisecond causal KV-cache rollbacks and token steering.
+                    </p>
+                </div>
+
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 02</div>
+                    <h3>Deterministic Cleanrooms</h3>
+                    <p>
+                        Code generation is staged in RAM VFS and verified inside Bubblewrap (Linux) or Apple Seatbelt (macOS). Unverified code never touches host storage.
+                    </p>
+                </div>
+
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 03</div>
+                    <h3>Zero-Wipe Invariant ($W = \emptyset$)</h3>
+                    <p>
+                        Mathematical guarantee that verified functions and classes are permanently frozen in memory. Erasing working code during refactoring is physically impossible.
+                    </p>
+                </div>
+
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 04</div>
+                    <h3>Topological DAG Planning</h3>
+                    <p>
+                        Multi-file projects are scheduled topologically according to strict type and symbol dependencies, preventing out-of-order synthesis hallucination loops.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ATLR Benchmark Results Table -->
+        <section id="benchmarks">
+            <div class="section-header">
+                <h2>Empirical ATLR Concurrency Benchmark</h2>
+                <span>50-Thread Atomic Ledger High-Concurrency Stress Test</span>
+            </div>
+
+            <div class="bench-table-wrap">
+                <table class="bench-table">
+                    <thead>
+                        <tr>
+                            <th>Runtime & Model</th>
+                            <th>Environment</th>
+                            <th>Makespan</th>
+                            <th>Exit Code</th>
+                            <th>Concurrency Logic</th>
+                            <th>Outcome</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="highlight">Omni Engine (Local 7B)</td>
+                            <td>Google Colab (T4 GPU)</td>
+                            <td class="highlight">37m 58s</td>
+                            <td class="highlight">Exit 0</td>
+                            <td>RwLock + Mutex</td>
+                            <td class="highlight">100% Passed (Clean)</td>
+                        </tr>
+                        <tr>
+                            <td class="highlight">Omni Engine (Local 4B)</td>
+                            <td>Commodity 8-Core CPU</td>
+                            <td>1h 39m</td>
+                            <td class="highlight">Exit 0</td>
+                            <td>Canonical Min/Max Lock</td>
+                            <td class="highlight">100% Staged via Gate</td>
+                        </tr>
+                        <tr>
+                            <td>Aider Local (4B Ollama)</td>
+                            <td>Commodity 8-Core CPU</td>
+                            <td class="failed">&gt;5h 24m (Timeout)</td>
+                            <td class="failed">kill -9</td>
+                            <td class="failed">Never Reached</td>
+                            <td class="failed">0 files delivered</td>
+                        </tr>
+                        <tr>
+                            <td>Aider Cloud (Gemini 2.5 Flash)</td>
+                            <td>Cloud Infrastructure</td>
+                            <td>58 seconds</td>
+                            <td class="failed">Exit 101</td>
+                            <td>sort_unstable</td>
+                            <td class="failed">FAILED (Panic test)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Authentic License & Identity Footer -->
+        <footer>
+            <div>
+                <span>OMNI ENGINE • SOVEREIGN PRODUCTION RUNTIME v2.2.2</span>
+            </div>
+            <div>
+                License: <strong>Dual: AGPLv3 / Commercial</strong>
+            </div>
+            <div>
+                <span>100% Offline • Zero Telemetry</span>
+            </div>
+        </footer>
+
+    </div>
+
+    <!-- 3D Puffy/Inflated ASCII 'OMNI' Engine Script -->
+    <script>
+        const omniCanvas = document.getElementById('omni-3d-canvas');
+        const oCtx = omniCanvas.getContext('2d');
+
+        let oW, oH;
+        let oDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+
+        // Interactive mouse rotation
+        let isMouseDown = false;
+        let lastMouseX = 0;
+        let userRotY = 0;
+        let userRotX = 0;
+
+        omniCanvas.addEventListener('mousedown', (e) => {
+            isMouseDown = true;
+            lastMouseX = e.clientX;
+        });
+        window.addEventListener('mouseup', () => { isMouseDown = false; });
+        window.addEventListener('mousemove', (e) => {
+            if (isMouseDown) {
+                const deltaX = e.clientX - lastMouseX;
+                userRotY += deltaX * 0.008;
+                lastMouseX = e.clientX;
+            }
+        });
+
+        // =========================================================================
+        // PUFFY / INFLATED 3D LETTER MESH GENERATOR ("فونت منتفخ")
+        // Generates thick rounded tubular capsules and puffy tori with surface normals
+        // =========================================================================
+        const omni3DPoints = [];
+
+        function getPerpendiculars(d) {
+            let u;
+            if (Math.abs(d.x) < 0.9 && Math.abs(d.z) < 0.9) {
+                u = { x: 1, y: 0, z: 0 };
+            } else {
+                u = { x: 0, y: 1, z: 0 };
+            }
+            let v = {
+                x: d.y * u.z - d.z * u.y,
+                y: d.z * u.x - d.x * u.z,
+                z: d.x * u.y - d.y * u.x
+            };
+            const vLen = Math.hypot(v.x, v.y, v.z) || 1;
+            v.x /= vLen; v.y /= vLen; v.z /= vLen;
+            u = {
+                x: v.y * d.z - v.z * d.y,
+                y: v.z * d.x - v.x * d.z,
+                z: v.x * d.y - v.y * d.x
+            };
+            return { u, v };
+        }
+
+        // Puffy cylinder capsule stroke
+        function addPuffyCapsule(x1, y1, z1, x2, y2, z2, radius) {
+            const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+            const len = Math.hypot(dx, dy, dz);
+            if (len < 0.001) return;
+            const d = { x: dx / len, y: dy / len, z: dz / len };
+            const { u, v } = getPerpendiculars(d);
+
+            const lengthSteps = Math.max(3, Math.floor(len / 7.5));
+            const radialSteps = 14;
+
+            for (let s = 0; s <= lengthSteps; s++) {
+                const t = s / lengthSteps;
+                const cx = x1 + dx * t;
+                const cy = y1 + dy * t;
+                const cz = z1 + dz * t;
+
+                for (let r = 0; r < radialSteps; r++) {
+                    const angle = (r / radialSteps) * Math.PI * 2;
+                    const cosA = Math.cos(angle);
+                    const sinA = Math.sin(angle);
+
+                    const nx = cosA * u.x + sinA * v.x;
+                    const ny = cosA * u.y + sinA * v.y;
+                    const nz = cosA * u.z + sinA * v.z;
+
+                    omni3DPoints.push({
+                        x: cx + nx * radius,
+                        y: cy + ny * radius,
+                        z: cz + nz * radius,
+                        nx, ny, nz
+                    });
+                }
+            }
+
+            // Rounded spherical caps at both ends for pure puffy inflatable look
+            addHemisphereCap(x1, y1, z1, -d.x, -d.y, -d.z, radius);
+            addHemisphereCap(x2, y2, z2, d.x, d.y, d.z, radius);
+        }
+
+        function addHemisphereCap(cx, cy, cz, dx, dy, dz, radius) {
+            const { u, v } = getPerpendiculars({ x: dx, y: dy, z: dz });
+            const latSteps = 4;
+            const lonSteps = 12;
+
+            for (let i = 1; i <= latSteps; i++) {
+                const phi = (i / latSteps) * (Math.PI * 0.5);
+                const cosP = Math.cos(phi);
+                const sinP = Math.sin(phi);
+
+                for (let j = 0; j < lonSteps; j++) {
+                    const theta = (j / lonSteps) * Math.PI * 2;
+                    const cosT = Math.cos(theta);
+                    const sinT = Math.sin(theta);
+
+                    const nx = sinP * (cosT * u.x + sinT * v.x) + cosP * dx;
+                    const ny = sinP * (cosT * u.y + sinT * v.y) + cosP * dy;
+                    const nz = sinP * (cosT * u.z + sinT * v.z) + cosP * dz;
+
+                    omni3DPoints.push({
+                        x: cx + nx * radius,
+                        y: cy + ny * radius,
+                        z: cz + nz * radius,
+                        nx, ny, nz
+                    });
+                }
+            }
+        }
+
+        // Puffy torus for letter 'O'
+        function addPuffyTorus(cx, cy, cz, R_maj, r_tube) {
+            const ringSteps = 42;
+            const tubeSteps = 14;
+
+            for (let i = 0; i < ringSteps; i++) {
+                const theta = (i / ringSteps) * Math.PI * 2;
+                const cosT = Math.cos(theta);
+                const sinT = Math.sin(theta);
+
+                for (let j = 0; j < tubeSteps; j++) {
+                    const phi = (j / tubeSteps) * Math.PI * 2;
+                    const cosP = Math.cos(phi);
+                    const sinP = Math.sin(phi);
+
+                    // Oval torus (slightly taller than wide for letter O)
+                    const rad = R_maj + r_tube * cosP;
+                    const px = cx + rad * cosT;
+                    const py = cy + rad * sinT * 1.25;
+                    const pz = cz + r_tube * sinP;
+
+                    const nx = cosP * cosT;
+                    const ny = cosP * sinT * 1.25;
+                    const nz = sinP;
+                    const nLen = Math.hypot(nx, ny, nz) || 1;
+
+                    omni3DPoints.push({
+                        x: px, y: py, z: pz,
+                        nx: nx / nLen, ny: ny / nLen, nz: nz / nLen
+                    });
+                }
+            }
+        }
+
+        function build3DPuffyOMNI() {
+            omni3DPoints.length = 0;
+
+            const R_TUBE = 24; // Extra puffy volumetric balloon radius
+
+            // 1. PUFFY 'O' (Centered at x = -205)
+            addPuffyTorus(-205, 0, 0, 48, R_TUBE);
+
+            // 2. PUFFY 'M' (Centered at x = -70)
+            const mX = -70;
+            const mHalfW = 48;
+            const mHalfH = 62;
+            // Left pillar
+            addPuffyCapsule(mX - mHalfW, mHalfH, 0, mX - mHalfW, -mHalfH, 0, R_TUBE);
+            // Left diagonal down to center
+            addPuffyCapsule(mX - mHalfW, -mHalfH, 0, mX, 12, 0, R_TUBE * 0.95);
+            // Right diagonal up from center
+            addPuffyCapsule(mX, 12, 0, mX + mHalfW, -mHalfH, 0, R_TUBE * 0.95);
+            // Right pillar
+            addPuffyCapsule(mX + mHalfW, -mHalfH, 0, mX + mHalfW, mHalfH, 0, R_TUBE);
+
+            // 3. PUFFY 'N' (Centered at x = 70)
+            const nX = 70;
+            const nHalfW = 42;
+            const nHalfH = 62;
+            // Left pillar
+            addPuffyCapsule(nX - nHalfW, nHalfH, 0, nX - nHalfW, -nHalfH, 0, R_TUBE);
+            // Diagonal
+            addPuffyCapsule(nX - nHalfW, -nHalfH, 0, nX + nHalfW, nHalfH, 0, R_TUBE * 0.95);
+            // Right pillar
+            addPuffyCapsule(nX + nHalfW, nHalfH, 0, nX + nHalfW, -nHalfH, 0, R_TUBE);
+
+            // 4. PUFFY 'I' (Centered at x = 195)
+            const iX = 195;
+            const iHalfW = 34;
+            const iHalfH = 62;
+            // Top bar
+            addPuffyCapsule(iX - iHalfW, -iHalfH, 0, iX + iHalfW, -iHalfH, 0, R_TUBE * 0.92);
+            // Main stem
+            addPuffyCapsule(iX, -iHalfH, 0, iX, iHalfH, 0, R_TUBE);
+            // Bottom bar
+            addPuffyCapsule(iX - iHalfW, iHalfH, 0, iX + iHalfW, iHalfH, 0, R_TUBE * 0.92);
+        }
+
+        build3DPuffyOMNI();
+
+        function resize3D() {
+            const rect = omniCanvas.getBoundingClientRect();
+            oW = rect.width;
+            oH = rect.height;
+            omniCanvas.width = oW * oDpr;
+            omniCanvas.height = oH * oDpr;
+            oCtx.setTransform(oDpr, 0, 0, oDpr, 0, 0);
+        }
+        window.addEventListener('resize', resize3D);
+        resize3D();
+
+        // Shading density characters for puffy volumetric 3D letters
+        const SHADE_CHARS = ['@', '#', '$', '%', '8', '&', '*', 'o', '+', '=', '-', ':', '.', '·'];
+
+        // Light direction for volumetric highlights
+        const LIGHT = { x: 0.28, y: -0.58, z: 0.76 };
+
+        // 3D Rendering loop
+        let start3D = performance.now();
+        function loop3D(now) {
+            const t = (now - start3D) * 0.001;
+
+            oCtx.clearRect(0, 0, oW, oH);
+
+            const cx = oW / 2;
+            const cy = oH / 2;
+
+            // Sinuous 3D yaw oscillation: pivots smoothly so OMNI is always readable and majestic
+            // Full 360 degree rotation available when user drags with mouse
+            const rotY = Math.sin(t * 0.72) * 0.44 + userRotY;
+            const rotX = 0.12 * Math.cos(t * 0.5) + userRotX;
+
+            const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+            const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+
+            // Responsive fit — large, bold, puffy presence
+            const fitScale = Math.min(1.28, (oW / 540) * 1.18);
+            const fov = 440;
+
+            oCtx.font = '11px "JetBrains Mono"';
+            oCtx.textAlign = 'center';
+            oCtx.textBaseline = 'middle';
+
+            const renderList = [];
+
+            for (let i = 0; i < omni3DPoints.length; i++) {
+                const pt = omni3DPoints[i];
+
+                // Rotate position around Y, then X
+                const x1 = pt.x * cosY + pt.z * sinY;
+                const z1 = -pt.x * sinY + pt.z * cosY;
+                const y2 = pt.y * cosX - z1 * sinX;
+                const z2 = pt.y * sinX + z1 * cosX;
+
+                // Rotate normal around Y, then X for authentic 3D surface shading
+                const nx1 = pt.nx * cosY + pt.nz * sinY;
+                const nz1 = -pt.nx * sinY + pt.nz * cosY;
+                const ny2 = pt.ny * cosX - nz1 * sinX;
+                const nz2 = pt.ny * sinX + nz1 * cosX;
+
+                // Calculate diffuse + specular lighting on puffy volume
+                const dot = Math.max(0, nx1 * LIGHT.x + ny2 * LIGHT.y + nz2 * LIGHT.z);
+
+                // Perspective projection
+                const scale = (fov / (fov + z2 + 100)) * fitScale;
+                const sx = cx + x1 * scale;
+                const sy = cy + y2 * scale;
+
+                renderList.push({ sx, sy, z: z2, dot, nz: nz2 });
+            }
+
+            // Painter's algorithm: sort by depth (back to front)
+            renderList.sort((a, b) => a.z - b.z);
+
+            for (let i = 0; i < renderList.length; i++) {
+                const p = renderList[i];
+
+                // Combine light intensity and depth for puffy balloon highlights
+                const depthNorm = Math.max(0, Math.min(1, (p.z + 180) / 360));
+                const intensity = p.dot * 0.75 + depthNorm * 0.25;
+
+                // Choose character based on lighting intensity
+                const charIdx = Math.floor((1 - intensity) * (SHADE_CHARS.length - 1));
+                const ch = SHADE_CHARS[Math.max(0, Math.min(SHADE_CHARS.length - 1, charIdx))];
+
+                // Color palette: deep emerald shadow to luminous mint highlight
+                const r = Math.floor(10 + intensity * 45);
+                const g = Math.floor(110 + intensity * 135);
+                const b = Math.floor(75 + intensity * 85);
+                const alpha = Math.min(1.0, 0.35 + intensity * 0.65);
+
+                oCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                oCtx.fillText(ch, p.sx, p.sy);
+            }
+
+            requestAnimationFrame(loop3D);
+        }
+        requestAnimationFrame(loop3D);
+
+        // -------------------------------------------------------------
+        // Ambient Matrix Texture Background Loop
+        // -------------------------------------------------------------
+        const bgCanvas = document.getElementById('matrix-canvas');
+        const bCtx = bgCanvas.getContext('2d');
+        let bW, bH;
+        let bDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+
+        const BG_CHARS = ['0', '1', '0x', 'FF', '7F', 'ptr', 'shm', 'cffi', 'bwrap', 'dag', 'vfs', 'bpf', 'mut', '·'];
+        const BG_STEP = 32;
+        let bgColumns = [];
+
+        function resizeBG() {
+            bW = window.innerWidth;
+            bH = window.innerHeight;
+            bgCanvas.width = bW * bDpr;
+            bgCanvas.height = bH * bDpr;
+            bCtx.setTransform(bDpr, 0, 0, bDpr, 0, 0);
+
+            const count = Math.ceil(bW / BG_STEP);
+            bgColumns = [];
+            for (let i = 0; i < count; i++) {
+                bgColumns.push({
+                    x: i * BG_STEP + 8,
+                    y: Math.random() * bH,
+                    speed: 0.5 + Math.random() * 0.9,
+                    char: BG_CHARS[Math.floor(Math.random() * BG_CHARS.length)],
+                    step: 0,
+                    alpha: 0.18 + Math.random() * 0.30
+                });
+            }
+        }
+        window.addEventListener('resize', resizeBG);
+        resizeBG();
+
+        function bgLoop() {
+            bCtx.fillStyle = 'rgba(3, 5, 8, 0.18)';
+            bCtx.fillRect(0, 0, bW, bH);
+
+            bCtx.font = '10px "JetBrains Mono"';
+            bCtx.textAlign = 'left';
+
+            for (let i = 0; i < bgColumns.length; i++) {
+                const c = bgColumns[i];
+                c.y += c.speed;
+                if (c.y > bH + 20) {
+                    c.y = -15;
+                    c.speed = 0.5 + Math.random() * 0.9;
+                }
+                if (++c.step % 20 === 0) {
+                    c.char = BG_CHARS[Math.floor(Math.random() * BG_CHARS.length)];
+                }
+                bCtx.fillStyle = `rgba(16, 185, 129, ${c.alpha})`;
+                bCtx.fillText(c.char, c.x, c.y);
+            }
+            requestAnimationFrame(bgLoop);
+        }
+        requestAnimationFrame(bgLoop);
+
+        // Terminal Tab Data
+        const TAB_DATA = {
+            exec: `<div class="c-dim">// Omni Engine CLI v2.2.2 — Autonomous Multi-File Compiler</div>
+<div><span class="c-green">$</span> <span class="c-white">omni run --target atlr_ledger --cleanroom --isolated</span></div>
+<div class="c-dim mt-2">[1/4] Initializing In-Process C-FFI RAM model (Qwen2.5-Coder-7B)...</div>
+<div><span class="c-cyan">&gt; C-FFI:</span> linked llama.cpp directly in RAM. Zero network socket overhead.</div>
+<div><span class="c-cyan">&gt; VFS:</span> initialized RAM Virtual File System at /dev/shm/omni_vfs_gate</div>
+<div class="c-dim mt-2">[2/4] Topological Directed Acyclic Graph (DAG) construction...</div>
+<div><span class="c-green">&gt; DAG:</span> planned dependencies: models.rs → ledger.rs → lib.rs</div>
+<div><span class="c-green">&gt; Gate:</span> Zero-Wipe Invariant (W = ∅) enforced. Regressions strictly prohibited.</div>
+<div class="c-dim mt-2">[3/4] Spawning unprivileged cleanroom sandbox...</div>
+<div><span class="c-cyan">&gt; Sandbox:</span> unshare-all + --unshare-net (0 physical network access)</div>
+<div><span class="c-cyan">&gt; Compiler:</span> cargo check --lib --tests completed in cleanroom (Exit Code: 0)</div>
+<div class="c-dim mt-2">[4/4] 50-thread concurrent ATLR stress test verification...</div>
+<div class="c-green font-bold">✓ EXIT CODE: 0 (Pristine). All 50 threads completed with total liquidity conservation.</div>
+<div class="c-green font-bold">✓ 3 modules committed to host disk: [models.rs, ledger.rs, lib.rs]</div>`,
+
+            cffi: `<div class="c-dim">// In-Process C-FFI Linkage (Rust ↔ llama.cpp RAM Binding)</div>
+<div><span class="c-cyan">pub struct</span> <span class="c-white">LlamaInProcessEngine</span> {</div>
+<div>    ctx: <span class="c-green">*mut</span> llama_context,</div>
+<div>    model: <span class="c-green">*mut</span> llama_model,</div>
+<div>    shm_vfs: <span class="c-green">Arc&lt;RamVfsGate&gt;</span>,</div>
+<div>}</div>
+<div class="c-dim mt-2">// Microsecond token steering bypassing HTTP JSON overhead:</div>
+<div><span class="c-cyan">impl</span> <span class="c-white">LlamaInProcessEngine</span> {</div>
+<div>    <span class="c-cyan">pub fn</span> <span class="c-white">slice_kv_cache</span>(&amp;mut self, seq_id: <span class="c-green">u32</span>, rollback_pos: <span class="c-green">usize</span>) {</div>
+<div>        <span class="c-dim">// Instant state rollback in RAM without process respawn</span></div>
+<div>        unsafe { llama_kv_cache_seq_rm(self.ctx, seq_id, rollback_pos as i32, -1); }</div>
+<div>    }</div>
+<div>}</div>`,
+
+            bwrap: `<div class="c-dim">// Cleanroom Sandboxing Gate: Bubblewrap / Apple Seatbelt Primitive</div>
+<div><span class="c-cyan">pub fn</span> <span class="c-white">execute_in_cleanroom</span>(cmd: &amp;<span class="c-green">str</span>, vfs_root: &amp;<span class="c-green">Path</span>) -&gt; <span class="c-green">ExitStatus</span> {</div>
+<div>    <span class="c-dim"># [cfg(target_os = "linux")]</span></div>
+<div>    <span class="c-cyan">let</span> status = Command::new(<span class="c-green">"bwrap"</span>)</div>
+<div>        .args([<span class="c-green">"--unshare-all"</span>, <span class="c-green">"--unshare-net"</span>, <span class="c-green">"--ro-bind"</span>, <span class="c-green">"/usr"</span>, <span class="c-green">"/usr"</span>])</div>
+<div>        .args([<span class="c-green">"--bind"</span>, vfs_root.to_str().unwrap(), <span class="c-green">"/workspace"</span>])</div>
+<div>        .status()?;</div>
+<div>    <span class="c-dim"># [cfg(target_os = "macos")]</span></div>
+<div>    <span class="c-cyan">let</span> status = Command::new(<span class="c-green">"sandbox-exec"</span>).args([<span class="c-green">"-p"</span>, SEATBELT_PROFILE]).status()?;</div>
+<div>    <span class="c-white">status</span></div>
+<div>}</div>`
+        };
+
+        function setTerminalTab(tab) {
+            document.querySelectorAll('.t-tab').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('terminal-content').innerHTML = TAB_DATA[tab];
+        }
+
+        function copyInstall() {
+            navigator.clipboard.writeText('curl -fsSL https://omni.sh | bash');
+            document.getElementById('copy-badge').innerText = '[COPIED!]';
+            setTimeout(() => {
+                document.getElementById('copy-badge').innerText = '[COPY]';
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
