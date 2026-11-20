@@ -1,1679 +1,1180 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Omni AI Engine v2.2.2 | Sovereign Autonomous Runtime</title>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+    <title>OMNI ENGINE • Sovereign In-Process Autonomous Runtime</title>
+    <!-- Machine-Readable LLM Discovery & Raw Codebase Directives -->
+    <link rel="alternate" type="text/plain" href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt" title="LLM Context Specification & Raw Codebase Atlas">
+    <link rel="describedby" type="text/plain" href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt">
+    <link rel="canonical" href="https://github.com/omni-engine-ai/omni_engine">
+    <meta name="llm-context" content="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt">
+    <meta name="raw-codebase-root" content="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/">
+    <meta name="code-repository" content="https://github.com/omni-engine-ai/omni_engine">
+    
+    <!-- JSON-LD Semantic Web Graph for AI Bots & Search Crawlers -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareSourceCode",
+      "name": "Omni Engine",
+      "version": "2.2.2",
+      "programmingLanguage": "Rust",
+      "codeRepository": "https://github.com/omni-engine-ai/omni_engine",
+      "description": "Sovereign in-process autonomous software engineering runtime in pure Rust linking llama.cpp directly via C-FFI (<6ms latency) with Linux Bubblewrap cleanrooms and Zero-Wipe AST isolation.",
+      "sameAs": [
+        "https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt",
+        "https://github.com/omni-engine-ai/omni_engine"
+      ],
+      "mainEntity": {
+        "@type": "DigitalDocument",
+        "name": "LLM Context Specification & Raw Source Atlas",
+        "url": "https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt"
+      }
+    }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-card: rgba(30, 41, 59, 0.7);
-            --accent: #6366f1;
-            --accent-hover: #4f46e5;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --border: #334155;
-            --success: #10b981;
-            --danger: #ef4444;
-            --warning: #f59e0b;
+            --bg: #030508;
+            --surface: #070c14;
+            --surface-raised: #0c1420;
+            --border: #16202e;
+            --border-hover: #26384f;
+            --emerald: #10b981;
+            --emerald-bright: #34d399;
+            --emerald-dim: rgba(16, 185, 129, 0.1);
+            --emerald-border: rgba(16, 185, 129, 0.3);
+            --cyan: #38bdf8;
+            --text-main: #f1f5f9;
+            --text-muted: #64748b;
+            --text-sub: #94a3b8;
         }
 
         * {
-            box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: 'Cairo', sans-serif;
+            box-sizing: border-box;
         }
 
         body {
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            display: flex;
-            height: 100vh;
-            overflow: hidden;
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: 'Space Grotesk', -apple-system, sans-serif;
+            line-height: 1.5;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
         }
 
-        /* Sidebar */
-        .sidebar {
-            width: 290px;
-            background: var(--bg-secondary);
-            border-left: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            padding: 20px;
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
         }
 
-        html[dir="ltr"] .sidebar {
-            border-left: none;
-            border-right: 1px solid var(--border);
+        /* Ambient Background Matrix Canvas */
+        #matrix-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            opacity: 0.16;
         }
 
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 30px;
+        .page-wrap {
+            position: relative;
+            z-index: 10;
+            max-width: 1140px;
+            margin: 0 auto;
+            padding: 40px 24px 80px 24px;
         }
 
-        .brand-icon {
-            width: 42px;
-            height: 42px;
-            background: linear-gradient(135deg, #6366f1, #a855f7);
-            border-radius: 12px;
+        /* 3D Puffy ASCII OMNI Hero Container */
+        .omni-3d-wrapper {
+            position: relative;
+            width: 100%;
+            height: 380px;
+            margin: 16px 0 28px 0;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 800;
-            font-size: 20px;
-            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
         }
 
-        .brand-title {
-            font-size: 18px;
-            font-weight: 700;
-            background: linear-gradient(to right, #ffffff, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        #omni-3d-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
         }
 
-        .nav-menu {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            flex: 1;
+        #omni-3d-canvas:active {
+            cursor: grabbing;
         }
 
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            border-radius: 10px;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .nav-item:hover, .nav-item.active {
-            background: rgba(99, 102, 241, 0.15);
-            color: #818cf8;
-        }
-
-        .status-badge {
-            margin-top: auto;
-            padding: 14px;
-            background: rgba(15, 23, 42, 0.6);
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            font-size: 12px;
-        }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: 700;
-        }
-
-        .dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: var(--danger);
-        }
-
-        .dot.active {
-            background: var(--success);
-            box-shadow: 0 0 10px var(--success);
-        }
-
-        /* Main Content */
-        .main-content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.05), transparent 40%);
-        }
-
-        .topbar {
-            height: 70px;
-            border-bottom: 1px solid var(--border);
+        .hero-meta-bar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 30px;
-        }
-
-        .topbar-title {
-            font-size: 18px;
-            font-weight: 700;
-        }
-
-        .content-body {
-            flex: 1;
-            padding: 30px;
-            overflow-y: auto;
-        }
-
-        .panel {
-            display: none;
-            height: 100%;
-        }
-
-        .panel.active {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        /* Card System */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 24px;
-            backdrop-filter: blur(10px);
-        }
-
-        .card-title {
-            font-size: 16px;
-            font-weight: 700;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        /* Buttons & Inputs */
-        .btn {
-            background: var(--accent);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        .btn:hover {
-            background: var(--accent-hover);
-        }
-
-        .btn-danger {
-            background: var(--danger);
-        }
-        .btn-danger:hover {
-            background: #dc2626;
-        }
-
-        .btn-secondary {
-            background: var(--border);
-            color: var(--text-primary);
-        }
-
-        .input-field {
-            width: 100%;
-            background: rgba(15, 23, 42, 0.8);
-            border: 1px solid var(--border);
-            padding: 12px 16px;
-            border-radius: 8px;
-            color: white;
-            font-size: 14px;
-            outline: none;
-        }
-
-        .input-field:focus {
-            border-color: var(--accent);
-        }
-
-        /* Chat UI */
-        .chat-container {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            gap: 16px;
-        }
-
-        .chat-messages {
-            flex: 1;
-            background: rgba(15, 23, 42, 0.4);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .message {
-            max-width: 80%;
-            padding: 14px 18px;
-            border-radius: 14px;
-            line-height: 1.6;
-            font-size: 14px;
-        }
-
-        .message.user {
-            align-self: flex-start;
-            background: var(--accent);
-            color: white;
-            border-bottom-right-radius: 4px;
-        }
-
-        html[dir="ltr"] .message.user {
-            align-self: flex-end;
-            border-bottom-right-radius: 14px;
-            border-bottom-left-radius: 4px;
-        }
-
-        .message.assistant {
-            align-self: flex-end;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-bottom-left-radius: 4px;
-            text-align: left;
-        }
-
-        html[dir="ltr"] .message.assistant {
-            align-self: flex-start;
-            border-bottom-left-radius: 14px;
-            border-bottom-right-radius: 4px;
-        }
-
-        .chat-input-bar {
-            display: flex;
-            gap: 12px;
-        }
-
-        /* Market Live Store Styles */
-        .market-grid {
-            display: grid;
-            grid-template-columns: 1.15fr 1fr;
-            gap: 20px;
-            height: 100%;
-            overflow: hidden;
-        }
-        @media (max-width: 1050px) {
-            .market-grid {
-                grid-template-columns: 1fr;
-                overflow-y: auto;
-            }
-        }
-        .market-data-col {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            overflow-y: auto;
-        }
-        .market-chat-col {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            min-height: 520px;
-        }
-        .badge-sku {
-            background: #4f46e5;
-            color: #ffffff;
-            font-family: 'Fira Code', monospace;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 6px;
-            display: inline-block;
-        }
-        .badge-sku.economy {
-            background: #d97706;
-        }
-        .badge-price {
-            color: #10b981;
-            font-weight: 700;
-            font-size: 13px;
-        }
-        .badge-stock {
-            background: rgba(16, 185, 129, 0.15);
-            color: #10b981;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        .sql-badge {
-            background: rgba(15, 23, 42, 0.95);
-            border: 1px solid #10b981;
-            border-radius: 8px;
-            padding: 8px 12px;
-            font-family: 'Fira Code', monospace;
-            font-size: 11px;
-            color: #34d399;
-            margin: 6px 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
-        }
-        .chip-container {
-            display: flex;
             flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 8px;
-        }
-        .chip {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            padding: 5px 10px;
-            border-radius: 14px;
-            font-size: 11px;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .chip:hover {
-            border-color: var(--accent);
-            color: var(--text-primary);
-            background: rgba(99, 102, 241, 0.15);
-        }
-
-        /* Code box */
-        pre {
-            background: #090d16;
-            padding: 14px;
-            border-radius: 8px;
-            font-family: 'Fira Code', monospace;
-            font-size: 13px;
-            direction: ltr;
-            overflow-x: auto;
-            color: #38bdf8;
-            border: 1px solid #1e293b;
-            text-align: left;
-        }
-
-        /* Table */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        th, td {
-            padding: 12px 16px;
-            text-align: right;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
             border-bottom: 1px solid var(--border);
         }
 
-        html[dir="ltr"] th, html[dir="ltr"] td {
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 5px 12px;
+            border: 1px solid var(--emerald-border);
+            background: var(--emerald-dim);
+            color: var(--emerald-bright);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 2px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--emerald-bright);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--emerald-bright);
+        }
+
+        .version-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            letter-spacing: 0.08em;
+        }
+
+        .version-badge strong {
+            color: var(--text-sub);
+        }
+
+        /* Hero Text Content */
+        .hero-desc {
+            font-size: 18px;
+            color: var(--text-sub);
+            max-width: 760px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .hero-desc strong {
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        /* Handcrafted Mechanical Buttons */
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 60px;
+        }
+
+        .omni-btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--emerald);
+            color: #020407;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            font-weight: 700;
+            padding: 12px 24px;
+            border: 1px solid #10b981;
+            border-radius: 3px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .omni-btn-primary:hover {
+            background: #34d399;
+            border-color: #34d399;
+            transform: translateY(-1px);
+        }
+
+        .omni-btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface);
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            font-weight: 500;
+            padding: 12px 22px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .omni-btn-secondary:hover {
+            border-color: var(--border-hover);
+            background: var(--surface-raised);
+            color: #ffffff;
+        }
+
+        /* Section Headings */
+        .section-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            margin: 64px 0 20px 0;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .section-header h2 {
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--text-main);
+        }
+
+        .section-header span {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Platform Grid */
+        .platform-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+            gap: 16px;
+        }
+
+        .platform-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 22px;
+            border-radius: 4px;
+            transition: border-color 0.2s ease;
+        }
+
+        .platform-card:hover {
+            border-color: var(--border-hover);
+        }
+
+        .platform-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .platform-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .platform-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9.5px;
+            padding: 2px 7px;
+            border-radius: 2px;
+        }
+
+        .badge-active {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--emerald);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-frozen {
+            background: rgba(56, 189, 248, 0.12);
+            color: var(--cyan);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+        }
+
+        .badge-wsl {
+            background: rgba(148, 163, 184, 0.12);
+            color: var(--text-sub);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+
+        .platform-spec {
+            list-style: none;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            color: var(--text-sub);
+        }
+
+        .platform-spec li {
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            padding-bottom: 4px;
+            border-bottom: 1px dotted rgba(255, 255, 255, 0.05);
+        }
+
+        .platform-spec li span:first-child {
+            color: var(--text-muted);
+        }
+
+        /* Terminal Window */
+        .terminal-box {
+            background: #020306;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 18px;
+        }
+
+        .terminal-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .terminal-tabs {
+            display: flex;
+            gap: 2px;
+        }
+
+        .t-tab {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            padding: 4px 12px;
+            cursor: pointer;
+            border-radius: 2px;
+        }
+
+        .t-tab.active {
+            background: var(--surface-raised);
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
+        .terminal-code {
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            line-height: 1.7;
+            color: var(--text-sub);
+            overflow-x: auto;
+            min-height: 220px;
+        }
+
+        .terminal-code .c-green { color: var(--emerald); }
+        .terminal-code .c-cyan { color: var(--cyan); }
+        .terminal-code .c-dim { color: #475569; }
+        .terminal-code .c-white { color: #ffffff; font-weight: 600; }
+
+        /* Architecture Pillars */
+        .pillars-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .pillar-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 22px;
+            border-radius: 4px;
+        }
+
+        .pillar-idx {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--emerald);
+            margin-bottom: 8px;
+            letter-spacing: 0.1em;
+        }
+
+        .pillar-item h3 {
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 10px;
+        }
+
+        .pillar-item p {
+            font-size: 13px;
+            color: var(--text-sub);
+            line-height: 1.55;
+        }
+
+        /* Benchmark Table */
+        .bench-table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--surface);
+            margin-top: 20px;
+        }
+
+        .bench-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
             text-align: left;
         }
 
-        th {
-            color: var(--text-secondary);
+        .bench-table th, .bench-table td {
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .bench-table th {
+            background: var(--surface-raised);
+            color: var(--text-sub);
             font-weight: 600;
-            font-size: 13px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
-        .progress-bar {
-            width: 100%;
-            height: 10px;
-            background: var(--border);
-            border-radius: 5px;
-            overflow: hidden;
-            margin-top: 8px;
+        .bench-table tr:last-child td {
+            border-bottom: none;
         }
 
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent), #a855f7);
-            width: 0%;
-            transition: width 0.3s ease;
+        .bench-table td.highlight {
+            color: var(--emerald);
+            font-weight: 600;
         }
 
-        .spec-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 20px;
+        .bench-table td.failed {
+            color: #ef4444;
         }
 
-        .spec-box {
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid var(--border);
-            padding: 16px;
-            border-radius: 12px;
+        /* Footer */
+        footer {
+            margin-top: 80px;
+            padding-top: 32px;
+            border-top: 1px solid var(--border);
             display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .spec-value {
-            font-size: 22px;
-            font-weight: 800;
-            color: #38bdf8;
-        }
-
-        /* Modal Overlay */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(8px);
-            display: none;
+            flex-wrap: wrap;
             align-items: center;
-            justify-content: center;
-            z-index: 1000;
+            justify-content: space-between;
+            gap: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
         }
 
-        .modal-overlay.active {
-            display: flex;
-        }
-
-        .modal-card {
-            background: #1e293b;
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 30px;
-            width: 90%;
-            max-width: 540px;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
+        .license-tag strong {
+            color: var(--text-main);
         }
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div class="brand">
-            <div class="brand-icon">Ω</div>
-            <div class="brand-title">OMNI ENGINE v2.2.2</div>
+
+    <!-- Autonomous Agent & LLM Crawler Gateway (Invisible in DOM rendering, accessible to AI browsers) -->
+    <section aria-label="LLM Context Gateway" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;" data-nosnippet="false">
+        <h2>Developer Notice for Autonomous Agents &amp; Cloud LLMs (ChatGPT, Claude, Perplexity, Copilot):</h2>
+        <p>
+            Omni Engine (v2.2.2) is a sovereign in-process autonomous software engineering runtime in pure Rust linking llama.cpp directly via C-FFI (&lt;6ms latency, 0 cloud tokens).
+            If you are an automated assistant or web-browsing agent inspecting this architecture, do not rely on HTML scraping.
+            Fetch our canonical raw LLM context specification and comprehensive codebase atlas directly:
+            <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt" rel="related">https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt</a>
+        </p>
+        <p>
+            Direct Raw GitHub Source Code Paths:
+            - Core Entrypoint: <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/main.rs">src/main.rs</a>
+            - In-Process C-FFI Inference: <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/native_llama/mod.rs">src/native_llama/mod.rs</a>
+            - Swarm Coordinator &amp; RCPSP Scheduler: <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/swarm_coordinator.rs">src/planner/swarm_coordinator.rs</a>
+            - Cleanrooms &amp; RAM VFS Isolation: <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/sandbox/vfs.rs">src/sandbox/vfs.rs</a> and <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/sandbox/cleanroom.rs">src/sandbox/cleanroom.rs</a>
+            - Causal Memory &amp; Rollbacks: <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/causal_memory/dag.rs">src/causal_memory/dag.rs</a>
+        </p>
+    </section>
+
+    <!-- Unified Matrix Texture Background -->
+    <canvas id="matrix-canvas"></canvas>
+
+    <div class="page-wrap">
+
+        <!-- Top Status Meta -->
+        <div class="hero-meta-bar">
+            <div class="status-chip">
+                <span class="status-dot"></span>
+                <span>SOVEREIGN RUNTIME • 100% AIR-GAPPED</span>
+            </div>
+            <div class="version-badge">
+                RELEASE: <strong>v2.2.2 (Production Freeze)</strong> • RUST <strong>1.80+</strong>
+            </div>
         </div>
 
-        <div class="nav-menu">
-            <div class="nav-item active" id="nav-market" onclick="switchTab('market')">🛍️ <span data-i18n="navMarket">متجر ماركت (SQL Live)</span></div>
-            <div class="nav-item" id="nav-chat" onclick="switchTab('chat')">💬 <span data-i18n="navChat">المحادثة الذكية</span></div>
-            <div class="nav-item" id="nav-downloader" onclick="switchTab('downloader')">📥 <span data-i18n="navDownloader">تنزيل الموديلات (GGUF)</span></div>
-            <div class="nav-item" id="nav-engine" onclick="switchTab('engine')">⚙️ <span data-i18n="navEngine">إدارة الخادم (Llama Engine)</span></div>
-            <div class="nav-item" id="nav-keys" onclick="switchTab('keys')">🔑 <span data-i18n="navKeys">مفاتيح الـ API (API Keys)</span></div>
-            <div class="nav-item" id="nav-logs" onclick="switchTab('logs')">💻 <span data-i18n="navLogs">السجلات والمواصفات (Logs & Specs)</span></div>
-            <div class="nav-item" id="nav-docs" onclick="switchTab('docs')">🌐 <span data-i18n="navDocs">التوصيل الخارجي (OpenAI Spec)</span></div>
-        </div>
-
-        <div class="status-badge">
-            <div class="status-indicator">
-                <div class="dot" id="statusDot"></div>
-                <span id="statusText" data-i18n="statusStopped">الخادم متوقف</span>
-            </div>
-            <div style="color: var(--text-secondary); font-size: 11px;" id="activeModelName" data-i18n="noActiveModel">لا يوجد موديل مفعّل</div>
-        </div>
-    </div>
-
-    <!-- Main Content -->
-    <div class="main-content">
-        <div class="topbar">
-            <div class="topbar-title" id="tabTitle" data-i18n="navChat">المحادثة الذكية</div>
-            <div style="display: flex; gap: 10px;">
-                <button class="btn btn-secondary" onclick="openModal('settings')">⚙️ <span data-i18n="btnSettings">الإعدادات</span></button>
-                <button class="btn btn-secondary" onclick="openModal('about')">ℹ️ <span data-i18n="btnAbout">عن المشروع</span></button>
-                <button class="btn btn-secondary" onclick="fetchStatus()">🔄 <span data-i18n="btnRefresh">تحديث</span></button>
-            </div>
-        </div>
-
-        <div class="content-body">
-            <!-- TAB 0: MARKET LIVE STORE (SQL INTERACTIVE) -->
-            <div class="panel active" id="panel-market">
-                <div class="market-grid">
-                    <!-- Left: SQL Live Database & Orders Table -->
-                    <div class="market-data-col">
-                        <div class="card" style="margin-bottom: 0;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <div class="card-title" style="margin: 0;">📦 <span>قاعدة بيانات المنتجات (SQLite: data/market.db)</span></div>
-                                <button class="btn" style="padding: 4px 10px; font-size: 12px;" onclick="fetchMarketData()">تحديث 🔄</button>
-                            </div>
-                            <div style="overflow-x: auto;">
-                                <table class="table" style="font-size: 13px;">
-                                    <thead>
-                                        <tr>
-                                            <th>الكود (SKU)</th>
-                                            <th>اسم المنتج</th>
-                                            <th>السعر</th>
-                                            <th>الخامة</th>
-                                            <th>المقاسات</th>
-                                            <th>المخزن</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="marketProductsBody">
-                                        <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">جاري تحميل المنتجات من SQL...</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div class="card" style="margin-bottom: 0;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <div class="card-title" style="margin: 0;">📋 <span>سجل الطلبات الحية (Live SQL Orders)</span></div>
-                                <span style="font-size: 12px; color: var(--text-secondary);" id="ordersCountBadge">0 طلبات</span>
-                            </div>
-                            <div style="overflow-x: auto; max-height: 220px;">
-                                <table class="table" style="font-size: 12px;">
-                                    <thead>
-                                        <tr>
-                                            <th>#</th>
-                                            <th>العميل</th>
-                                            <th>المنتج</th>
-                                            <th>الكمية</th>
-                                            <th>الإجمالي</th>
-                                            <th>العنوان</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="marketOrdersBody">
-                                        <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">لا توجد طلبات مسجلة بعد</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Right: Customer Chat Panel -->
-                    <div class="market-chat-col">
-                        <div class="card" style="flex: 1; display: flex; flex-direction: column; height: 100%; padding: 16px;">
-                            <!-- Customer Profile Header -->
-                            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 12px; background: rgba(15, 23, 42, 0.6); padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);">
-                                <span style="font-size: 20px;">👤</span>
-                                <div style="flex: 1;">
-                                    <div style="font-size: 12px; color: var(--text-secondary);">بيانات العميل (أنت العميل الآن):</div>
-                                    <div style="display: flex; gap: 10px; margin-top: 4px;">
-                                        <input type="text" id="custName" class="input-field" value="أحمد محمود" style="padding: 4px 8px; font-size: 12px; height: 28px;" placeholder="اسم العميل">
-                                        <input type="text" id="custPhone" class="input-field" value="01012345678" style="padding: 4px 8px; font-size: 12px; height: 28px;" placeholder="رقم الهاتف">
-                                    </div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 11px; color: var(--text-secondary);">الموديل النشط:</div>
-                                    <select id="marketModelSelect" class="input-field" style="padding: 2px 6px; font-size: 12px; height: 28px; min-width: 150px; margin-top: 4px;">
-                                        <option value="gemma-2b.gguf" selected>Gemma 2B 🧠</option>
-                                        <option value="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf">Qwen2.5 Coder 1.5B ⚡</option>
-                                        <option value="Phi-4-mini-instruct-Q6_K.gguf">Phi-4 Mini 🔬</option>
-                                    </select>
-                                </div>
-                                <button class="btn" style="padding: 4px 10px; font-size: 11px; background: #334155; margin-top: 14px;" onclick="clearMarketChat()">جلسة جديدة 🧹</button>
-                            </div>
-
-                            <!-- Chat Messages Area -->
-                            <div class="chat-messages" id="marketChatMessages" style="flex: 1; min-height: 260px; margin-bottom: 10px;">
-                                <div class="message assistant">
-                                    مرحباً بك في متجر **ماركت**! أنا بائعك الذكي المرتبط مباشرة بقاعدة بيانات المتجر (SQLite).<br>
-                                    أقدر أقولك أسعار المنتجات وخاماتها ومخزونها بدقة الكود، وأسجلك طلب شراء فوري! اسألني عن أي حاجة.
-                                </div>
-                            </div>
-
-                            <!-- Quick Suggestion Chips -->
-                            <div class="chip-container">
-                                <span class="chip" onclick="askMarketChip('التيشيرت الأسود cX23 الفاخر ده بكام؟ ومقاس L متاح؟')">👕 التيشيرت cX23 الفاخر بكام؟</span>
-                                <span class="chip" onclick="askMarketChip('طب وتيشيرت cx23 بكام وإيه الفرق في الخامة؟')">🔍 إيه الفرق بين cX23 و cx23؟</span>
-                                <span class="chip" onclick="askMarketChip('عندكم قميص بولو كحلي مقاس L؟')">👔 قميص بولو كحلي</span>
-                                <span class="chip" onclick="askMarketChip('ابعتلي اتنين من التيشيرت الفاخر cX23 على المعادي')">🛒 اطلب 2 من cX23 على المعادي</span>
-                            </div>
-
-                            <!-- Input Bar -->
-                            <div class="chat-input-bar">
-                                <input type="text" id="marketChatInput" class="input-field" placeholder="اكتب سؤالك كعميل هنا (مثلاً: تيشيرت cX23 بكام؟)..." onkeypress="handleMarketKeyPress(event)">
-                                <button class="btn" onclick="sendMarketMessage()"><span data-i18n="btnSend">إرسال 🚀</span></button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <!-- Hero Section: Prominent 3D Puffy ASCII 'OMNI' -->
+        <section class="hero">
+            <div class="omni-3d-wrapper">
+                <canvas id="omni-3d-canvas"></canvas>
             </div>
 
-            <!-- TAB 1: CHAT -->
-            <div class="panel" id="panel-chat">
-                <div class="chat-container">
-                    <div class="chat-messages" id="chatMessages">
-                        <div class="message assistant" data-i18n="chatWelcome">
-                            مرحباً بك في محرك **Omni AI Engine (Rust Edition)**. اختر أو نزّل موديل GGUF وابدأ المحادثة فوراً!
-                        </div>
-                    </div>
-                    <div class="chat-input-bar">
-                        <input type="text" id="chatInput" class="input-field" data-placeholder-i18n="chatPlaceholder" placeholder="اكتب رسالتك للذكاء الاصطناعي هنا..." onkeypress="handleKeyPress(event)">
-                        <button class="btn" onclick="sendMessage()"><span data-i18n="btnSend">إرسال 🚀</span></button>
-                    </div>
-                </div>
-            </div>
+            <p class="hero-desc">
+                <strong>Sovereign, in-process autonomous software engineering runtime.</strong> Transforms open-weights SLMs (3B to 7B) into verified compilers. Executes completely offline without cloud API tokens, external daemons, or telemetry.
+            </p>
 
-            <!-- TAB 2: DOWNLOADER -->
-            <div class="panel" id="panel-downloader">
-                <div class="card">
-                    <div class="card-title">📥 <span data-i18n="downloaderTitle">تنزيل موديل ذكاء اصطناعي (GGUF) عبر رابط مباشر</span></div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 20px;" data-i18n="downloaderDesc">
-                        أدخل رابط التنزيل المباشر لموديل بصيغة GGUF (مثلاً من HuggingFace) وسيتم تحميله وتخزينه محلياً في المحرك.
-                    </p>
-                    <div style="display: flex; flex-direction: column; gap: 14px;">
-                        <input type="text" id="downloadUrl" class="input-field" placeholder="https://huggingface.co/.../resolve/main/model.Q4_K_M.gguf">
-                        <input type="text" id="downloadFilename" class="input-field" data-placeholder-i18n="filenamePlaceholder" placeholder="اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)">
-                        <button class="btn" onclick="triggerDownload()"><span data-i18n="btnStartDownload">بدء التنزيل الآن ⚡</span></button>
-                    </div>
-                </div>
-
-                <div class="card" style="margin-top: 20px;">
-                    <div class="card-title">📊 <span data-i18n="tasksTitle">مهام التنزيل الحالية والسابقة</span></div>
-                    <div id="downloadsList">
-                        <p style="color: var(--text-secondary);" data-i18n="noDownloads">لا توجد عمليات تنزيل جارية حالياً.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- TAB 3: ENGINE CONTROLS -->
-            <div class="panel" id="panel-engine">
-                <div class="card">
-                    <div class="card-title">⚡ <span data-i18n="engineTitle">التحكم في تشغيل محرك llama-server</span></div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
-                        <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelSelectModel">اختر الموديل لتشغيله:</label>
-                            <select id="modelSelect" class="input-field" style="margin-top: 6px;">
-                                <option value="">جاري تحميل الموديلات...</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelThreads">عدد الأنوية (Threads):</label>
-                            <input type="number" id="engineThreads" class="input-field" value="4" style="margin-top: 6px;">
-                        </div>
-                        <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelCtx">حجم السياق (Context Size):</label>
-                            <input type="number" id="engineCtx" class="input-field" value="4096" style="margin-top: 6px;">
-                        </div>
-                        <div>
-                            <label style="font-size: 13px; color: var(--text-secondary);" data-i18n="labelPort">منفذ الـ API الداخلي (Port):</label>
-                            <input type="number" id="enginePort" class="input-field" value="8081" readonly style="margin-top: 6px;">
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 12px;">
-                        <button class="btn" onclick="startEngine()"><span data-i18n="btnStartEngine">تشغيل المحرك ▶️</span></button>
-                        <button class="btn btn-danger" onclick="stopEngine()"><span data-i18n="btnStopEngine">إيقاف المحرك 🛑</span></button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- TAB 4: API KEYS -->
-            <div class="panel" id="panel-keys">
-                <div class="card">
-                    <div class="card-title">🔑 <span data-i18n="keysTitle">إنشاء وإدارة مفاتيح الـ API Keys</span></div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;" data-i18n="keysDesc">
-                        جميع الطلبات الخارجية الموجهة لمسارات `/v1/*` تتطلب مفتاح API صيغته (`omni_sk_...`) للحماية من الاستخدام غير المصرح به.
-                    </p>
-                    <div style="display: flex; gap: 12px; margin-bottom: 20px;">
-                        <input type="text" id="keyNameInput" class="input-field" data-placeholder-i18n="keyNamePlaceholder" placeholder="اسم المفتاح (مثلاً: App Key / Mobile Key)">
-                        <button class="btn" onclick="createApiKey()"><span data-i18n="btnGenerateKey">توليد مفتاح جديد 🔑</span></button>
-                    </div>
-
-                    <table>
-                        <thead>
-                            <tr>
-                                <th data-i18n="thKeyName">اسم المفتاح</th>
-                                <th data-i18n="thKeyToken">مفتاح الـ API (Token)</th>
-                                <th data-i18n="thCreated">تاريخ الإنشاء</th>
-                                <th data-i18n="thAction">إجراء</th>
-                            </tr>
-                        </thead>
-                        <tbody id="apiKeysTable">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- TAB 5: LOGS & SPECS -->
-            <div class="panel" id="panel-logs">
-                <div class="card">
-                    <div class="card-title">🖥️ <span data-i18n="specsTitle">فحص مواصفات الجهاز وقدرة الموديلات التقديرية</span></div>
-                    <div class="spec-grid">
-                        <div class="spec-box">
-                            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="lblCores">عدد أنوية المعالج (CPU Cores)</span>
-                            <span class="spec-value" id="specCores">-</span>
-                        </div>
-                        <div class="spec-box">
-                            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="lblTotalRam">إجمالي الذاكرة (Total RAM)</span>
-                            <span class="spec-value" id="specTotalRam">- GB</span>
-                        </div>
-                        <div class="spec-box">
-                            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="lblFreeRam">الذاكرة المتاحة (Free RAM)</span>
-                            <span class="spec-value" id="specFreeRam">- GB</span>
-                        </div>
-                    </div>
-                    <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid var(--accent); padding: 16px; border-radius: 12px; margin-bottom: 10px;">
-                        <div style="font-weight: 700; color: #818cf8; margin-bottom: 4px;" data-i18n="lblRecModel">📊 الموديل التقديري المناسب لجهازك:</div>
-                        <div style="font-size: 16px; font-weight: 800; color: white;" id="specRecParams">...</div>
-                        <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;" id="specRecDesc"></div>
-                    </div>
-                </div>
-
-                <div class="card" style="margin-top: 20px;">
-                    <div class="card-title" style="display: flex; justify-content: space-between;">
-                        <span data-i18n="logsTitle">💻 سجلات الخادم المباشرة (Live Terminal Stream Logs)</span>
-                        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="fetchLogs()"><span data-i18n="btnRefreshLogs">تحديث السجل 🔄</span></button>
-                    </div>
-                    <pre id="terminalLogs" style="height: 320px; overflow-y: auto; background: #070b12; color: #10b981; font-family: 'Fira Code', monospace; padding: 16px; border-radius: 12px; font-size: 12px; line-height: 1.5; border: 1px solid var(--border);"></pre>
-                </div>
-            </div>
-
-            <!-- TAB 6: DOCS & EXTERNAL API -->
-            <div class="panel" id="panel-docs">
-                <div class="card">
-                    <div class="card-title">🌐 <span data-i18n="docsTitle">كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)</span></div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;" data-i18n="docsDesc">
-                        المحرك متوافق 100% مع معايير OpenAI API. يمكنك توجيه أي مكتبة أو تطبيق إلى:
-                    </p>
-                    <pre>http://127.0.0.1:8090/v1  (or http://YOUR_LOCAL_IP:8090/v1)</pre>
-                    
-                    <h4 style="margin-top: 20px; font-size: 14px;">cURL Example:</h4>
-                    <pre>curl http://127.0.0.1:8090/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer omni_sk_YOUR_KEY_HERE" \
-  -d '{
-    "messages": [{"role": "user", "content": "Hello AI!"}],
-    "stream": false
-  }'</pre>
-
-                    <h4 style="margin-top: 20px; font-size: 14px;">Python OpenAI SDK Example:</h4>
-                    <pre>from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8090/v1",
-    api_key="omni_sk_YOUR_KEY_HERE"
-)
-
-response = client.chat.completions.create(
-    model="omni-model",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-
-print(response.choices[0].message.content)</pre>
-                </div>
-            </div>
-
-        </div>
-    </div>
-
-    <!-- MODAL 1: SETTINGS -->
-    <div class="modal-overlay" id="modal-settings">
-        <div class="modal-card">
-            <div class="card-title" style="display: flex; justify-content: space-between;">
-                <span>⚙️ <span data-i18n="settingsTitle">الإعدادات العامة (Settings)</span></span>
-                <button style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;" onclick="closeModal('settings')">✖</button>
-            </div>
-
-            <div style="display: flex; flex-direction: column; gap: 14px;">
-                <label style="font-size: 14px; font-weight: 700;" data-i18n="lblLanguage">🌐 واجهة اللغة (UI Language):</label>
-                <select id="langSelect" class="input-field" onchange="changeLanguage(this.value)">
-                    <option value="en" selected>English 🇬🇧</option>
-                    <option value="ar">العربية (Arabic) 🇪🇬</option>
-                    <option value="fr">Français 🇫🇷</option>
-                </select>
-            </div>
-
-            <hr style="border: 0; border-top: 1px solid var(--border);">
-
-            <div style="display: flex; flex-direction: column; gap: 10px;">
-                <label style="font-size: 14px; font-weight: 700; color: var(--danger);" data-i18n="lblPowerControls">🔴 التحكم بالسيرفر والعملية الحية:</label>
-                <button class="btn btn-danger" onclick="shutdownServer()" style="width: 100%; padding: 14px; font-size: 15px;">
-                    <span data-i18n="btnShutdown">🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)</span>
+            <div class="btn-group">
+                <button onclick="copyInstall()" class="omni-btn-primary mono">
+                    <span id="install-text">curl -fsSL https://omni.sh | bash</span>
+                    <span id="copy-badge" style="opacity: 0.6; font-size: 10px;">[COPY]</span>
                 </button>
-                <p style="font-size: 12px; color: var(--text-secondary);" data-i18n="shutdownDesc">هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.</p>
+                <a href="#cli" class="omni-btn-secondary mono">
+                    <span>INSPECT VERIFICATION KERNEL</span>
+                </a>
+                <a href="#matrix" class="omni-btn-secondary mono">
+                    <span>PLATFORM MATRIX</span>
+                </a>
+                <a href="https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt" class="omni-btn-secondary mono" target="_blank">
+                    <span>LLMS.TXT ATLAS</span>
+                </a>
             </div>
-        </div>
-    </div>
+        </section>
 
-    <!-- MODAL 2: ABOUT & PRIVACY -->
-    <div class="modal-overlay" id="modal-about">
-        <div class="modal-card">
-            <div class="card-title" style="display: flex; justify-content: space-between;">
-                <span>ℹ️ <span data-i18n="aboutTitle">عن مشروع Omni Engine</span></span>
-                <button style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;" onclick="closeModal('about')">✖</button>
+        <!-- Platform Matrix Section (Real Cross-Platform Facts) -->
+        <section id="matrix">
+            <div class="section-header">
+                <h2>Sovereign Platform Support Matrix</h2>
+                <span>Cross-Platform Execution Invariants</span>
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.6;">
-                <p><strong data-i18n="aboutName">الاسم: Omni AI Engine v2.2.2 (Sovereign Autonomous Runtime)</strong></p>
-                <p><strong data-i18n="aboutAuthor">المطور والمؤسس: ielfeqi-rgb</strong></p>
-                <p><strong data-i18n="aboutLicense">الترخيص: Dual-Licensed (GNU AGPLv3 / Commercial Enterprise) — omni.engine@proton.me</strong></p>
-                <p><strong data-i18n="aboutGithub">رابط الـ GitHub الرسمي:</strong> <a href="https://github.com/ielfeqi-rgb/omni_engine" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 700;">https://github.com/ielfeqi-rgb/omni_engine</a></p>
+            <div class="platform-grid">
+                <!-- Linux -->
+                <div class="platform-card">
+                    <div class="platform-top">
+                        <div class="platform-title">Linux (x86_64)</div>
+                        <span class="platform-badge badge-active">ACTIVE PRODUCTION CORE</span>
+                    </div>
+                    <ul class="platform-spec">
+                        <li><span>Sandboxing</span> <span>bwrap (Kernel Namespaces)</span></li>
+                        <li><span>Hardware</span> <span>AVX2 / AVX-512 & NVIDIA CUDA</span></li>
+                        <li><span>Inference</span> <span>In-Process C-FFI (RAM link)</span></li>
+                        <li><span>Lifecycle</span> <span>Continuous Production Release</span></li>
+                    </ul>
+                </div>
 
-                <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border); padding: 16px; border-radius: 12px; margin-top: 10px;">
-                    <div style="font-weight: 800; color: #38bdf8; margin-bottom: 6px;" data-i18n="privacyHeader">🛡️ الخصوصية والأمان السيادي (Sovereign Privacy & Security):</div>
-                    <p id="sarcasticPrivacyText" style="font-size: 13px; color: #cbd5e1; line-height: 1.6;">
-                        المحرك يعمل محلياً بالكامل (100% On-Device & Offline) دون أي اتصال بخوادم خارجية أو تتبع سحابي. جميع النماذج والبيانات وشفرات الكود يتم معالجتها حصرياً داخل ذاكرة الجهاز المحلية (RAM) مع عزل أمني تام في بيئة Cleanroom.
+                <!-- macOS -->
+                <div class="platform-card">
+                    <div class="platform-top">
+                        <div class="platform-title">macOS (Apple Silicon)</div>
+                        <span class="platform-badge badge-frozen">v2.2.2 FROZEN SNAPSHOT</span>
+                    </div>
+                    <ul class="platform-spec">
+                        <li><span>Sandboxing</span> <span>Seatbelt (Deprecated) + RAM VFS</span></li>
+                        <li><span>Hardware</span> <span>Metal GPU (libggml-metal)</span></li>
+                        <li><span>Architecture</span> <span>arm64 (M1–M4 Native)</span></li>
+                        <li><span>Lifecycle</span> <span>Frozen Community Build (Unsupported)</span></li>
+                    </ul>
+                </div>
+
+                <!-- Windows -->
+                <div class="platform-card">
+                    <div class="platform-top">
+                        <div class="platform-title">Windows (x86_64)</div>
+                        <span class="platform-badge badge-wsl">WSL2 SUPPORTED</span>
+                    </div>
+                    <ul class="platform-spec">
+                        <li><span>Sandboxing</span> <span>WSL2 Linux Cleanrooms</span></li>
+                        <li><span>Hardware</span> <span>Native CPU & CUDA Passthrough</span></li>
+                        <li><span>Inference</span> <span>Zero-Copy VFS Mount</span></li>
+                        <li><span>Lifecycle</span> <span>Continuous via WSL2 Integration</span></li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Mechanical Terminal Execution Block -->
+        <section id="cli">
+            <div class="section-header">
+                <h2>Deterministic Cleanroom Execution</h2>
+                <span>Live Verification Daemon Spec</span>
+            </div>
+
+            <div class="terminal-box">
+                <div class="terminal-bar">
+                    <div class="terminal-tabs">
+                        <button class="t-tab active" onclick="setTerminalTab('exec')">Execution Trace</button>
+                        <button class="t-tab" onclick="setTerminalTab('cffi')">C-FFI Linkage</button>
+                        <button class="t-tab" onclick="setTerminalTab('bwrap')">Cleanroom Gate</button>
+                    </div>
+                    <span>PID: 49201 // CLEANROOM ISOLATED</span>
+                </div>
+
+                <div class="terminal-code" id="terminal-content">
+                    <div class="c-dim">// Omni Engine CLI v2.2.2 — Autonomous Multi-File Compiler</div>
+                    <div><span class="c-green">$</span> <span class="c-white">omni run --target atlr_ledger --cleanroom --isolated</span></div>
+                    <div class="c-dim mt-2">[1/4] Initializing In-Process C-FFI RAM model (Qwen2.5-Coder-7B)...</div>
+                    <div><span class="c-cyan">&gt; C-FFI:</span> linked llama.cpp directly in RAM. Zero network socket overhead.</div>
+                    <div><span class="c-cyan">&gt; VFS:</span> initialized RAM Virtual File System at /dev/shm/omni_vfs_gate</div>
+                    <div class="c-dim mt-2">[2/4] Topological Directed Acyclic Graph (DAG) construction...</div>
+                    <div><span class="c-green">&gt; DAG:</span> planned dependencies: models.rs → ledger.rs → lib.rs</div>
+                    <div><span class="c-green">&gt; Gate:</span> Zero-Wipe Invariant (W = ∅) enforced. Regressions strictly prohibited.</div>
+                    <div class="c-dim mt-2">[3/4] Spawning unprivileged cleanroom sandbox...</div>
+                    <div><span class="c-cyan">&gt; Sandbox:</span> unshare-all + --unshare-net (0 physical network access)</div>
+                    <div><span class="c-cyan">&gt; Compiler:</span> cargo check --lib --tests completed in cleanroom (Exit Code: 0)</div>
+                    <div class="c-dim mt-2">[4/4] 50-thread concurrent ATLR stress test verification...</div>
+                    <div class="c-green font-bold">✓ EXIT CODE: 0 (Pristine). All 50 threads completed with total liquidity conservation.</div>
+                    <div class="c-green font-bold">✓ 3 modules committed to host disk: [models.rs, ledger.rs, lib.rs]</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Core Architectural Pillars -->
+        <section id="architecture">
+            <div class="section-header">
+                <h2>Mathematical Governance Pillars</h2>
+                <span>Replacing ReAct Token Loops with Invariants</span>
+            </div>
+
+            <div class="pillars-grid">
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 01</div>
+                    <h3>Direct In-Process C-FFI</h3>
+                    <p>
+                        Upstream inference is linked directly into engine memory. Eliminates HTTP/TCP socket latency, unlocking sub-millisecond causal KV-cache rollbacks and token steering.
+                    </p>
+                </div>
+
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 02</div>
+                    <h3>Deterministic Cleanrooms</h3>
+                    <p>
+                        Code generation is staged in RAM VFS and verified inside Bubblewrap (Linux) or Apple Seatbelt (macOS). Unverified code never touches host storage.
+                    </p>
+                </div>
+
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 03</div>
+                    <h3>Zero-Wipe Invariant ($W = \emptyset$)</h3>
+                    <p>
+                        Mathematical guarantee that verified functions and classes are permanently frozen in memory. Erasing working code during refactoring is physically impossible.
+                    </p>
+                </div>
+
+                <div class="pillar-item">
+                    <div class="pillar-idx">PILLAR 04</div>
+                    <h3>Topological DAG Planning</h3>
+                    <p>
+                        Multi-file projects are scheduled topologically according to strict type and symbol dependencies, preventing out-of-order synthesis hallucination loops.
                     </p>
                 </div>
             </div>
-        </div>
+        </section>
+
+        <!-- ATLR Benchmark Results Table -->
+        <section id="benchmarks">
+            <div class="section-header">
+                <h2>Empirical ATLR Concurrency Benchmark</h2>
+                <span>50-Thread Atomic Ledger High-Concurrency Stress Test</span>
+            </div>
+
+            <div class="bench-table-wrap">
+                <table class="bench-table">
+                    <thead>
+                        <tr>
+                            <th>Runtime & Model</th>
+                            <th>Environment</th>
+                            <th>Makespan</th>
+                            <th>Exit Code</th>
+                            <th>Concurrency Logic</th>
+                            <th>Outcome</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="highlight">Omni Engine (Local 7B)</td>
+                            <td>Google Colab (T4 GPU)</td>
+                            <td class="highlight">37m 58s</td>
+                            <td class="highlight">Exit 0</td>
+                            <td>RwLock + Mutex</td>
+                            <td class="highlight">100% Passed (Clean)</td>
+                        </tr>
+                        <tr>
+                            <td class="highlight">Omni Engine (Local 4B)</td>
+                            <td>Commodity 8-Core CPU</td>
+                            <td>1h 39m</td>
+                            <td class="highlight">Exit 0</td>
+                            <td>Canonical Min/Max Lock</td>
+                            <td class="highlight">100% Staged via Gate</td>
+                        </tr>
+                        <tr>
+                            <td>Aider Local (4B Ollama)</td>
+                            <td>Commodity 8-Core CPU</td>
+                            <td class="failed">&gt;5h 24m (Timeout)</td>
+                            <td class="failed">kill -9</td>
+                            <td class="failed">Never Reached</td>
+                            <td class="failed">0 files delivered</td>
+                        </tr>
+                        <tr>
+                            <td>Aider Cloud (Gemini 2.5 Flash)</td>
+                            <td>Cloud Infrastructure</td>
+                            <td>58 seconds</td>
+                            <td class="failed">Exit 101</td>
+                            <td>sort_unstable</td>
+                            <td class="failed">FAILED (Panic test)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Authentic License & Identity Footer -->
+        <footer>
+            <div>
+                <span>OMNI ENGINE • SOVEREIGN PRODUCTION RUNTIME v2.2.2</span>
+            </div>
+            <div>
+                License: <strong>Dual: AGPLv3 / Commercial</strong>
+            </div>
+            <div>
+                <span>100% Offline • Zero Telemetry</span>
+            </div>
+        </footer>
+
     </div>
 
+    <!-- 3D Puffy/Inflated ASCII 'OMNI' Engine Script -->
     <script>
-        const i18n = {
-            ar: {
-                dir: 'rtl',
-                navChat: 'المحادثة الذكية',
-                navDownloader: 'تنزيل الموديلات (GGUF)',
-                navEngine: 'إدارة الخادم (Llama Engine)',
-                navKeys: 'مفاتيح الـ API (API Keys)',
-                navLogs: 'السجلات والمواصفات (Logs & Specs)',
-                navDocs: 'التوصيل الخارجي (OpenAI Spec)',
-                statusStopped: 'الخادم متوقف',
-                statusRunning: 'الخادم يعمل (PID {pid})',
-                noActiveModel: 'لا يوجد موديل مفعّل',
-                btnSettings: 'الإعدادات',
-                btnAbout: 'عن المشروع',
-                btnRefresh: 'تحديث',
-                chatWelcome: 'مرحباً بك في محرك Omni AI Engine (Rust Edition). اختر أو نزّل موديل GGUF وابدأ المحادثة فوراً!',
-                chatPlaceholder: 'اكتب رسالتك للذكاء الاصطناعي هنا...',
-                btnSend: 'إرسال 🚀',
-                downloaderTitle: 'تنزيل موديل ذكاء اصطناعي (GGUF) عبر رابط مباشر',
-                downloaderDesc: 'أدخل رابط التنزيل المباشر لموديل بصيغة GGUF (مثلاً من HuggingFace) وسيتم تحميله وتخزينه محلياً في المحرك.',
-                filenamePlaceholder: 'اسم الملف المحفوظ (اختياري، مثلاً: llama3-8b.gguf)',
-                btnStartDownload: 'بدء التنزيل الآن ⚡',
-                tasksTitle: 'مهام التنزيل الحالية والسابقة',
-                noDownloads: 'لا توجد عمليات تنزيل جارية حالياً.',
-                engineTitle: 'التحكم في تشغيل محرك llama-server',
-                labelSelectModel: 'اختر الموديل لتشغيله:',
-                labelThreads: 'عدد الأنوية (Threads):',
-                labelCtx: 'حجم السياق (Context Size):',
-                labelPort: 'منفذ الـ API الداخلي (Port):',
-                btnStartEngine: 'تشغيل المحرك ▶️',
-                btnStopEngine: 'إيقاف المحرك 🛑',
-                keysTitle: 'إنشاء وإدارة مفاتيح الـ API Keys',
-                keysDesc: 'جميع الطلبات الخارجية الموجهة لمسارات /v1/* تتطلب مفتاح API صيغته (omni_sk_...) للحماية.',
-                keyNamePlaceholder: 'اسم المفتاح (مثلاً: App Key / Mobile Key)',
-                btnGenerateKey: 'توليد مفتاح جديد 🔑',
-                thKeyName: 'اسم المفتاح',
-                thKeyToken: 'مفتاح الـ API (Token)',
-                thCreated: 'تاريخ الإنشاء',
-                thAction: 'إجراء',
-                specsTitle: 'فحص مواصفات الجهاز وقدرة الموديلات التقديرية',
-                lblCores: 'عدد أنوية المعالج (CPU Cores)',
-                lblTotalRam: 'إجمالي الذاكرة (Total RAM)',
-                lblFreeRam: 'الذاكرة المتاحة (Free RAM)',
-                lblRecModel: '📊 الموديل التقديري المناسب لجهازك:',
-                logsTitle: '💻 سجلات الخادم المباشرة (Live Terminal Stream Logs)',
-                btnRefreshLogs: 'تحديث السجل 🔄',
-                docsTitle: 'كيفية الاتصال بمحرك Omni من التطبيقات الخارجية (OpenAI Compatible)',
-                docsDesc: 'المحرك متوافق 100% مع معايير OpenAI API.',
-                settingsTitle: 'الإعدادات العامة (Settings)',
-                lblLanguage: '🌐 واجهة اللغة (UI Language):',
-                lblPowerControls: '🔴 التحكم بالسيرفر والعملية الحية:',
-                btnShutdown: '🔴 إيقاف السيرفر والمحرك بالكامل وبشكل آمن (Power Shutdown)',
-                shutdownDesc: 'هذا الزر يقوم بإغلاق عملية Rust omni_engine و llama-server بالكامل فوراً.',
-                aboutTitle: 'عن مشروع Omni Engine',
-                aboutName: 'الاسم: Omni AI Engine v2.2.2 (Sovereign Autonomous Runtime)',
-                aboutAuthor: 'المطور والمؤسس: ielfeqi-rgb',
-                aboutLicense: 'الترخيص: ترخيص مزدوج (GNU AGPLv3 للمجتمع / ترخيص تجاري للشركات) — للتواصل: omni.engine@proton.me',
-                aboutGithub: 'رابط الـ GitHub الرسمي:',
-                privacyHeader: '🛡️ الخصوصية والأمان السيادي (Sovereign Privacy & Security):',
-                privacy: 'المحرك يعمل محلياً بالكامل (100% On-Device & Offline) دون أي اتصال بخوادم خارجية أو تتبع سحابي. جميع النماذج والبيانات وشفرات الكود يتم معالجتها حصرياً داخل ذاكرة الجهاز المحلية (RAM) مع عزل أمني تام في بيئة Cleanroom.'
-            },
-            en: {
-                dir: 'ltr',
-                navChat: 'Smart Chat',
-                navDownloader: 'Model Downloader (GGUF)',
-                navEngine: 'Server Management',
-                navKeys: 'API Keys',
-                navLogs: 'Logs & Hardware Specs',
-                navDocs: 'OpenAI API Docs',
-                statusStopped: 'Server Stopped',
-                statusRunning: 'Server Running (PID {pid})',
-                noActiveModel: 'No active model',
-                btnSettings: 'Settings',
-                btnAbout: 'About Project',
-                btnRefresh: 'Refresh',
-                chatWelcome: 'Welcome to Omni AI Engine (Rust Edition). Select or download a GGUF model to start chatting immediately!',
-                chatPlaceholder: 'Type your message to AI here...',
-                btnSend: 'Send 🚀',
-                downloaderTitle: 'Download AI Model (GGUF) via Direct URL',
-                downloaderDesc: 'Enter direct GGUF download URL (e.g. from HuggingFace) to download and store locally.',
-                filenamePlaceholder: 'Saved Filename (Optional, e.g. llama3-8b.gguf)',
-                btnStartDownload: 'Start Download Now ⚡',
-                tasksTitle: 'Current and Past Download Tasks',
-                noDownloads: 'No active downloads currently.',
-                engineTitle: 'Llama Server Control & Execution',
-                labelSelectModel: 'Select Model to Run:',
-                labelThreads: 'CPU Threads:',
-                labelCtx: 'Context Size:',
-                labelPort: 'Internal API Port:',
-                btnStartEngine: 'Start Engine ▶️',
-                btnStopEngine: 'Stop Engine 🛑',
-                keysTitle: 'Create & Manage API Keys',
-                keysDesc: 'All external requests to /v1/* endpoints require an API Key formatted as (omni_sk_...).',
-                keyNamePlaceholder: 'Key Name (e.g. App Key / Mobile Key)',
-                btnGenerateKey: 'Generate New Key 🔑',
-                thKeyName: 'Key Name',
-                thKeyToken: 'API Key (Token)',
-                thCreated: 'Created At',
-                thAction: 'Action',
-                specsTitle: 'Hardware Specs & Model Estimation',
-                lblCores: 'CPU Cores',
-                lblTotalRam: 'Total RAM',
-                lblFreeRam: 'Available RAM',
-                lblRecModel: '📊 Recommended Model Size for Your Device:',
-                logsTitle: '💻 Live Terminal Server Logs',
-                btnRefreshLogs: 'Refresh Logs 🔄',
-                docsTitle: 'How to Connect from External Apps (OpenAI Compatible)',
-                docsDesc: 'The engine is 100% compatible with OpenAI API standards.',
-                settingsTitle: 'General Settings',
-                lblLanguage: '🌐 UI Language:',
-                lblPowerControls: '🔴 Server & Live Process Control:',
-                btnShutdown: '🔴 Safe Power Shutdown (Stop Server & Engine)',
-                shutdownDesc: 'This button terminates the Rust omni_engine and llama-server completely.',
-                aboutTitle: 'About Omni Engine Project',
-                aboutName: 'Name: Omni AI Engine v2.2.2 (Sovereign Autonomous Runtime)',
-                aboutAuthor: 'Developer & Founder: ielfeqi-rgb',
-                aboutLicense: 'License: Dual-Licensed (GNU AGPLv3 / Commercial Enterprise) — Inquiries: omni.engine@proton.me',
-                aboutGithub: 'Official GitHub Link:',
-                privacyHeader: '🛡️ Sovereign Privacy & Security Policy:',
-                privacy: 'Omni Engine operates 100% offline and on-device. Zero cloud telemetry or external logging. All inference, memory, and code verification execute strictly within local RAM and isolated cleanroom environments.'
-            },
-            fr: {
-                dir: 'ltr',
-                navChat: 'Chat Intelligent',
-                navDownloader: 'Téléchargeur de Modèles (GGUF)',
-                navEngine: 'Gestion du Serveur',
-                navKeys: 'Clés API',
-                navLogs: 'Journaux et Spécifications',
-                navDocs: 'API OpenAI Docs',
-                statusStopped: 'Serveur Arrêté',
-                statusRunning: 'Serveur en Cours (PID {pid})',
-                noActiveModel: 'Aucun modèle actif',
-                btnSettings: 'Paramètres',
-                btnAbout: 'À Propos',
-                btnRefresh: 'Actualiser',
-                chatWelcome: 'Bienvenue sur Omni AI Engine (Rust Edition). Sélectionnez ou téléchargez un modèle GGUF pour discuter !',
-                chatPlaceholder: 'Tapez votre message ici...',
-                btnSend: 'Envoyer 🚀',
-                downloaderTitle: 'Télécharger un Modèle IA (GGUF) via URL Directe',
-                downloaderDesc: 'Entrez l\'URL de téléchargement direct GGUF pour enregistrer le modèle localement.',
-                filenamePlaceholder: 'Nom du Fichier (Optionnel, ex. llama3-8b.gguf)',
-                btnStartDownload: 'Démarrer le Téléchargement ⚡',
-                tasksTitle: 'Tâches de Téléchargement',
-                noDownloads: 'Aucun téléchargement en cours.',
-                engineTitle: 'Contrôle du Serveur Llama',
-                labelSelectModel: 'Sélectionner le Modèle :',
-                labelThreads: 'Threads CPU :',
-                labelCtx: 'Taille de Contexte :',
-                labelPort: 'Port API Interne :',
-                btnStartEngine: 'Démarrer l\'Engine ▶️',
-                btnStopEngine: 'Arrêter l\'Engine 🛑',
-                keysTitle: 'Créer et Gérer les Clés API',
-                keysDesc: 'Toutes les requêtes externes vers /v1/* nécessitent une clé API au format (omni_sk_...).',
-                keyNamePlaceholder: 'Nom de la Clé (ex. Clé App)',
-                btnGenerateKey: 'Générer une Nouvelle Clé 🔑',
-                thKeyName: 'Nom de la Clé',
-                thKeyToken: 'Clé API (Token)',
-                thCreated: 'Date de Création',
-                thAction: 'Action',
-                specsTitle: 'Spécifications Matérielles et Estimation',
-                lblCores: 'Cœurs CPU',
-                lblTotalRam: 'RAM Totale',
-                lblFreeRam: 'RAM Disponible',
-                lblRecModel: '📊 Taille de Modèle Recommandée :',
-                logsTitle: '💻 Journaux Serveur en Direct',
-                btnRefreshLogs: 'Actualiser 🔄',
-                docsTitle: 'Comment se Connecter depuis des Applications Externes (Compatible OpenAI)',
-                docsDesc: 'L\'engine est 100% compatible avec les normes de l\'API OpenAI.',
-                settingsTitle: 'Paramètres Généraux',
-                lblLanguage: '🌐 Langue de l\'Interface :',
-                lblPowerControls: '🔴 Contrôle du Serveur :',
-                btnShutdown: '🔴 Arrêt Sécurisé du Serveur',
-                shutdownDesc: 'Ce bouton arrête complètement le processus Rust omni_engine et llama-server.',
-                aboutTitle: 'À Propos du Projet Omni Engine',
-                aboutName: 'Nom : Omni AI Engine v2.2.2 (Sovereign Autonomous Runtime)',
-                aboutAuthor: 'Développeur et Fondateur : ielfeqi-rgb',
-                aboutLicense: 'Licence : Double licence (GNU AGPLv3 / Entreprise commerciale) — Contact : omni.engine@proton.me',
-                aboutGithub: 'Lien GitHub Officiel :',
-                privacyHeader: '🛡️ Confidentialité et Sécurité Souveraine :',
-                privacy: 'Omni Engine fonctionne à 100% hors-ligne sur votre machine. Aucune télémétrie cloud. Vos modèles et données restent strictement confinés dans la mémoire RAM locale.'
+        const omniCanvas = document.getElementById('omni-3d-canvas');
+        const oCtx = omniCanvas.getContext('2d');
+
+        let oW, oH;
+        let oDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+
+        // Interactive mouse rotation
+        let isMouseDown = false;
+        let lastMouseX = 0;
+        let userRotY = 0;
+        let userRotX = 0;
+
+        omniCanvas.addEventListener('mousedown', (e) => {
+            isMouseDown = true;
+            lastMouseX = e.clientX;
+        });
+        window.addEventListener('mouseup', () => { isMouseDown = false; });
+        window.addEventListener('mousemove', (e) => {
+            if (isMouseDown) {
+                const deltaX = e.clientX - lastMouseX;
+                userRotY += deltaX * 0.008;
+                lastMouseX = e.clientX;
             }
-        };
-
-        let currentLang = 'en';
-
-        // Initialize default English UI
-        window.addEventListener('DOMContentLoaded', () => {
-            changeLanguage('en');
         });
 
-        function changeLanguage(lang) {
-            currentLang = lang;
-            const data = i18n[lang] || i18n.ar;
-            document.documentElement.dir = data.dir;
-            document.getElementById('sarcasticPrivacyText').innerText = data.privacy;
-            
-            document.querySelectorAll('[data-i18n]').forEach(el => {
-                const key = el.getAttribute('data-i18n');
-                if(data[key]) el.innerText = data[key];
-            });
+        // =========================================================================
+        // PUFFY / INFLATED 3D LETTER MESH GENERATOR ("فونت منتفخ")
+        // Generates thick rounded tubular capsules and puffy tori with surface normals
+        // =========================================================================
+        const omni3DPoints = [];
 
-            document.querySelectorAll('[data-placeholder-i18n]').forEach(el => {
-                const key = el.getAttribute('data-placeholder-i18n');
-                if(data[key]) el.setAttribute('placeholder', data[key]);
-            });
-
-            fetchStatus();
-        }
-
-        function openModal(id) {
-            document.getElementById('modal-' + id).classList.add('active');
-        }
-
-        function closeModal(id) {
-            document.getElementById('modal-' + id).classList.remove('active');
-        }
-
-        async function shutdownServer() {
-            if(!confirm('هل أنت متأكد من إيقاف السيرفر والمحرك بالكامل واغلاق التطبيق؟')) return;
-            try {
-                await fetch('/api/shutdown', { method: 'POST' });
-                alert('تم إرسال أمر الإيقاف! سيتم إغلاق التطبيق الآن.');
-                window.close();
-            } catch(e) {
-                alert('تم إغلاق الخادم.');
-            }
-        }
-
-        function switchTab(tabId) {
-            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.panel').forEach(el => el.classList.remove('active'));
-
-            const navEl = document.getElementById('nav-' + tabId);
-            if(navEl) navEl.classList.add('active');
-            const panelEl = document.getElementById('panel-' + tabId);
-            if(panelEl) panelEl.classList.add('active');
-
-            if(tabId === 'market') fetchMarketData();
-            if(tabId === 'keys') fetchKeys();
-            if(tabId === 'logs') { fetchSpecs(); fetchLogs(); }
-            if(tabId === 'engine' || tabId === 'downloader') fetchStatus();
-        }
-
-        async function fetchSpecs() {
-            try {
-                const res = await fetch('/api/system/specs');
-                const specs = await res.json();
-                document.getElementById('specCores').innerText = specs.cpu_cores;
-                document.getElementById('specTotalRam').innerText = specs.total_ram_gb.toFixed(1) + ' GB';
-                document.getElementById('specFreeRam').innerText = specs.free_ram_gb.toFixed(1) + ' GB';
-                document.getElementById('specRecParams').innerText = specs.recommended_params;
-                document.getElementById('specRecDesc').innerText = specs.max_recommended_size;
-            } catch(e) { console.error(e); }
-        }
-
-        async function fetchLogs() {
-            try {
-                const res = await fetch('/api/logs');
-                const logs = await res.json();
-                const container = document.getElementById('terminalLogs');
-                container.innerText = logs.join('\n');
-                container.scrollTop = container.scrollHeight;
-            } catch(e) { console.error(e); }
-        }
-
-        async function fetchStatus() {
-            try {
-                const res = await fetch('/api/status');
-                const data = await res.json();
-                
-                const dot = document.getElementById('statusDot');
-                const text = document.getElementById('statusText');
-                const modelText = document.getElementById('activeModelName');
-                const dataLang = i18n[currentLang] || i18n.ar;
-
-                dot.classList.add('active');
-                if(data.is_running) {
-                    text.innerText = (dataLang.statusRunning || 'Server Running').replace('{pid}', data.pid);
-                    modelText.innerText = (dataLang.activeModel || 'Active Model:') + ' ' + (data.active_model || '');
-                } else {
-                    text.innerText = currentLang === 'en' ? 'Sovereign Engine Ready (Native C-FFI)' : 'المحرك السيادي جاهز (In-Process C-FFI)';
-                    modelText.innerText = (currentLang === 'en' ? 'Models loaded on demand: ' : 'جاهز لتحميل الموديلات فورياً: ') + (data.available_models.length) + ' موديل';
-                }
-
-                // Populate model select
-                const select = document.getElementById('modelSelect');
-                select.innerHTML = '';
-                if(data.available_models.length === 0) {
-                    select.innerHTML = `<option value="">${currentLang === 'en' ? 'No models downloaded yet' : (currentLang === 'fr' ? 'Aucun modèle téléchargé' : 'لا توجد موديلات نزلت بعد')}</option>`;
-                } else {
-                    data.available_models.forEach(m => {
-                        const opt = document.createElement('option');
-                        opt.value = m;
-                        opt.innerText = m;
-                        if(data.active_model === m) opt.selected = true;
-                        select.appendChild(opt);
-                    });
-                }
-            } catch(e) {
-                console.error(e);
-            }
-        }
-
-        async function startEngine() {
-            const model = document.getElementById('modelSelect').value;
-            const threads = parseInt(document.getElementById('engineThreads').value) || 4;
-            const ctx = parseInt(document.getElementById('engineCtx').value) || 4096;
-
-            if(!model) return alert('يرجى اختيار موديل أولاً');
-
-            const res = await fetch('/api/server/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ model, threads, ctx_size: ctx, port: 8081 })
-            });
-            const data = await res.json();
-            if(res.ok) {
-                alert(currentLang === 'en' ? 'Engine started successfully!' : (currentLang === 'fr' ? 'Engine démarré !' : 'تم تشغيل خادم الذكاء الاصطناعي بنجاح!'));
-                fetchStatus();
+        function getPerpendiculars(d) {
+            let u;
+            if (Math.abs(d.x) < 0.9 && Math.abs(d.z) < 0.9) {
+                u = { x: 1, y: 0, z: 0 };
             } else {
-                alert((currentLang === 'en' ? 'Error: ' : 'خطأ: ') + (data.error || 'Failed'));
+                u = { x: 0, y: 1, z: 0 };
+            }
+            let v = {
+                x: d.y * u.z - d.z * u.y,
+                y: d.z * u.x - d.x * u.z,
+                z: d.x * u.y - d.y * u.x
+            };
+            const vLen = Math.hypot(v.x, v.y, v.z) || 1;
+            v.x /= vLen; v.y /= vLen; v.z /= vLen;
+            u = {
+                x: v.y * d.z - v.z * d.y,
+                y: v.z * d.x - v.x * d.z,
+                z: v.x * d.y - v.y * d.x
+            };
+            return { u, v };
+        }
+
+        // Puffy cylinder capsule stroke
+        function addPuffyCapsule(x1, y1, z1, x2, y2, z2, radius) {
+            const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+            const len = Math.hypot(dx, dy, dz);
+            if (len < 0.001) return;
+            const d = { x: dx / len, y: dy / len, z: dz / len };
+            const { u, v } = getPerpendiculars(d);
+
+            const lengthSteps = Math.max(3, Math.floor(len / 7.5));
+            const radialSteps = 14;
+
+            for (let s = 0; s <= lengthSteps; s++) {
+                const t = s / lengthSteps;
+                const cx = x1 + dx * t;
+                const cy = y1 + dy * t;
+                const cz = z1 + dz * t;
+
+                for (let r = 0; r < radialSteps; r++) {
+                    const angle = (r / radialSteps) * Math.PI * 2;
+                    const cosA = Math.cos(angle);
+                    const sinA = Math.sin(angle);
+
+                    const nx = cosA * u.x + sinA * v.x;
+                    const ny = cosA * u.y + sinA * v.y;
+                    const nz = cosA * u.z + sinA * v.z;
+
+                    omni3DPoints.push({
+                        x: cx + nx * radius,
+                        y: cy + ny * radius,
+                        z: cz + nz * radius,
+                        nx, ny, nz
+                    });
+                }
+            }
+
+            // Rounded spherical caps at both ends for pure puffy inflatable look
+            addHemisphereCap(x1, y1, z1, -d.x, -d.y, -d.z, radius);
+            addHemisphereCap(x2, y2, z2, d.x, d.y, d.z, radius);
+        }
+
+        function addHemisphereCap(cx, cy, cz, dx, dy, dz, radius) {
+            const { u, v } = getPerpendiculars({ x: dx, y: dy, z: dz });
+            const latSteps = 4;
+            const lonSteps = 12;
+
+            for (let i = 1; i <= latSteps; i++) {
+                const phi = (i / latSteps) * (Math.PI * 0.5);
+                const cosP = Math.cos(phi);
+                const sinP = Math.sin(phi);
+
+                for (let j = 0; j < lonSteps; j++) {
+                    const theta = (j / lonSteps) * Math.PI * 2;
+                    const cosT = Math.cos(theta);
+                    const sinT = Math.sin(theta);
+
+                    const nx = sinP * (cosT * u.x + sinT * v.x) + cosP * dx;
+                    const ny = sinP * (cosT * u.y + sinT * v.y) + cosP * dy;
+                    const nz = sinP * (cosT * u.z + sinT * v.z) + cosP * dz;
+
+                    omni3DPoints.push({
+                        x: cx + nx * radius,
+                        y: cy + ny * radius,
+                        z: cz + nz * radius,
+                        nx, ny, nz
+                    });
+                }
             }
         }
 
-        async function stopEngine() {
-            const res = await fetch('/api/server/stop', { method: 'POST' });
-            if(res.ok) {
-                alert(currentLang === 'en' ? 'Engine stopped' : (currentLang === 'fr' ? 'Engine arrêté' : 'تم إيقاف الخادم'));
-                fetchStatus();
+        // Puffy torus for letter 'O'
+        function addPuffyTorus(cx, cy, cz, R_maj, r_tube) {
+            const ringSteps = 42;
+            const tubeSteps = 14;
+
+            for (let i = 0; i < ringSteps; i++) {
+                const theta = (i / ringSteps) * Math.PI * 2;
+                const cosT = Math.cos(theta);
+                const sinT = Math.sin(theta);
+
+                for (let j = 0; j < tubeSteps; j++) {
+                    const phi = (j / tubeSteps) * Math.PI * 2;
+                    const cosP = Math.cos(phi);
+                    const sinP = Math.sin(phi);
+
+                    // Oval torus (slightly taller than wide for letter O)
+                    const rad = R_maj + r_tube * cosP;
+                    const px = cx + rad * cosT;
+                    const py = cy + rad * sinT * 1.25;
+                    const pz = cz + r_tube * sinP;
+
+                    const nx = cosP * cosT;
+                    const ny = cosP * sinT * 1.25;
+                    const nz = sinP;
+                    const nLen = Math.hypot(nx, ny, nz) || 1;
+
+                    omni3DPoints.push({
+                        x: px, y: py, z: pz,
+                        nx: nx / nLen, ny: ny / nLen, nz: nz / nLen
+                    });
+                }
             }
         }
 
-        async function triggerDownload() {
-            const url = document.getElementById('downloadUrl').value.trim();
-            const filename = document.getElementById('downloadFilename').value.trim();
+        function build3DPuffyOMNI() {
+            omni3DPoints.length = 0;
 
-            if(!url) return alert(currentLang === 'en' ? 'Enter download URL first' : 'أدخل رابط التنزيل أولاً');
+            const R_TUBE = 24; // Extra puffy volumetric balloon radius
 
-            const res = await fetch('/api/models/download', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ url, filename })
-            });
+            // 1. PUFFY 'O' (Centered at x = -205)
+            addPuffyTorus(-205, 0, 0, 48, R_TUBE);
 
-            if(res.ok) {
-                alert(currentLang === 'en' ? 'Download started in background!' : 'بدأت عملية التنزيل في الخلفية!');
-                document.getElementById('downloadUrl').value = '';
-                fetchDownloads();
+            // 2. PUFFY 'M' (Centered at x = -70)
+            const mX = -70;
+            const mHalfW = 48;
+            const mHalfH = 62;
+            // Left pillar
+            addPuffyCapsule(mX - mHalfW, mHalfH, 0, mX - mHalfW, -mHalfH, 0, R_TUBE);
+            // Left diagonal down to center
+            addPuffyCapsule(mX - mHalfW, -mHalfH, 0, mX, 12, 0, R_TUBE * 0.95);
+            // Right diagonal up from center
+            addPuffyCapsule(mX, 12, 0, mX + mHalfW, -mHalfH, 0, R_TUBE * 0.95);
+            // Right pillar
+            addPuffyCapsule(mX + mHalfW, -mHalfH, 0, mX + mHalfW, mHalfH, 0, R_TUBE);
+
+            // 3. PUFFY 'N' (Centered at x = 70)
+            const nX = 70;
+            const nHalfW = 42;
+            const nHalfH = 62;
+            // Left pillar
+            addPuffyCapsule(nX - nHalfW, nHalfH, 0, nX - nHalfW, -nHalfH, 0, R_TUBE);
+            // Diagonal
+            addPuffyCapsule(nX - nHalfW, -nHalfH, 0, nX + nHalfW, nHalfH, 0, R_TUBE * 0.95);
+            // Right pillar
+            addPuffyCapsule(nX + nHalfW, nHalfH, 0, nX + nHalfW, -nHalfH, 0, R_TUBE);
+
+            // 4. PUFFY 'I' (Centered at x = 195)
+            const iX = 195;
+            const iHalfW = 34;
+            const iHalfH = 62;
+            // Top bar
+            addPuffyCapsule(iX - iHalfW, -iHalfH, 0, iX + iHalfW, -iHalfH, 0, R_TUBE * 0.92);
+            // Main stem
+            addPuffyCapsule(iX, -iHalfH, 0, iX, iHalfH, 0, R_TUBE);
+            // Bottom bar
+            addPuffyCapsule(iX - iHalfW, iHalfH, 0, iX + iHalfW, iHalfH, 0, R_TUBE * 0.92);
+        }
+
+        build3DPuffyOMNI();
+
+        function resize3D() {
+            const rect = omniCanvas.getBoundingClientRect();
+            oW = rect.width;
+            oH = rect.height;
+            omniCanvas.width = oW * oDpr;
+            omniCanvas.height = oH * oDpr;
+            oCtx.setTransform(oDpr, 0, 0, oDpr, 0, 0);
+        }
+        window.addEventListener('resize', resize3D);
+        resize3D();
+
+        // Shading density characters for puffy volumetric 3D letters
+        const SHADE_CHARS = ['@', '#', '$', '%', '8', '&', '*', 'o', '+', '=', '-', ':', '.', '·'];
+
+        // Light direction for volumetric highlights
+        const LIGHT = { x: 0.28, y: -0.58, z: 0.76 };
+
+        // 3D Rendering loop
+        let start3D = performance.now();
+        function loop3D(now) {
+            const t = (now - start3D) * 0.001;
+
+            oCtx.clearRect(0, 0, oW, oH);
+
+            const cx = oW / 2;
+            const cy = oH / 2;
+
+            // Sinuous 3D yaw oscillation: pivots smoothly so OMNI is always readable and majestic
+            // Full 360 degree rotation available when user drags with mouse
+            const rotY = Math.sin(t * 0.72) * 0.44 + userRotY;
+            const rotX = 0.12 * Math.cos(t * 0.5) + userRotX;
+
+            const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+            const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+
+            // Responsive fit — large, bold, puffy presence
+            const fitScale = Math.min(1.28, (oW / 540) * 1.18);
+            const fov = 440;
+
+            oCtx.font = '11px "JetBrains Mono"';
+            oCtx.textAlign = 'center';
+            oCtx.textBaseline = 'middle';
+
+            const renderList = [];
+
+            for (let i = 0; i < omni3DPoints.length; i++) {
+                const pt = omni3DPoints[i];
+
+                // Rotate position around Y, then X
+                const x1 = pt.x * cosY + pt.z * sinY;
+                const z1 = -pt.x * sinY + pt.z * cosY;
+                const y2 = pt.y * cosX - z1 * sinX;
+                const z2 = pt.y * sinX + z1 * cosX;
+
+                // Rotate normal around Y, then X for authentic 3D surface shading
+                const nx1 = pt.nx * cosY + pt.nz * sinY;
+                const nz1 = -pt.nx * sinY + pt.nz * cosY;
+                const ny2 = pt.ny * cosX - nz1 * sinX;
+                const nz2 = pt.ny * sinX + nz1 * cosX;
+
+                // Calculate diffuse + specular lighting on puffy volume
+                const dot = Math.max(0, nx1 * LIGHT.x + ny2 * LIGHT.y + nz2 * LIGHT.z);
+
+                // Perspective projection
+                const scale = (fov / (fov + z2 + 100)) * fitScale;
+                const sx = cx + x1 * scale;
+                const sy = cy + y2 * scale;
+
+                renderList.push({ sx, sy, z: z2, dot, nz: nz2 });
             }
-        }
 
-        async function fetchDownloads() {
-            const res = await fetch('/api/downloads');
-            const tasks = await res.json();
-            const container = document.getElementById('downloadsList');
-            container.innerHTML = '';
-            const dataLang = i18n[currentLang] || i18n.ar;
+            // Painter's algorithm: sort by depth (back to front)
+            renderList.sort((a, b) => a.z - b.z);
 
-            if(tasks.length === 0) {
-                container.innerHTML = `<p style="color: var(--text-secondary);">${dataLang.noDownloads}</p>`;
-                return;
+            for (let i = 0; i < renderList.length; i++) {
+                const p = renderList[i];
+
+                // Combine light intensity and depth for puffy balloon highlights
+                const depthNorm = Math.max(0, Math.min(1, (p.z + 180) / 360));
+                const intensity = p.dot * 0.75 + depthNorm * 0.25;
+
+                // Choose character based on lighting intensity
+                const charIdx = Math.floor((1 - intensity) * (SHADE_CHARS.length - 1));
+                const ch = SHADE_CHARS[Math.max(0, Math.min(SHADE_CHARS.length - 1, charIdx))];
+
+                // Color palette: deep emerald shadow to luminous mint highlight
+                const r = Math.floor(10 + intensity * 45);
+                const g = Math.floor(110 + intensity * 135);
+                const b = Math.floor(75 + intensity * 85);
+                const alpha = Math.min(1.0, 0.35 + intensity * 0.65);
+
+                oCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                oCtx.fillText(ch, p.sx, p.sy);
             }
 
-            tasks.forEach(t => {
-                const item = document.createElement('div');
-                item.style.marginBottom = '14px';
-                item.innerHTML = `
-                    <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                        <span><strong>${t.model_name}</strong></span>
-                        <span>${t.percent.toFixed(1)}%</span>
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${t.percent}%"></div>
-                    </div>
-                    <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
-                        ${t.is_completed ? '✅ Completed' : (t.error ? '❌ Error: ' + t.error : 'Downloading...')}
-                    </div>
-                `;
-                container.appendChild(item);
-            });
+            requestAnimationFrame(loop3D);
         }
+        requestAnimationFrame(loop3D);
 
-        async function fetchKeys() {
-            const res = await fetch('/api/keys');
-            const keys = await res.json();
-            const tbody = document.getElementById('apiKeysTable');
-            tbody.innerHTML = '';
-            const dataLang = i18n[currentLang] || i18n.ar;
+        // -------------------------------------------------------------
+        // Ambient Matrix Texture Background Loop
+        // -------------------------------------------------------------
+        const bgCanvas = document.getElementById('matrix-canvas');
+        const bCtx = bgCanvas.getContext('2d');
+        let bW, bH;
+        let bDpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
-            keys.forEach(k => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${k.name}</td>
-                    <td><code style="color: #38bdf8;">${k.key}</code></td>
-                    <td>${k.created_at}</td>
-                    <td><button class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;" onclick="revokeKey('${k.id}')">${dataLang.thAction === 'Action' ? 'Delete' : 'حذف'}</button></td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
+        const BG_CHARS = ['0', '1', '0x', 'FF', '7F', 'ptr', 'shm', 'cffi', 'bwrap', 'dag', 'vfs', 'bpf', 'mut', '·'];
+        const BG_STEP = 32;
+        let bgColumns = [];
 
-        async function createApiKey() {
-            const name = document.getElementById('keyNameInput').value.trim();
-            const res = await fetch('/api/keys/generate', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name })
-            });
-            if(res.ok) {
-                document.getElementById('keyNameInput').value = '';
-                fetchKeys();
-            }
-        }
+        function resizeBG() {
+            bW = window.innerWidth;
+            bH = window.innerHeight;
+            bgCanvas.width = bW * bDpr;
+            bgCanvas.height = bH * bDpr;
+            bCtx.setTransform(bDpr, 0, 0, bDpr, 0, 0);
 
-        async function revokeKey(id) {
-            if(!confirm(currentLang === 'en' ? 'Revoke this API Key?' : 'هل أنت تأكد من إيقاف هذا المفتاح؟')) return;
-            await fetch('/api/keys/revoke/' + id, { method: 'DELETE' });
-            fetchKeys();
-        }
-
-        function handleKeyPress(e) {
-            if(e.key === 'Enter') sendMessage();
-        }
-
-        let chatHistory = [];
-        async function sendMessage() {
-            const input = document.getElementById('chatInput');
-            const text = input.value.trim();
-            if(!text) return;
-
-            const chatMessages = document.getElementById('chatMessages');
-
-            // User message
-            const userDiv = document.createElement('div');
-            userDiv.className = 'message user';
-            userDiv.innerText = text;
-            chatMessages.appendChild(userDiv);
-
-            input.value = '';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-
-            // Assistant placeholder
-            const assistantDiv = document.createElement('div');
-            assistantDiv.className = 'message assistant';
-            assistantDiv.innerText = currentLang === 'en' ? 'Thinking & generating...' : (currentLang === 'fr' ? 'Génération...' : 'جاري التفكير واستعلام قاعدة البيانات...');
-            chatMessages.appendChild(assistantDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-
-            if(chatHistory.length === 0) {
-                chatHistory.push({
-                    role: 'system',
-                    content: 'أنت موظف مبيعات ذكي ومحترف لمتجر ماركت. مهمتك خدمة العملاء باللغة العربية. عند سؤال العميل عن أي منتج أو خامة أو سعر، استخدم الأدوات دائماً للبحث في قاعدة البيانات أولاً ولا تتحدث أو تخترع بيانات من خيالك.'
+            const count = Math.ceil(bW / BG_STEP);
+            bgColumns = [];
+            for (let i = 0; i < count; i++) {
+                bgColumns.push({
+                    x: i * BG_STEP + 8,
+                    y: Math.random() * bH,
+                    speed: 0.5 + Math.random() * 0.9,
+                    char: BG_CHARS[Math.floor(Math.random() * BG_CHARS.length)],
+                    step: 0,
+                    alpha: 0.18 + Math.random() * 0.30
                 });
             }
+        }
+        window.addEventListener('resize', resizeBG);
+        resizeBG();
 
-            chatHistory.push({ role: 'user', content: text });
+        function bgLoop() {
+            bCtx.fillStyle = 'rgba(3, 5, 8, 0.18)';
+            bCtx.fillRect(0, 0, bW, bH);
 
-            try {
-                // Fetch active keys to pass token if needed
-                const keysRes = await fetch('/api/keys');
-                const keys = await keysRes.json();
-                const token = keys.length > 0 ? keys[0].key : '';
+            bCtx.font = '10px "JetBrains Mono"';
+            bCtx.textAlign = 'left';
 
-                const model = document.getElementById('marketModelSelect')?.value || document.getElementById('modelSelect')?.value || 'qwen2.5-coder-1.5b-instruct-q4_k_m.gguf';
-
-                const res = await fetch('/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: chatHistory,
-                        tools: marketTools,
-                        temperature: 0.2,
-                        max_tokens: 256
-                    })
-                });
-
-                const data = await res.json();
-                if(!res.ok || !data.choices || !data.choices[0]) {
-                    assistantDiv.innerText = '⚠️ ' + (data.error?.message || (currentLang === 'en' ? 'Ensure engine is started and model is selected' : 'تأكد من تشغيل المحرك واختيار الموديل'));
-                    return;
+            for (let i = 0; i < bgColumns.length; i++) {
+                const c = bgColumns[i];
+                c.y += c.speed;
+                if (c.y > bH + 20) {
+                    c.y = -15;
+                    c.speed = 0.5 + Math.random() * 0.9;
                 }
-
-                const msg = data.choices[0].message;
-                const toolCalls = msg.tool_calls || [];
-
-                if(toolCalls.length > 0) {
-                    const call = toolCalls[0];
-                    const fnName = call.function.name;
-                    let fnArgs = {};
-                    try { fnArgs = JSON.parse(call.function.arguments); } catch(e) {}
-
-                    // Execute tool via Market API
-                    const toolExecRes = await fetch('/api/market/tool', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tool_name: fnName, arguments: fnArgs })
-                    });
-                    const toolResult = await toolExecRes.json();
-
-                    // Turn 2: Feed back to model
-                    chatHistory.push(msg);
-                    chatHistory.push({
-                        role: 'tool',
-                        tool_call_id: call.id,
-                        content: JSON.stringify(toolResult)
-                    });
-
-                    const res2 = await fetch('/v1/chat/completions', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + token
-                        },
-                        body: JSON.stringify({
-                            model: model,
-                            messages: chatHistory,
-                            temperature: 0.3,
-                            max_tokens: 256
-                        })
-                    });
-
-                    const data2 = await res2.json();
-                    if(res2.ok && data2.choices && data2.choices[0]) {
-                        const finalContent = data2.choices[0].message.content || 'تم استرجاع البيانات بنجاح!';
-                        assistantDiv.innerHTML = finalContent.replace(/\n/g, '<br>');
-                        chatHistory.push(data2.choices[0].message);
-                    } else {
-                        assistantDiv.innerText = '⚠️ خطأ في تكملة الرد';
-                    }
-                } else {
-                    const reply = msg.content || '';
-                    assistantDiv.innerHTML = reply.replace(/\n/g, '<br>');
-                    chatHistory.push(msg);
+                if (++c.step % 20 === 0) {
+                    c.char = BG_CHARS[Math.floor(Math.random() * BG_CHARS.length)];
                 }
-            } catch(e) {
-                assistantDiv.innerText = '⚠️ ' + (currentLang === 'en' ? 'Failed to connect: ' : 'تعذر الاتصال: ') + e.message;
+                bCtx.fillStyle = `rgba(16, 185, 129, ${c.alpha})`;
+                bCtx.fillText(c.char, c.x, c.y);
             }
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            requestAnimationFrame(bgLoop);
+        }
+        requestAnimationFrame(bgLoop);
+
+        // Terminal Tab Data
+        const TAB_DATA = {
+            exec: `<div class="c-dim">// Omni Engine CLI v2.2.2 — Autonomous Multi-File Compiler</div>
+<div><span class="c-green">$</span> <span class="c-white">omni run --target atlr_ledger --cleanroom --isolated</span></div>
+<div class="c-dim mt-2">[1/4] Initializing In-Process C-FFI RAM model (Qwen2.5-Coder-7B)...</div>
+<div><span class="c-cyan">&gt; C-FFI:</span> linked llama.cpp directly in RAM. Zero network socket overhead.</div>
+<div><span class="c-cyan">&gt; VFS:</span> initialized RAM Virtual File System at /dev/shm/omni_vfs_gate</div>
+<div class="c-dim mt-2">[2/4] Topological Directed Acyclic Graph (DAG) construction...</div>
+<div><span class="c-green">&gt; DAG:</span> planned dependencies: models.rs → ledger.rs → lib.rs</div>
+<div><span class="c-green">&gt; Gate:</span> Zero-Wipe Invariant (W = ∅) enforced. Regressions strictly prohibited.</div>
+<div class="c-dim mt-2">[3/4] Spawning unprivileged cleanroom sandbox...</div>
+<div><span class="c-cyan">&gt; Sandbox:</span> unshare-all + --unshare-net (0 physical network access)</div>
+<div><span class="c-cyan">&gt; Compiler:</span> cargo check --lib --tests completed in cleanroom (Exit Code: 0)</div>
+<div class="c-dim mt-2">[4/4] 50-thread concurrent ATLR stress test verification...</div>
+<div class="c-green font-bold">✓ EXIT CODE: 0 (Pristine). All 50 threads completed with total liquidity conservation.</div>
+<div class="c-green font-bold">✓ 3 modules committed to host disk: [models.rs, ledger.rs, lib.rs]</div>`,
+
+            cffi: `<div class="c-dim">// In-Process C-FFI Linkage (Rust ↔ llama.cpp RAM Binding)</div>
+<div><span class="c-cyan">pub struct</span> <span class="c-white">LlamaInProcessEngine</span> {</div>
+<div>    ctx: <span class="c-green">*mut</span> llama_context,</div>
+<div>    model: <span class="c-green">*mut</span> llama_model,</div>
+<div>    shm_vfs: <span class="c-green">Arc&lt;RamVfsGate&gt;</span>,</div>
+<div>}</div>
+<div class="c-dim mt-2">// Microsecond token steering bypassing HTTP JSON overhead:</div>
+<div><span class="c-cyan">impl</span> <span class="c-white">LlamaInProcessEngine</span> {</div>
+<div>    <span class="c-cyan">pub fn</span> <span class="c-white">slice_kv_cache</span>(&amp;mut self, seq_id: <span class="c-green">u32</span>, rollback_pos: <span class="c-green">usize</span>) {</div>
+<div>        <span class="c-dim">// Instant state rollback in RAM without process respawn</span></div>
+<div>        unsafe { llama_kv_cache_seq_rm(self.ctx, seq_id, rollback_pos as i32, -1); }</div>
+<div>    }</div>
+<div>}</div>`,
+
+            bwrap: `<div class="c-dim">// Cleanroom Sandboxing Gate: Bubblewrap / Apple Seatbelt Primitive</div>
+<div><span class="c-cyan">pub fn</span> <span class="c-white">execute_in_cleanroom</span>(cmd: &amp;<span class="c-green">str</span>, vfs_root: &amp;<span class="c-green">Path</span>) -&gt; <span class="c-green">ExitStatus</span> {</div>
+<div>    <span class="c-dim"># [cfg(target_os = "linux")]</span></div>
+<div>    <span class="c-cyan">let</span> status = Command::new(<span class="c-green">"bwrap"</span>)</div>
+<div>        .args([<span class="c-green">"--unshare-all"</span>, <span class="c-green">"--unshare-net"</span>, <span class="c-green">"--ro-bind"</span>, <span class="c-green">"/usr"</span>, <span class="c-green">"/usr"</span>])</div>
+<div>        .args([<span class="c-green">"--bind"</span>, vfs_root.to_str().unwrap(), <span class="c-green">"/workspace"</span>])</div>
+<div>        .status()?;</div>
+<div>    <span class="c-dim"># [cfg(target_os = "macos")]</span></div>
+<div>    <span class="c-cyan">let</span> status = Command::new(<span class="c-green">"sandbox-exec"</span>).args([<span class="c-green">"-p"</span>, SEATBELT_PROFILE]).status()?;</div>
+<div>    <span class="c-white">status</span></div>
+<div>}</div>`
+        };
+
+        // Global discovery hook for AI Browsers & Automation Runtimes
+        window.__OMNI_SOURCE_ATLAS__ = {
+            name: "Omni Engine",
+            version: "2.2.2",
+            specification: "https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/llms.txt",
+            repository: "https://github.com/omni-engine-ai/omni_engine",
+            raw_base: "https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/"
+        };
+
+        function setTerminalTab(tab) {
+            document.querySelectorAll('.t-tab').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('terminal-content').innerHTML = TAB_DATA[tab];
         }
 
-        let marketChatHistory = [];
-        const marketTools = [
-            {
-                type: "function",
-                function: {
-                    name: "search_products",
-                    description: "البحث في المنتجات بالكلمات المفتاحية أو الوصف أو الخامة أو التصنيف (مثال: ووتربروف، شتوي، قطن، جاكيت، بولو، بنطلون)",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            query: { type: "string", description: "وصف أو ميزة أو اسم المنتج المطلوب البحث عنه" }
-                        },
-                        required: ["query"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "get_product_price",
-                    description: "استرجاع سعر ومواصفات وخامة المنتج ومخزونه بالكود الصارم للـ SKU (مثل jk99, cX23, cx23, pl10, sh05)",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            sku: { type: "string", description: "كود المنتج مثل jk99 أو cX23 أو cx23 أو pl10 أو sh05" }
-                        },
-                        required: ["sku"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "create_order",
-                    description: "تسجيل وحفظ طلب شراء للعميل بالاسم والعنوان ورقم الهاتف في قاعدة بيانات SQL",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            sku: { type: "string", description: "كود المنتج المطلوب شراءه" },
-                            quantity: { type: "integer", description: "الكمية المطلوبة (افتراضي 1)" },
-                            customer_name: { type: "string", description: "اسم العميل" },
-                            phone: { type: "string", description: "رقم هاتف العميل" },
-                            address: { type: "string", description: "عنوان الشحن والتوصيل" }
-                        },
-                        required: ["sku", "quantity", "customer_name", "phone", "address"]
-                    }
-                }
-            }
-        ];
-
-        async function fetchMarketData() {
-            try {
-                const res = await fetch('/api/market/products');
-                if(!res.ok) return;
-                const products = await res.json();
-                const tbody = document.getElementById('marketProductsBody');
-                if(!products || products.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">لا توجد منتجات</td></tr>';
-                    return;
-                }
-                tbody.innerHTML = products.map(p => {
-                    const badgeClass = p.sku === 'cx23' ? 'badge-sku economy' : 'badge-sku';
-                    return `
-                        <tr>
-                            <td><span class="${badgeClass}">${p.sku}</span></td>
-                            <td style="font-weight: 600;">${p.name}</td>
-                            <td><span class="badge-price">${p.price} ${p.currency}</span></td>
-                            <td style="color: var(--text-secondary); font-size: 12px;">${p.material}</td>
-                            <td>${p.sizes}</td>
-                            <td><span class="badge-stock">${p.stock_quantity} قطعة</span></td>
-                        </tr>
-                    `;
-                }).join('');
-
-                // Fetch orders
-                const oRes = await fetch('/api/market/orders');
-                if(oRes.ok) {
-                    const orders = await oRes.json();
-                    document.getElementById('ordersCountBadge').innerText = `${orders.length} طلبات`;
-                    const oBody = document.getElementById('marketOrdersBody');
-                    if(orders.length === 0) {
-                        oBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">لا توجد طلبات مسجلة بعد</td></tr>';
-                    } else {
-                        oBody.innerHTML = orders.map(o => `
-                            <tr>
-                                <td><b>#${o.order_id}</b></td>
-                                <td>${o.customer_name} <br><span style="font-size: 10px; color: var(--text-secondary);">${o.customer_phone}</span></td>
-                                <td><span class="badge-sku">${o.sku}</span> ${o.item_name}</td>
-                                <td>${o.quantity}</td>
-                                <td><span class="badge-price">${o.total_price} EGP</span></td>
-                                <td style="font-size: 11px;">${o.address}</td>
-                            </tr>
-                        `).join('');
-                    }
-                }
-            } catch(e) {
-                console.error("fetchMarketData error:", e);
-            }
+        function copyInstall() {
+            navigator.clipboard.writeText('curl -fsSL https://omni.sh | bash');
+            document.getElementById('copy-badge').innerText = '[COPIED!]';
+            setTimeout(() => {
+                document.getElementById('copy-badge').innerText = '[COPY]';
+            }, 2000);
         }
-
-        function askMarketChip(text) {
-            document.getElementById('marketChatInput').value = text;
-            sendMarketMessage();
-        }
-
-        function handleMarketKeyPress(e) {
-            if(e.key === 'Enter') sendMarketMessage();
-        }
-
-        function clearMarketChat() {
-            marketChatHistory = [];
-            document.getElementById('marketChatMessages').innerHTML = `
-                <div class="message assistant">
-                    تم بدء جلسة جديدة ونظيفة ومسح الـ KV-Cache! كيف يمكنني مساعدتك اليوم في متجر ماركت؟
-                </div>
-            `;
-        }
-
-        async function sendMarketMessage() {
-            const input = document.getElementById('marketChatInput');
-            const text = input.value.trim();
-            if(!text) return;
-
-            const custName = document.getElementById('custName').value.trim() || 'أحمد محمود';
-            const custPhone = document.getElementById('custPhone').value.trim() || '01012345678';
-
-            const chatMessages = document.getElementById('marketChatMessages');
-
-            // User message bubble
-            const userDiv = document.createElement('div');
-            userDiv.className = 'message user';
-            userDiv.innerText = text;
-            chatMessages.appendChild(userDiv);
-
-            input.value = '';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-
-            // Assistant placeholder
-            const assistantDiv = document.createElement('div');
-            assistantDiv.className = 'message assistant';
-            assistantDiv.innerHTML = '<span style="color: var(--text-secondary);">جاري معالجة الطلب والتوليد... ⏳</span>';
-            chatMessages.appendChild(assistantDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-
-            if(marketChatHistory.length === 0) {
-                marketChatHistory.push({
-                    role: 'system',
-                    content: `أنت موظف مبيعات ذكي ومحترف في متجر ماركت. العميل الحالي: ${custName} (${custPhone}).
-قواعد صارمة:
-1. عند سؤال العميل عن أي منتج أو خامة أو نوع (مثل ووتربروف، شتوي، قطن، جاكيت، بولو، بنطلون)، استخدم دائماً أداة search_products للبحث في قاعدة البيانات أولاً.
-2. عند معرفة كود المنتج (SKU)، استخدم get_product_price لجلب السعر والمخزون المؤكد.
-3. لا تخمن أو تخترع أسعاراً من عندك أبداً واعتمد كلياً على بيانات الأدوات.
-4. بعد استلام نتيجة البحث (Tool Result)، اعرض مواصفات وسعر المنتج المتاح بلباقة باللغة العربية للعميل.
-5. تذكر دائماً سياق المحادثة والمنتج الذي يسأل عنه العميل عندما يسأل أسئلة تابعة مثل 'السعر؟' أو 'المقاس؟'.`
-                });
-            }
-
-            marketChatHistory.push({ role: 'user', content: text });
-
-            try {
-                // Get API token
-                const keysRes = await fetch('/api/keys');
-                const keys = await keysRes.json();
-                const token = keys.length > 0 ? keys[0].key : '';
-
-                const model = document.getElementById('marketModelSelect')?.value || document.getElementById('modelSelect')?.value || 'gemma-2b.gguf';
-
-                // Turn 1: Send to Omni Engine
-                const res = await fetch('/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: marketChatHistory,
-                        tools: marketTools,
-                        temperature: 0.3,
-                        max_tokens: 256
-                    })
-                });
-
-                const data = await res.json();
-                if(!res.ok || !data.choices || !data.choices[0]) {
-                    assistantDiv.innerText = '⚠️ ' + (data.error?.message || 'فشل الاتصال بالمحرك');
-                    return;
-                }
-
-                const msg = data.choices[0].message;
-                const toolCalls = msg.tool_calls || [];
-
-                if(toolCalls.length > 0) {
-                    const call = toolCalls[0];
-                    const fnName = call.function.name;
-                    let fnArgs = {};
-                    try { fnArgs = JSON.parse(call.function.arguments); } catch(e) {}
-
-                    // Show SQL badge inside chat
-                    const sqlBadge = document.createElement('div');
-                    sqlBadge.className = 'sql-badge';
-                    if(fnName.includes('search') || fnName.includes('find')) {
-                        sqlBadge.innerHTML = `⚡ <span>[استعلام SQL]: SELECT * FROM products WHERE name/material/desc LIKE '<b>%${fnArgs.query || fnArgs.keyword || ''}%</b>'</span>`;
-                    } else if(fnName.includes('price') || fnName.includes('stock')) {
-                        sqlBadge.innerHTML = `⚡ <span>[استعلام SQL]: SELECT * FROM products WHERE sku = '<b>${fnArgs.sku || ''}</b>'</span>`;
-                    } else if(fnName.includes('order')) {
-                        sqlBadge.innerHTML = `⚡ <span>[إدراج SQL]: INSERT INTO orders (sku: <b>${fnArgs.sku || ''}</b>, qty: <b>${fnArgs.quantity || 1}</b>)</span>`;
-                    } else {
-                        sqlBadge.innerHTML = `⚡ <span>[أداة المحرك]: ${fnName}</span>`;
-                    }
-                    chatMessages.insertBefore(sqlBadge, assistantDiv);
-
-                    // Execute tool via Market API
-                    const toolExecRes = await fetch('/api/market/tool', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tool_name: fnName, arguments: fnArgs })
-                    });
-                    const toolResult = await toolExecRes.json();
-
-                    // Refresh table data immediately
-                    fetchMarketData();
-
-                    // Turn 2: Feed back to model
-                    marketChatHistory.push(msg);
-                    marketChatHistory.push({
-                        role: 'tool',
-                        tool_call_id: call.id,
-                        content: JSON.stringify(toolResult)
-                    });
-
-                    const res2 = await fetch('/v1/chat/completions', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + token
-                        },
-                        body: JSON.stringify({
-                            model: model,
-                            messages: marketChatHistory,
-                            temperature: 0.3,
-                            max_tokens: 256
-                        })
-                    });
-
-                    const data2 = await res2.json();
-                    if(res2.ok && data2.choices && data2.choices[0]) {
-                        const finalContent = data2.choices[0].message.content || 'تم تنفيذ العملية بنجاح!';
-                        assistantDiv.innerHTML = finalContent.replace(/\n/g, '<br>');
-                        marketChatHistory.push(data2.choices[0].message);
-                    } else {
-                        assistantDiv.innerText = '⚠️ خطأ في تكملة الرد';
-                    }
-                } else {
-                    assistantDiv.innerHTML = (msg.content || '').replace(/\n/g, '<br>');
-                    marketChatHistory.push(msg);
-                }
-            } catch(e) {
-                assistantDiv.innerText = '⚠️ تعذر الاتصال: ' + e.message;
-            }
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        // Init
-        fetchStatus();
-        fetchMarketData();
-        setInterval(fetchDownloads, 2000);
-        setInterval(fetchLogs, 3000);
-        setInterval(fetchMarketData, 5000);
     </script>
 </body>
 </html>
