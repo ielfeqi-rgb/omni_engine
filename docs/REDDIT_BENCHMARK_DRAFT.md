@@ -77,6 +77,7 @@ cd omni_engine
 omni run --plan-file examples/atlr_maestro_plan.json
 ```
 
+- **Interactive Live Showcase:** [omni-engine-ai.github.io/omni_engine](https://omni-engine-ai.github.io/omni_engine/)
 - **Canonical Repository:** [github.com/omni-engine-ai/omni_engine](https://github.com/omni-engine-ai/omni_engine)
 - **License:** Dual AGPLv3 / Commercial
 - **Hardware Requirement:** 8GB RAM, CPU-only (AVX2) or NVIDIA CUDA

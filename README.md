@@ -10,6 +10,7 @@
 *100% Offline • Zero Cloud Subscriptions • Direct In-Process C-FFI • Deterministic Cleanroom Sandboxing*
 
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Interactive Showcase](https://img.shields.io/badge/🌐_Interactive_Landing_Page-Visit_Live-059669?style=for-the-badge&logo=google-chrome&logoColor=white)](https://omni-engine-ai.github.io/omni_engine/)
 [![Release](https://img.shields.io/badge/Release-v2.2.2_(Production_Freeze)-blue.svg?logo=github)](https://github.com/omni-engine-ai/omni_engine/releases/tag/v2.2.2)
 [![Linux Platform](https://img.shields.io/badge/Linux-x86__64%20(Active%20Production)-brightgreen.svg?logo=linux&logoColor=white)](https://github.com/omni-engine-ai/omni_engine/releases/latest)
 [![macOS Platform](https://img.shields.io/badge/macOS-Apple%20Silicon%20(v2.2.2%20Frozen%20Snapshot)-critical.svg?logo=apple&logoColor=white)](https://github.com/omni-engine-ai/omni_engine/releases/tag/v2.2.2)
@@ -22,6 +23,7 @@
 
 <br/>
 
+[**🌐 Live Landing Page**](https://omni-engine-ai.github.io/omni_engine/) • 
 [**Overview**](#executive-overview) • 
 [**Platform Matrix**](#-sovereign-platform-support-matrix) • 
 [**Empirical Benchmarks**](#empirical-benchmarks--showdown) • 
