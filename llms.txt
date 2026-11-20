@@ -1,25 +1,199 @@
 # Omni Engine (v2.2.2)
-> The Sovereign, In-Process Autonomous Software Engineering Runtime
+> Sovereign, in-process autonomous software engineering runtime in pure Rust linking `llama.cpp` directly via C-FFI (<6ms latency, 0 cloud tokens), Linux Bubblewrap cleanrooms, and Zero-Wipe AST isolation ($W = \emptyset$).
 
-## Overview
-Omni Engine is an offline, zero-cloud autonomous software engineering runtime written in pure Rust with direct in-process C-FFI bindings to llama.cpp. It acts as a deterministic compiler swarm delivering tested, verified multi-file software directly to host disk with Bubblewrap cleanroom sandboxing and causal KV-cache slicing.
+## System Context for LLMs
+Omni Engine is an autonomous multi-agent developer runtime engineered to build, modify, and verify multi-file software projects entirely offline on consumer hardware (e.g., 8GB RAM laptops, pure CPU or single GPU).
 
-## Documentation Index
-- [README.md](README.md): Architecture overview, core capabilities, quickstart, and CLI reference.
-- [AGENTS.md](AGENTS.md): Full autonomous agent integration specification, tool calling schemas, invariant contracts, and Maestro protocol.
-- [REQUIREMENTS.md](REQUIREMENTS.md): System dependencies, upstream llama.cpp version (Build 11429), and dynamic linkage details.
-- [ROADMAP.md](ROADMAP.md): Systems engineering roadmap, acceleration backends, and milestones.
-- [docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md](docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md): Comprehensive Sovereign Master Dossier for v2.2.x sovereign evolution.
-- [docs/OMNI_2.1.2_RELEASE_NOTES.md](docs/OMNI_2.1.2_RELEASE_NOTES.md): Historical v2.1.2 release notes detailing Decoupled Maestro Protocol and Dynamic KV-Cache Scaling.
-- [notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb](notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb): Interactive Google Colab T4 GPU notebook reproducing the v2.2.2 CUDA ATLR benchmark.
-- [examples/maestro_plan.json](examples/maestro_plan.json): Canonical JSON schema and blueprint example for the Maestro Plan Protocol.
-- [examples/atlr_maestro_plan.json](examples/atlr_maestro_plan.json): Comprehensive 50-thread ATLR concurrent financial ledger blueprint example.
+Unlike traditional agent frameworks (LangChain, AutoGen, CrewAI, Aider) that wrap cloud APIs or communicate with external HTTP daemons (Ollama/vLLM) over localhost sockets, Omni Engine executes inference **in-process via direct C-FFI**. It treats LLM token generation as a synchronous low-latency function call, manages KV-cache memory as a branchable state tree, and enforces strict containerized cleanroom sandboxes so unverified code never pollutes host disk.
 
-## Core CLI Usage
-- `omni_engine download <preset|url>`: Download GGUF models directly with live progress bar (presets: `--qwen`, `--qwen-7b`, `--phi-4`).
-- `omni_engine run "<goal>" --output-dir <dir> --review`: Synthesize new multi-file project from scratch with human/agent review.
-- `omni_engine run --plan-file <plan.json> --output-dir <dir> -y`: Execute pre-compiled Maestro architectural blueprint (the plan JSON file MUST be written to disk before running; pass -y for non-interactive auto-dependency installation).
-- `omni_engine modify "<goal>" --dir <dir> --output-dir <dir> --review`: Incrementally extend existing codebase with Zero-Wipe Invariant.
-- `omni_engine tui`: Launch full-screen graphical Terminal Dashboard (Ratatui).
-- `omni_engine console`: Launch interactive REPL console shell.
-- `omni_engine serve --port 8090`: Launch local Web UI and OpenAI-compatible HTTP proxy API.
+---
+
+## Canonical Specifications & Documentation Index
+> All URLs link directly to raw markdown for friction-free consumption by LLM parsers.
+
+- **Architecture Overview & Quickstart:** [README.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/README.md)
+- **Agent Integration & Tool Schemas:** [AGENTS.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/AGENTS.md)
+- **Technical Whitepaper (In-Process vs HTTP):** [docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/docs/OMNI_ENGINE_TECHNICAL_WHITEPAPER.md)
+- **Sovereign Master Dossier (Mathematical Proofs):** [docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/docs/OMNI_ENGINE_V2_2_1_SOVEREIGN_MASTER_DOSSIER.md)
+- **Reproducible 8GB Hardware Benchmark:** [docs/REDDIT_BENCHMARK_DRAFT.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/docs/REDDIT_BENCHMARK_DRAFT.md)
+- **System Requirements & Linkage:** [REQUIREMENTS.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/REQUIREMENTS.md)
+- **Roadmap & Acceleration Backends:** [ROADMAP.md](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/ROADMAP.md)
+- **ATLR 50-Thread Maestro Blueprint:** [examples/atlr_maestro_plan.json](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/examples/atlr_maestro_plan.json)
+- **Interactive Colab Replication Lab:** [notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/notebooks/Omni_Engine_ATLR_Benchmark_Playground.ipynb)
+
+---
+
+## Sovereign Architectural Invariants
+
+1. **Sub-6ms In-Process C-FFI Inference:**
+   Eliminates TCP loopback sockets and JSON serialization. Pointers to token buffers pass directly to native GGML/llama.cpp kernels in host RAM.
+2. **The Zero-Wipe Invariant ($W = \emptyset$):**
+   In both greenfield generation and incremental refactoring (`modify`), host storage writes $W$ remain strictly empty until code passes 100% of cleanroom compiler and test gates. Existing AST functions and logic are guaranteed preserved against destructive rewrites.
+3. **Causal KV-Cache Rollback:**
+   When cleanroom compilation detects an error, Omni Engine invokes `llama_kv_cache_seq_rm()` to excise failed tokens from RAM in ~6ms without re-tokenizing previous prompt context.
+4. **Linux Bubblewrap Cleanroom Isolation:**
+   Code execution occurs inside ephemeral container namespaces (`bwrap --unshare-all --ro-bind /usr /usr --bind /dev/shm /workspace`). Unsanctioned network calls and filesystem escapes fail closed.
+5. **Fixed $O(1)$ Worker Context via Distillation:**
+   Dependencies across large repos (50+ files) are distilled into concise interface signatures (`distill_interface_contract`), pinning worker context windows to 1,500–2,500 tokens regardless of repository size.
+6. **RCPSP Causal DAG Scheduler:**
+   Tasks are modeled as a Resource-Constrained Project Scheduling Problem with causal dependency edges, executed in parallel according to available CPU threads and hardware memory limits.
+
+---
+
+## Universal Quickstart (Linux & WSL2)
+
+```bash
+# 1-Line Sovereign Installer
+curl -fsSL https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh | bash
+
+# Reload Environment
+source ~/.bashrc  # or ~/.zshrc
+
+# Execute Autonomous Swarm on a Goal
+omni run "Build a modular Task Tracker CLI in Rust" --review --output-dir ./task_tracker
+
+# Execute Decoupled Maestro Protocol Blueprint
+omni run --plan-file examples/atlr_maestro_plan.json
+
+# Incremental Modification (Zero-Wipe Guarantee)
+omni modify "Add priority sorting and JSON export" --dir ./task_tracker
+
+# Launch Terminal GUI Dashboard
+omni tui
+```
+
+---
+
+## Empirical Concurrency Benchmark (50-Thread ATLR Ledger)
+
+Hardware: Consumer 8-core Dev Node, 8GB DDR4 RAM Floor, 1x Qwen2.5-Coder-1.5B (1.1GB GGUF).
+
+| Metric | Python + HTTP Daemon (Ollama/Aider) | Omni Engine v2.2.2 (Rust In-Process) | Advantage |
+| :--- | :--- | :--- | :--- |
+| **Inference Call Overhead** | 38.4 ms (HTTP JSON ser/de) | **< 5.8 ms** (Direct C-FFI pointer pass) | **-84.9% latency** |
+| **Peak Runtime RSS** | 6,840 MB (Daemons + Python workers) | **2,180 MB** (Shared GGUF + Rust in-process) | **-68.1% memory** |
+| **Inference Throughput** | 24.2 tok/sec | **41.6 tok/sec** (Zero-copy KV cache) | **+71.9% speed** |
+| **50-Task Wall-Clock** | 2h 14m (GC & IPC bottleneck) | **37m 12s** | **3.6x faster** |
+| **Pass Rate / Safety** | 76% (Host disk drift on failure) | **100%** (Cleanroom RAM VFS: $W = \emptyset$) | **Zero host regressions** |
+
+---
+
+## Codebase Atlas & Raw Source Dictionary
+> **For Cloud LLMs:** Use the direct `raw.githubusercontent.com` URLs below to fetch raw source code for any module without scraping GitHub web pages.
+
+### 1. Core CLI, Dispatch & Entrypoint
+* [src/main.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/main.rs)
+  * **Role:** Primary CLI entrypoint. Dispatches subcommands (`run`, `modify`, `tui`, `console`, `ask`, `keys`, `kv-test`, `status`, `models`, `download`).
+  * **Key Logic:** Bootstraps logger, configures threadpools, initializes in-process native llama engine, and executes orchestrator/swarm workflows.
+* [src/cli.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/cli.rs)
+  * **Role:** Command-line argument definitions, flags, and help formatting.
+  * **Key Symbols:** `Cli`, `Commands`, argument validator structs.
+* [src/lib.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/lib.rs)
+  * **Role:** Crate root. Exports runtime subsystems and high-level coordinator APIs.
+* [install.sh](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/install.sh)
+  * **Role:** Universal one-line shell installer with platform detection (Linux x86_64, CUDA, macOS snapshot, WSL2), automatic Bubblewrap verification, and `LD_LIBRARY_PATH` wrapper generation.
+* [Cargo.toml](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/Cargo.toml)
+  * **Role:** Project package manifest and dependency definitions.
+  * **Key Dependencies:** `ratatui`, `crossterm`, `tokio`, `serde`, `clap`, `libc`.
+
+### 2. Native In-Process Inference Engine (C-FFI & GGML)
+* [src/native_llama/mod.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/native_llama/mod.rs)
+  * **Role:** Low-level Rust wrapper around native `llama.cpp` shared libraries via C-FFI.
+  * **Key Symbols:**
+    * `NativeLlamaModel`: Thread-safe model handle (`Arc<Self>`), vocabulary querying, chat template formatting.
+    * `NativeLlamaContext`: Execution context in RAM, context window limits, KV-cache surgical manipulation.
+    * `NativeLlamaSampler`: Greedy and stochastic token sampling (`with_temperature`, `with_top_p`, `with_repetition_penalty`).
+    * `llama_kv_cache_seq_rm()`: Instant in-memory sequence truncation for branchable rollbacks.
+* [src/native_llama/auto_detect.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/native_llama/auto_detect.rs)
+  * **Role:** Hardware feature detection. Probes CPU instruction sets (AVX2, AVX-512, NEON, FMA) and dynamically loads the optimal GGML acceleration binary at startup.
+* [src/llama_manager.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/llama_manager.rs)
+  * **Role:** Model process supervisor, background server lifecycle coordinator, and model file cataloger.
+
+### 3. Multi-Agent Swarm Orchestration & Scheduling
+* [src/planner/swarm_coordinator.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/swarm_coordinator.rs)
+  * **Role:** The brain of the multi-agent swarm. Implements the RCPSP (Resource-Constrained Project Scheduling Problem) solver, manages worker concurrency, and orchestrates task state transitions.
+  * **Key Symbols:**
+    * `SwarmCoordinator`: Central engine coordinating Thinker and Workers.
+    * `PlanBlueprint` & `PlanBlueprintNode`: Decoupled Maestro Protocol schema representation.
+    * `SubGoal`: Atomic task representation with explicit read/write file boundary enforcement.
+    * `LrpConfig`: Linear Resource Profile defining concurrency ceilings and memory floors.
+    * `TaskStatus`: Rigorous state machine (`Pending` -> `Ready` -> `Active` -> `Completed` / `Failed`).
+    * `distill_interface_contract()`: Extracts concise API signatures to enforce fixed $O(1)$ worker context.
+* [src/planner/oracle.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/oracle.rs)
+  * **Role:** System 2 Architectural Planner. Takes a high-level user goal, analyzes project structure, and generates a mathematically acyclic Causal Task DAG.
+* [src/planner/executive_hands.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/executive_hands.rs)
+  * **Role:** System 1 Code Synthesis Workers. Translates subgoals into concrete source code modifications inside the in-memory VFS.
+  * **Key Symbols:** `ExecutiveHands`, `ExecutiveAction`, `ExecutionResult`.
+* [src/planner/refinement_loop.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/refinement_loop.rs)
+  * **Role:** Self-healing compiler triage loop. Captures compiler diagnostic messages, identifies syntax/type failures, and drives surgical patches.
+* [src/planner/pre_pass_triage.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/pre_pass_triage.rs)
+  * **Role:** Deterministic pre-execution AST triage. Detects missing imports, standard library alternatives, and structural discrepancies without burning LLM inference tokens.
+* [src/planner/dossier.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/planner/dossier.rs)
+  * **Role:** Epistemic memory and architectural dossier engine. Preserves long-term project conventions and constraints across execution phases.
+
+### 4. Sovereign Cleanrooms & RAM VFS Isolation
+* [src/sandbox/vfs.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/sandbox/vfs.rs)
+  * **Role:** Pure in-memory Virtual File System (`MemoryVfs`). Stages all file reads, writes, and unified diffs in RAM.
+  * **Key Symbols:**
+    * `MemoryVfs`: Concurrent thread-safe virtual filesystem (`RwLock`).
+    * `write_file_checked()`, `read_file_checked()`: Filesystem operations bounded by task permissions.
+    * `VfsBoundaryError`: Fail-closed error raised when an agent attempts to write outside its declared subtask scope.
+    * `StagedDiff`: Unified diff generator comparing in-memory state against base disk snapshot.
+* [src/sandbox/cleanroom.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/sandbox/cleanroom.rs)
+  * **Role:** Universal Cleanroom execution harness. Invokes Linux Bubblewrap (`bwrap`) to run compilers and test runners in isolated namespaces.
+  * **Key Symbols:**
+    * `UniversalCleanroom`: Sandboxed compilation and unit test execution gatekeeper.
+    * `audit_code_syntax()`: AST validation across Rust, Python, Go, TypeScript, and C.
+    * `audit_acceptance_criteria()`: Deterministic test suite runner against staged VFS artifacts.
+* [src/sandbox/isolated_jail.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/sandbox/isolated_jail.rs)
+  * **Role:** Fallback execution jail providing tmpfs isolation when Bubblewrap kernel unshare is restricted.
+* [src/sandbox/terminal_bridge.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/sandbox/terminal_bridge.rs)
+  * **Role:** Secure pseudoterminal (PTY) bridge for interactive execution and monitoring.
+
+### 5. Causal Graph & Vector Memory
+* [src/causal_memory/dag.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/causal_memory/dag.rs)
+  * **Role:** Causal Directed Acyclic Graph (DAG) primitives, topological sorting, and cycle detection algorithms.
+* [src/causal_memory/store.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/causal_memory/store.rs)
+  * **Role:** In-memory causal state graph recording state checkpoints for deterministic rollback.
+* [src/vector_memory/hnsw.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/vector_memory/hnsw.rs)
+  * **Role:** Zero-dependency, in-process Hierarchical Navigable Small World (HNSW) vector index for fast semantic code retrieval without external database services.
+* [src/vector_memory/code_chunker.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/vector_memory/code_chunker.rs)
+  * **Role:** AST-aware code chunking utility partitioning source files along function, struct, and module boundaries.
+
+### 6. Interactive Terminal Dashboard & Telemetry
+* [src/tui/app.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/tui/app.rs)
+  * **Role:** Full-screen Terminal User Interface (Ratatui). Renders live RAM RSS monitors, CPU load, token-per-second meters, KV-cache fill percentages, and real-time execution logs.
+* [src/logger.rs](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/src/logger.rs)
+  * **Role:** Zero-allocation structured event logging system writing cleanroom audit traces to disk.
+
+---
+
+## Example Blueprint: Decoupled Maestro Protocol
+
+```json
+{
+  "project": "AtomicTransactionLedgerRust (ATLR)",
+  "language": "rust",
+  "concurrency_limit": 2,
+  "zero_dependencies": true,
+  "no_unsafe": true,
+  "nodes": [
+    {
+      "id": 1,
+      "entity": "src/models.rs",
+      "kind": "CREATE",
+      "responsibility": "Define strict std-only domain models: Account struct, TransferError enum, and audit helpers.",
+      "depends_on": []
+    },
+    {
+      "id": 2,
+      "entity": "src/ledger.rs",
+      "kind": "CREATE",
+      "responsibility": "Thread-safe in-memory ledger with atomic transfer routines and balance verification.",
+      "depends_on": [1]
+    }
+  ]
+}
+```
+
+Raw blueprint URL: [examples/atlr_maestro_plan.json](https://raw.githubusercontent.com/omni-engine-ai/omni_engine/main/examples/atlr_maestro_plan.json)
